@@ -59,6 +59,22 @@
                 </extraArguments>
               </jvmSettings>
             </program>
+            <program>
+              <mainClass>com.linkedin.pinot.validation.DummyController</mainClass>
+              <name>pinot-dummy-controller</name>
+              <jvmSettings>
+                <initialMemorySize>4G</initialMemorySize>
+                <maxMemorySize>4G</maxMemorySize>
+              </jvmSettings>
+            </program>
+            <program>
+              <mainClass>com.linkedin.pinot.validation.DummyServer</mainClass>
+              <name>pinot-dummy-server</name>
+              <jvmSettings>
+                <initialMemorySize>4G</initialMemorySize>
+                <maxMemorySize>4G</maxMemorySize>
+              </jvmSettings>
+            </program>
           </programs>
         </configuration>
       </plugin>
