@@ -37,21 +37,22 @@ import xerial.larray.mmap.MMapBuffer;
 import xerial.larray.mmap.MMapMode;
 
 
-public class StarTreeDataTable {
-  private static final Logger LOGGER = LoggerFactory.getLogger(StarTreeDataTable.class);
+public class StarTreeDataTableNew {
+  private static final Logger LOGGER = LoggerFactory.getLogger(StarTreeDataTableNew.class);
 
   private File file;
   private int dimensionSizeInBytes;
   private int metricSizeInBytes;
   private int totalSizeInBytes;
-  final int[] sortOrder;
-
-  public StarTreeDataTable(File file, int dimensionSizeInBytes, int metricSizeInBytes, int[] sortOrder) {
+ final MMapBuffer mappedByteBuffer;
+  
+  public StarTreeDataTableNew(File file, int dimensionSizeInBytes, int metricSizeInBytes) throws Exception{
     this.file = file;
     this.dimensionSizeInBytes = dimensionSizeInBytes;
     this.metricSizeInBytes = metricSizeInBytes;
-    this.sortOrder = sortOrder;
     this.totalSizeInBytes = dimensionSizeInBytes + metricSizeInBytes;
+    mappedByteBuffer = new MMapBuffer(file, 0, file.length(), MMapMode.READ_WRITE);
+
   }
 
   /**
@@ -59,20 +60,19 @@ public class StarTreeDataTable {
    * @param startRecordId inclusive
    * @param endRecordId exclusive
    */
-  public void sort(int startRecordId, int endRecordId) {
-    sort(startRecordId, endRecordId, 0, dimensionSizeInBytes);
+  public void sort(int startRecordId, int endRecordId, final int[] sortOrder) {
+    sort(startRecordId, endRecordId, 0, dimensionSizeInBytes, sortOrder);
   }
 
-  public void sort(int startRecordId, int endRecordId, final int startOffsetInRecord, final int endOffsetInRecord) {
+  public void sort(int startRecordId, int endRecordId, final int startOffsetInRecord, final int endOffsetInRecord, final int[] sortOrder) {
     long start = System.currentTimeMillis();
-    final MMapBuffer mappedByteBuffer;
+
     try {
       int length = endRecordId - startRecordId;
       if (length == 1) {
         return;
       }
       final int startOffset = startRecordId * totalSizeInBytes;
-      mappedByteBuffer = new MMapBuffer(file, startOffset, length * totalSizeInBytes, MMapMode.READ_WRITE);
       
       List<Integer> idList = new ArrayList<Integer>();
       for (int i = startRecordId; i < endRecordId; i++) {
@@ -87,8 +87,8 @@ public class StarTreeDataTable {
           int pos1 = (o1) * totalSizeInBytes;
           int pos2 = (o2) * totalSizeInBytes;
           //System.out.println("pos1="+ pos1 +" , pos2="+ pos2);
-          mappedByteBuffer.copyTo(pos1, buf1, 0, dimensionSizeInBytes);
-          mappedByteBuffer.copyTo(pos2, buf2, 0, dimensionSizeInBytes);
+          mappedByteBuffer.copyTo(startOffset + pos1, buf1, 0, dimensionSizeInBytes);
+          mappedByteBuffer.copyTo(startOffset + pos2, buf2, 0, dimensionSizeInBytes);
           IntBuffer bb1 = ByteBuffer.wrap(buf1).asIntBuffer();
           IntBuffer bb2 = ByteBuffer.wrap(buf2).asIntBuffer();
           for (int dimIndex : sortOrder) {
@@ -120,14 +120,14 @@ public class StarTreeDataTable {
         int thatRecordIdPos = currentPositions[thatRecordId];
 
         //swap the buffers
-        mappedByteBuffer.copyTo(thisRecordIdPos * totalSizeInBytes, buf1, 0, totalSizeInBytes);
-        mappedByteBuffer.copyTo(thatRecordIdPos * totalSizeInBytes, buf2, 0, totalSizeInBytes);
+        mappedByteBuffer.copyTo(startOffset + thisRecordIdPos * totalSizeInBytes, buf1, 0, totalSizeInBytes);
+        mappedByteBuffer.copyTo(startOffset + thatRecordIdPos * totalSizeInBytes, buf2, 0, totalSizeInBytes);
         //        mappedByteBuffer.position(thisRecordIdPos * totalSizeInBytes);
         //        mappedByteBuffer.get(buf1);
         //        mappedByteBuffer.position(thatRecordIdPos * totalSizeInBytes);
         //        mappedByteBuffer.get(buf2);
-        mappedByteBuffer.readFrom(buf2, 0, thisRecordIdPos * totalSizeInBytes, totalSizeInBytes);
-        mappedByteBuffer.readFrom(buf1, 0, thatRecordIdPos * totalSizeInBytes, totalSizeInBytes);
+        mappedByteBuffer.readFrom(buf2, 0, startOffset + thisRecordIdPos * totalSizeInBytes, totalSizeInBytes);
+        mappedByteBuffer.readFrom(buf1, 0, startOffset + thatRecordIdPos * totalSizeInBytes, totalSizeInBytes);
         //        mappedByteBuffer.position(thisRecordIdPos * totalSizeInBytes);
         //        mappedByteBuffer.put(buf2);
         //        mappedByteBuffer.position(thatRecordIdPos * totalSizeInBytes);
@@ -139,12 +139,9 @@ public class StarTreeDataTable {
         currentPositions[thatRecordId] = i;
         currentPositions[thisRecordId] = thatRecordIdPos;
       }
-      if (mappedByteBuffer != null) {
-        mappedByteBuffer.flush();
-        mappedByteBuffer.close();
-      }
-    } catch (IOException e) {
-      e.printStackTrace();
+      
+    } catch (Exception e) {
+      LOGGER.error("Exception while sorting", e);
     } finally {
       //      IOUtils.closeQuietly(randomAccessFile);
     }
@@ -160,17 +157,15 @@ public class StarTreeDataTable {
    * @return start,end for each value. inclusive start, exclusive end
    */
   public Map<Integer, IntPair> groupByIntColumnCount(int startDocId, int endDocId, Integer colIndex) {
-    MMapBuffer mappedByteBuffer = null;
     try {
       int length = endDocId - startDocId;
       Map<Integer, IntPair> rangeMap = new LinkedHashMap<>();
       final int startOffset = startDocId * totalSizeInBytes;
-      mappedByteBuffer = new MMapBuffer(file, startOffset, length * totalSizeInBytes, MMapMode.READ_WRITE);
       int prevValue = -1;
       int prevStart = 0;
       byte[] dimBuff = new byte[dimensionSizeInBytes];
       for (int i = 0; i < length; i++) {
-        mappedByteBuffer.copyTo(i * totalSizeInBytes, dimBuff, 0, dimensionSizeInBytes);
+        mappedByteBuffer.copyTo(startOffset + i * totalSizeInBytes, dimBuff, 0, dimensionSizeInBytes);
         int value = ByteBuffer.wrap(dimBuff).asIntBuffer().get(colIndex);
         if (prevValue != -1 && prevValue != value) {
           rangeMap.put(prevValue, new IntPair(startDocId + prevStart, startDocId + i));
@@ -180,67 +175,21 @@ public class StarTreeDataTable {
       }
       rangeMap.put(prevValue, new IntPair(startDocId + prevStart, endDocId));
       return rangeMap;
-    } catch (IOException e) {
+    } catch (Exception e) {
       e.printStackTrace();
-    } finally {
-      if (mappedByteBuffer != null) {
-        try {
-          mappedByteBuffer.close();
-        } catch (IOException e) {
-          e.printStackTrace();
-        }
-      }
-    }
+    } 
     return Collections.emptyMap();
   }
-
-  public Iterator<Pair<byte[], byte[]>> iterator(int startDocId, int endDocId) throws IOException {
+  public void flush() {
+    mappedByteBuffer.flush();    
+  }
+  public void close() {
+    mappedByteBuffer.flush();    
     try {
-      final int length = endDocId - startDocId;
-      final int startOffset = startDocId * totalSizeInBytes;
-      final MMapBuffer mappedByteBuffer = new MMapBuffer(file, startOffset, length * totalSizeInBytes, MMapMode.READ_WRITE);
-      return new Iterator<Pair<byte[], byte[]>>() {
-        int pointer = 0;
-
-        @Override
-        public boolean hasNext() {
-          return pointer < length;
-        }
-
-        @Override
-        public void remove() {
-          throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public Pair<byte[], byte[]> next() {
-          byte[] dimBuff = new byte[dimensionSizeInBytes];
-          byte[] metBuff = new byte[metricSizeInBytes];
-          mappedByteBuffer.copyTo(pointer * totalSizeInBytes, dimBuff, 0, dimensionSizeInBytes);
-//          mappedByteBuffer.position(pointer * totalSizeInBytes);
-//          mappedByteBuffer.get(dimBuff);
-          if (metricSizeInBytes > 0) {
-            mappedByteBuffer.copyTo(pointer * totalSizeInBytes + dimensionSizeInBytes, metBuff, 0, metricSizeInBytes);
-//            mappedByteBuffer.get(metBuff);
-          }
-          pointer = pointer + 1;
-          if(pointer == length){
-            try {
-              mappedByteBuffer.close();
-            } catch (IOException e) {
-              e.printStackTrace();
-            }
-          }
-          return Pair.of(dimBuff, metBuff);
-        }
-      };
-
+      mappedByteBuffer.close();
     } catch (IOException e) {
-      throw e;
-    } finally {
-      //IOUtils.closeQuietly(randomAccessFile);
+      e.printStackTrace();
     }
-
   }
 
 }

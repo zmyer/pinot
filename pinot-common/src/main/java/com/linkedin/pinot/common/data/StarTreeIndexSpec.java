@@ -23,7 +23,7 @@ import java.util.Set;
 
 public class StarTreeIndexSpec {
   public static final Integer DEFAULT_MAX_LEAF_RECORDS = 100000; // TODO: determine a good number via experiment
-  public static final int DEFAULT_SKIP_MATERIALIZATION_CARDINALITY_THRESHOLD = 10000;
+  public static final int DEFAULT_SKIP_MATERIALIZATION_CARDINALITY_THRESHOLD = Integer.MAX_VALUE;
 
   /** The upper bound on the number of leaf records to be scanned for any query */
   private Integer maxLeafRecords = DEFAULT_MAX_LEAF_RECORDS;

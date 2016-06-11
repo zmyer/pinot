@@ -172,6 +172,9 @@ public class SegmentIndexCreationDriverImpl implements SegmentIndexCreationDrive
       statsCollector.collectRow(row);
       totalRawDocs++;
       totalDocs++;
+      if(totalDocs == 1000000){
+        break;
+      }
     }
     recordReader.close();
     LOGGER.info("Start building star tree!");
