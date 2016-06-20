@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2014-2015 LinkedIn Corp. (pinot-core@linkedin.com)
+ * Copyright (C) 2014-2016 LinkedIn Corp. (pinot-core@linkedin.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,7 +29,7 @@ public class ValidationConstants {
 
   public static final String TABLE_NAME = "ValidationTable";
   public static final String REALTIME_TABLE_NAME = TABLE_NAME + "_REALTIME";
-  public static final int NUM_KAFKA_PARTITIONS = 1;
+  public static final int NUM_KAFKA_PARTITIONS = 7;
   public static final int NUM_REPLICAS = 3;
   public static final int NUM_SERVERS = 3;
 

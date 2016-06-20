@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2014-2015 LinkedIn Corp. (pinot-core@linkedin.com)
+ * Copyright (C) 2014-2016 LinkedIn Corp. (pinot-core@linkedin.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,22 +16,28 @@
 
 package com.linkedin.pinot.validation;
 
+import java.io.StringWriter;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.Set;
+import java.util.TreeMap;
+import org.apache.commons.math.stat.descriptive.DescriptiveStatistics;
 import org.apache.helix.AccessOption;
 import org.apache.helix.HelixAdmin;
 import org.apache.helix.HelixException;
 import org.apache.helix.HelixManager;
 import org.apache.helix.ZNRecord;
+import org.apache.helix.controller.strategy.AutoRebalanceStrategy;
 import org.apache.helix.model.IdealState;
 import org.apache.helix.store.zk.ZkHelixPropertyStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Function;
 import com.linkedin.pinot.common.config.TableNameBuilder;
 import com.linkedin.pinot.common.metadata.ZKMetadataProvider;
@@ -51,6 +57,7 @@ public class LLRealtimeSegmentManager {
   private static LLRealtimeSegmentManager instance = null;
 
   private static final String SEGMENTS_PATH = "/SEGMENTS";
+  private static final String KAFKA_PARTITION_PATH = "/KAFKA_PARITIONS";
   private final HelixAdmin _helixAdmin;
   private final HelixManager _helixManager;
   private final String _clusterName;
@@ -64,7 +71,7 @@ public class LLRealtimeSegmentManager {
       ZkHelixPropertyStore<ZNRecord> propertyStore) {
     _helixAdmin = helixAdmin;
     _helixManager = helixManager;
-    _clusterName = _helixManager.getClusterName();
+    _clusterName = helixManager.getClusterName();
     _propertyStore = propertyStore;
   }
 
@@ -96,6 +103,14 @@ public class LLRealtimeSegmentManager {
       } else {
         throw e;
       }
+    }
+    ZNRecord znRecord = assignPartitions(ValidationConstants.NUM_KAFKA_PARTITIONS,
+        ValidationConstants.generateInstanceNames(), ValidationConstants.NUM_REPLICAS);
+    final String path = KAFKA_PARTITION_PATH + "/" + realtimeTableName;
+    _propertyStore.set(path, znRecord, AccessOption.PERSISTENT);
+    Map<String, List<String>> listFields = znRecord.getListFields();
+    for (String kPart : listFields.keySet()) {
+      System.out.println("Partition " + kPart + " on hosts :" + listFields.get(kPart));
     }
     continueAddTable(realtimeTableName, instances, 0L);
   }
@@ -434,4 +449,50 @@ public class LLRealtimeSegmentManager {
 //      }
 //    }
 //    }
+
+  public ZNRecord assignPartitions(int nPartitions, List<Instance> instances, int numReplicas) {
+    final String resourceName = "KafkaPartitions";  // Unused
+    List<String> partitions = new ArrayList<>(nPartitions);
+    for (int i = 0; i < nPartitions; i++) {
+      partitions.add(Integer.toString(i));
+    }
+
+    LinkedHashMap<String, Integer> states = new LinkedHashMap<>();
+    states.put("OFFLINE", 0);
+    states.put("ONLINE", numReplicas);
+    List<String> hosts = new ArrayList<>(instances.size());
+    for (Instance instance : instances ) {
+      hosts.add(instance.toInstanceId());
+    }
+    AutoRebalanceStrategy rebalanceStrategy = new AutoRebalanceStrategy(resourceName, partitions, states);
+    ZNRecord newZnRecord = rebalanceStrategy.computePartitionAssignment(hosts,
+        new HashMap<String, Map<String, String>>(0), hosts);
+    newZnRecord.setMapFields(new HashMap<String, Map<String, String>>(0));
+    return newZnRecord;
+  }
+
+  private void printSegmentAssignment(Map<String, Map<String, String>> mapping) throws Exception {
+    StringWriter sw = new StringWriter();
+    ObjectMapper objectMapper = new ObjectMapper();
+    objectMapper.writerWithDefaultPrettyPrinter().writeValue(sw, mapping);
+    LOGGER.info(sw.toString());
+    Map<String, List<String>> serverToSegmentMapping = new TreeMap<>();
+    for (String segment : mapping.keySet()) {
+      Map<String, String> serverToStateMap = mapping.get(segment);
+      for (String server : serverToStateMap.keySet()) {
+        if (!serverToSegmentMapping.containsKey(server)) {
+          serverToSegmentMapping.put(server, new ArrayList<String>());
+        }
+        serverToSegmentMapping.get(server).add(segment);
+      }
+    }
+    DescriptiveStatistics stats = new DescriptiveStatistics();
+    for (String server : serverToSegmentMapping.keySet()) {
+      List<String> list = serverToSegmentMapping.get(server);
+      LOGGER.info("server " + server + " has " + list.size() + " segments");
+      stats.addValue(list.size());
+    }
+    LOGGER.info("Segment Distrbution stat");
+    LOGGER.info(stats.toString());
+  }
 }
