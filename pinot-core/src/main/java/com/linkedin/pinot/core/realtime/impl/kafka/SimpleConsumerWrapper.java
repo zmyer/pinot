@@ -32,8 +32,12 @@ import com.google.common.collect.Lists;
 import com.google.common.util.concurrent.Uninterruptibles;
 import javax.annotation.Nullable;
 import kafka.api.FetchRequestBuilder;
+import kafka.api.PartitionOffsetRequestInfo;
 import kafka.cluster.Broker;
+import kafka.common.TopicAndPartition;
 import kafka.javaapi.FetchResponse;
+import kafka.javaapi.OffsetRequest;
+import kafka.javaapi.OffsetResponse;
 import kafka.javaapi.TopicMetadata;
 import kafka.javaapi.TopicMetadataRequest;
 import kafka.javaapi.TopicMetadataResponse;
@@ -333,6 +337,7 @@ public class SimpleConsumerWrapper implements Closeable {
       }
 
       // Send the metadata request to Kafka
+
       TopicMetadataResponse topicMetadataResponse = null;
       try {
         topicMetadataResponse = _simpleConsumer.send(new TopicMetadataRequest(Collections.singletonList(topic)));
@@ -386,6 +391,55 @@ public class SimpleConsumerWrapper implements Closeable {
         .build());
 
     return buildOffsetFilteringIterable(fetchResponse.messageSet(_topic, _partition), startOffset, endOffset);
+  }
+
+  public synchronized long fetchOffset() {
+    while(true) {
+      // Try to get into a state where we're connected to Kafka
+      // TODO This needs a time limit
+      while (_currentState.getStateValue() != ConsumerState.CONNECTED_TO_PARTITION_LEADER) {
+        _currentState.process();
+      }
+
+      // Send the offset request to Kafka
+      OffsetRequest request = new OffsetRequest(Collections.singletonMap(new TopicAndPartition(_topic, _partition), new PartitionOffsetRequestInfo(
+          kafka.api.OffsetRequest.EarliestTime(), 1)), kafka.api.OffsetRequest.CurrentVersion(), _clientId);
+      OffsetResponse offsetResponse;
+      try {
+        offsetResponse = _simpleConsumer.getOffsetsBefore(request);
+      } catch (Exception e) {
+        _currentState.handleConsumerException(e);
+        continue;
+      }
+
+      final short errorCode = offsetResponse.errorCode(_topic, _partition);
+
+      if (errorCode == Errors.NONE.code()) {
+        return offsetResponse.offsets(_topic, _partition)[0];
+      } else if (errorCode == Errors.LEADER_NOT_AVAILABLE.code()) {
+        // If there is no leader, it'll take some time for a new leader to be elected, wait 100 ms before retrying
+        Uninterruptibles.sleepUninterruptibly(100, TimeUnit.MILLISECONDS);
+ /*     } else if (errorCode == Errors.INVALID_TOPIC_EXCEPTION.code()) {
+        throw new RuntimeException("Invalid topic name " + topic);
+      } else if (errorCode == Errors.UNKNOWN_TOPIC_OR_PARTITION.code()) {
+        if (MAX_UNKNOWN_TOPIC_REPLY_COUNT < unknownTopicReplyCount) {
+          throw new RuntimeException("Topic " + topic + " does not exist");
+        } else {
+          // Kafka topic creation can sometimes take some time, so we'll retry after a little bit
+          unknownTopicReplyCount++;
+          Uninterruptibles.sleepUninterruptibly(100, TimeUnit.MILLISECONDS);
+        }*/
+      } else {
+        // Retry after a short delay
+/*        kafkaErrorCount++;
+
+        if (MAX_KAFKA_ERROR_COUNT < kafkaErrorCount) {
+          throw Errors.forCode(errorCode).exception();
+        }*/
+
+        Uninterruptibles.sleepUninterruptibly(100, TimeUnit.MILLISECONDS);
+      }
+    }
   }
 
   private Iterable<MessageAndOffset> buildOffsetFilteringIterable(final ByteBufferMessageSet messageAndOffsets, final long startOffset, final long endOffset) {

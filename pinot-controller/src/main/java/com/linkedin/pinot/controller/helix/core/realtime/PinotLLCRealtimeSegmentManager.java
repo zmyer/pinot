@@ -16,12 +16,16 @@
 
 package com.linkedin.pinot.controller.helix.core.realtime;
 
+import com.linkedin.pinot.common.utils.KafkaStarterUtils;
+import com.linkedin.pinot.core.realtime.impl.kafka.KafkaSimpleConsumerFactoryImpl;
+import com.linkedin.pinot.core.realtime.impl.kafka.SimpleConsumerWrapper;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import org.apache.commons.io.IOUtils;
 import org.apache.helix.AccessOption;
 import org.apache.helix.HelixAdmin;
 import org.apache.helix.HelixManager;
@@ -129,7 +133,7 @@ public class PinotLLCRealtimeSegmentManager {
    * method.
    */
   public void setupHelixEntries(final String topicName, final String realtimeTableName, int nPartitions,
-      final List<String> instanceNames, int nReplicas, long startOffset, IdealState idealState, boolean create) {
+      final List<String> instanceNames, int nReplicas, String initialOffset, IdealState idealState, boolean create) {
     if (nReplicas > instanceNames.size()) {
       throw new RuntimeException("Replicas requested(" + nReplicas + ") cannot fit within number of instances(" +
           instanceNames.size() + ") for table " + realtimeTableName + " topic " + topicName);
@@ -169,7 +173,7 @@ public class PinotLLCRealtimeSegmentManager {
       znRecord.setListField(Integer.toString(p), instances);
     }
     writeKafkaPartitionAssignemnt(realtimeTableName, znRecord);
-    setupInitialSegments(realtimeTableName, znRecord, startOffset, idealState, create, nReplicas);
+    setupInitialSegments(realtimeTableName, znRecord, topicName, initialOffset, idealState, create, nReplicas);
   }
 
   protected void writeKafkaPartitionAssignemnt(final String realtimeTableName, ZNRecord znRecord) {
@@ -182,8 +186,8 @@ public class PinotLLCRealtimeSegmentManager {
     return _propertyStore.get(path, null, AccessOption.PERSISTENT);
   }
 
-  protected void setupInitialSegments(String realtimeTableName, ZNRecord partitionAssignment, long startOffset,
-      IdealState idealState, boolean create, int nReplicas) {
+  protected void setupInitialSegments(String realtimeTableName, ZNRecord partitionAssignment, String topicName, String
+      initialOffset, IdealState idealState, boolean create, int nReplicas) {
     List<String> currentSegments = getExistingSegments(realtimeTableName);
     // Make sure that there are no low-level segments existing.
     if (currentSegments != null) {
@@ -206,25 +210,40 @@ public class PinotLLCRealtimeSegmentManager {
     List<ZNRecord> records = new ArrayList<>(nPartitions);
     final long now = System.currentTimeMillis();
     final int seqNum = 0; // Initial seq number for the segments
+
     for (int i = 0; i < nPartitions; i++) {
-      final List instances = partitionMap.get(Integer.toString(i));
-      LLCRealtimeSegmentZKMetadata metadata = new LLCRealtimeSegmentZKMetadata();
-      final String rawTableName = TableNameBuilder.extractRawTableName(realtimeTableName);
-      LLCSegmentName llcSegmentName = new LLCSegmentName(rawTableName, i, seqNum, now);
-      final String segName = llcSegmentName.getSegmentName();
+      SimpleConsumerWrapper kafkaConsumer = SimpleConsumerWrapper.forPartitionConsumption(new KafkaSimpleConsumerFactoryImpl(),
+          KafkaStarterUtils.DEFAULT_KAFKA_BROKER, "dummyClientId", topicName, i);
+      try {
+        final List instances = partitionMap.get(Integer.toString(i));
+        LLCRealtimeSegmentZKMetadata metadata = new LLCRealtimeSegmentZKMetadata();
+        final String rawTableName = TableNameBuilder.extractRawTableName(realtimeTableName);
+        LLCSegmentName llcSegmentName = new LLCSegmentName(rawTableName, i, seqNum, now);
+        final String segName = llcSegmentName.getSegmentName();
 
-      metadata.setCreationTime(now);
-      metadata.setStartOffset(startOffset);
-      metadata.setNumReplicas(instances.size());
-      metadata.setTableName(rawTableName);
-      metadata.setSegmentName(segName);
-      metadata.setStatus(CommonConstants.Segment.Realtime.Status.IN_PROGRESS);
+        metadata.setCreationTime(now);
 
-      ZNRecord record = metadata.toZNRecord();
-      final String znodePath = PinotRealtimeSegmentManager.getSegmentsPath() + "/" + realtimeTableName + "/" + segName;
-      paths.add(znodePath);
-      records.add(record);
-      idealStateEntries.put(segName, instances);
+        if (initialOffset == null || initialOffset.equalsIgnoreCase("largest")) {
+          metadata.setStartOffset(kafkaConsumer.fetchOffset());
+        } else if (initialOffset.equalsIgnoreCase("smallest")) {
+          metadata.setStartOffset(kafkaConsumer.fetchOffset());
+        } else {
+          throw new RuntimeException("Unknown initial offset value " + initialOffset);
+        }
+
+        metadata.setNumReplicas(instances.size());
+        metadata.setTableName(rawTableName);
+        metadata.setSegmentName(segName);
+        metadata.setStatus(CommonConstants.Segment.Realtime.Status.IN_PROGRESS);
+
+        ZNRecord record = metadata.toZNRecord();
+        final String znodePath = PinotRealtimeSegmentManager.getSegmentsPath() + "/" + realtimeTableName + "/" + segName;
+        paths.add(znodePath);
+        records.add(record);
+        idealStateEntries.put(segName, instances);
+      } finally {
+        IOUtils.closeQuietly(kafkaConsumer);
+      }
     }
 
     writeSegmentsToPropertyStore(paths, records);
