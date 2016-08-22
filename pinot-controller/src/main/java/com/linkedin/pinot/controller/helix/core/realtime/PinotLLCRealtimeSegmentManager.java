@@ -133,7 +133,8 @@ public class PinotLLCRealtimeSegmentManager {
    * method.
    */
   public void setupHelixEntries(final String topicName, final String realtimeTableName, int nPartitions,
-      final List<String> instanceNames, int nReplicas, String initialOffset, IdealState idealState, boolean create) {
+      final List<String> instanceNames, int nReplicas, String initialOffset, String bootstrapHosts, IdealState
+      idealState, boolean create) {
     if (nReplicas > instanceNames.size()) {
       throw new RuntimeException("Replicas requested(" + nReplicas + ") cannot fit within number of instances(" +
           instanceNames.size() + ") for table " + realtimeTableName + " topic " + topicName);
@@ -173,7 +174,8 @@ public class PinotLLCRealtimeSegmentManager {
       znRecord.setListField(Integer.toString(p), instances);
     }
     writeKafkaPartitionAssignemnt(realtimeTableName, znRecord);
-    setupInitialSegments(realtimeTableName, znRecord, topicName, initialOffset, idealState, create, nReplicas);
+    setupInitialSegments(realtimeTableName, znRecord, topicName, initialOffset, bootstrapHosts, idealState, create,
+        nReplicas);
   }
 
   protected void writeKafkaPartitionAssignemnt(final String realtimeTableName, ZNRecord znRecord) {
@@ -187,7 +189,7 @@ public class PinotLLCRealtimeSegmentManager {
   }
 
   protected void setupInitialSegments(String realtimeTableName, ZNRecord partitionAssignment, String topicName, String
-      initialOffset, IdealState idealState, boolean create, int nReplicas) {
+      initialOffset, String bootstrapHosts, IdealState idealState, boolean create, int nReplicas) {
     List<String> currentSegments = getExistingSegments(realtimeTableName);
     // Make sure that there are no low-level segments existing.
     if (currentSegments != null) {
@@ -213,7 +215,7 @@ public class PinotLLCRealtimeSegmentManager {
 
     for (int i = 0; i < nPartitions; i++) {
       SimpleConsumerWrapper kafkaConsumer = SimpleConsumerWrapper.forPartitionConsumption(new KafkaSimpleConsumerFactoryImpl(),
-          KafkaStarterUtils.DEFAULT_KAFKA_BROKER, "dummyClientId", topicName, i);
+          bootstrapHosts, "dummyClientId", topicName, i);
       try {
         final List instances = partitionMap.get(Integer.toString(i));
         LLCRealtimeSegmentZKMetadata metadata = new LLCRealtimeSegmentZKMetadata();
