@@ -225,13 +225,14 @@ public class PinotLLCRealtimeSegmentManager {
 
         metadata.setCreationTime(now);
 
+        final long startOffset = kafkaConsumer.fetchOffset();
         if (initialOffset == null || initialOffset.equalsIgnoreCase("largest")) {
-          metadata.setStartOffset(kafkaConsumer.fetchOffset());
         } else if (initialOffset.equalsIgnoreCase("smallest")) {
-          metadata.setStartOffset(kafkaConsumer.fetchOffset());
         } else {
           throw new RuntimeException("Unknown initial offset value " + initialOffset);
         }
+        LOGGER.warn("Setting start offset for segment {} to {}", segName, startOffset);
+        metadata.setStartOffset(startOffset);
 
         metadata.setNumReplicas(instances.size());
         metadata.setTableName(rawTableName);
