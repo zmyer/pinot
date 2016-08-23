@@ -424,7 +424,12 @@ public class SimpleConsumerWrapper implements Closeable {
       final short errorCode = offsetResponse.errorCode(_topic, _partition);
 
       if (errorCode == Errors.NONE.code()) {
-        return offsetResponse.offsets(_topic, _partition)[0];
+        long offset = offsetResponse.offsets(_topic, _partition)[0];
+        if (offset == 0L) {
+          LOGGER.warn("Fetched offset of 0 for topic {} and partition {}, is this a newly created topic?", _topic,
+              _partition);
+        }
+        return offset;
       } else if (errorCode == Errors.LEADER_NOT_AVAILABLE.code()) {
         // If there is no leader, it'll take some time for a new leader to be elected, wait 100 ms before retrying
         Uninterruptibles.sleepUninterruptibly(100, TimeUnit.MILLISECONDS);
@@ -516,6 +521,16 @@ public class SimpleConsumerWrapper implements Closeable {
     if (needToCloseConsumer) {
       _simpleConsumer.close();
       _simpleConsumer = null;
+    }
+  }
+
+  public static void main(String[] args) throws Exception {
+    SimpleConsumerWrapper wrapper = forMetadataConsumption(new KafkaSimpleConsumerFactoryImpl(), "ei3-kafka-kafka-aggregate-vip.stg.linkedin.com:10251", "dummy");
+    int partitionCount = wrapper.getPartitionCount("ShareSocialGestureEvent", 10000L);
+    wrapper.close();
+    for (int i = 0; i < partitionCount; i++) {
+      SimpleConsumerWrapper consumerWrapper = forPartitionConsumption(new KafkaSimpleConsumerFactoryImpl(), "ei3-kafka-kafka-aggregate-vip.stg.linkedin.com:10251", "dummy", "ShareSocialGestureEvent", i);
+      System.out.println(i + ":" + consumerWrapper.fetchOffset());
     }
   }
 }
