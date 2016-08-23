@@ -393,8 +393,10 @@ public class SimpleConsumerWrapper implements Closeable {
     if (fetchResponse.hasError()) {
       throw Errors.forCode(fetchResponse.errorCode(_topic, _partition)).exception();
     } else {
-      LOGGER.warn("Fetched {} bytes for topic {} and partition {}",
-          fetchResponse.messageSet(_topic, _partition).sizeInBytes(), _topic, _partition);
+      if (fetchResponse.messageSet(_topic, _partition).sizeInBytes() != 0) {
+        LOGGER.warn("Fetched {} bytes for topic {} and partition {}",
+            fetchResponse.messageSet(_topic, _partition).sizeInBytes(), _topic, _partition);
+      }
     }
 
     return buildOffsetFilteringIterable(fetchResponse.messageSet(_topic, _partition), startOffset, endOffset);

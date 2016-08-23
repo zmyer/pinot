@@ -233,6 +233,7 @@ public class PinotLLCRealtimeSegmentManager {
         }
         LOGGER.warn("Setting start offset for segment {} to {}", segName, startOffset);
         metadata.setStartOffset(startOffset);
+        metadata.setEndOffset(Long.MAX_VALUE);
 
         metadata.setNumReplicas(instances.size());
         metadata.setTableName(rawTableName);
