@@ -79,7 +79,7 @@ public class SqlQueryBuilder {
       insertSqlMap.put(tableName, insertSql);
       System.out.println(insertSql);
     }
-
+    System.out.println("Generating insert statement for " + tableName);
     String sql = insertSqlMap.get(tableName);
     PreparedStatement preparedStatement =
         conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS);
@@ -88,19 +88,27 @@ public class SqlQueryBuilder {
     int parameterIndex = 1;
     for (ColumnInfo columnInfo : columnInfoMap.values()) {
       if (!AUTO_UPDATE_COLUMN_SET.contains(columnInfo.columnNameInDB.toLowerCase())) {
-        Object val = columnInfo.field.get(entity);
-        System.out.println("Setting value:" + val + " for " + columnInfo.columnNameInDB);
-        if (val != null) {
-          if (columnInfo.sqlType == Types.CLOB) {
-            Clob clob = conn.createClob();
-            clob.setString(1, val.toString());
-            preparedStatement.setClob(parameterIndex++, clob);
-          } else {
-            preparedStatement.setObject(parameterIndex++, val.toString(), columnInfo.sqlType);
+        try {
+          Object val = null;
+          if (columnInfo.field != null) {
+            val = columnInfo.field.get(entity);
           }
-
-        } else {
-          preparedStatement.setNull(parameterIndex++, columnInfo.sqlType);
+          if (val != null) {
+            System.out.println("Setting value:" + val + " for " + columnInfo.columnNameInDB);
+            if (columnInfo.sqlType == Types.CLOB) {
+              Clob clob = conn.createClob();
+              clob.setString(1, val.toString());
+              preparedStatement.setClob(parameterIndex++, clob);
+            } else {
+              preparedStatement.setObject(parameterIndex++, val.toString(), columnInfo.sqlType);
+            }
+          } else {
+            preparedStatement.setNull(parameterIndex++, columnInfo.sqlType);
+          }
+        } catch (Exception e) {
+          System.err
+              .println("Exception while setting value for column:" + columnInfo.columnNameInDB);
+          throw e;
         }
       }
     }

@@ -1,5 +1,6 @@
 package com.linkedin.thirdeye.datalayer.util;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.CaseFormat;
 import com.google.inject.AbstractModule;
 import com.google.inject.Guice;
@@ -26,10 +27,23 @@ import org.apache.tomcat.jdbc.pool.DataSource;
 public abstract class DaoProviderUtil {
 
   private static Injector injector;
+  private static PersistenceConfig configuration;
+  private static DataSource dataSource;
 
-  public static void init(File localConfigFile) {
-    PersistenceConfig configuration = PersistenceUtil.createConfiguration(localConfigFile);
-    DataSource dataSource = new DataSource();
+  /**
+   * used only for testing to get raw connection
+   * 
+   * @param localConfigFile
+   * @return
+   */
+  @VisibleForTesting
+  public static DataSource getDataSource() {
+    return dataSource;
+  }
+
+  public static void initConfiguration(File localConfigFile) {
+    configuration = PersistenceUtil.createConfiguration(localConfigFile);
+    dataSource = new DataSource();
     dataSource.setInitialSize(10);
     dataSource.setDefaultAutoCommit(true);
     dataSource.setMaxActive(100);
@@ -37,7 +51,13 @@ public abstract class DaoProviderUtil {
     dataSource.setPassword(configuration.getDatabaseConfiguration().getPassword());
     dataSource.setUrl(configuration.getDatabaseConfiguration().getUrl());
     dataSource.setDriverClassName(configuration.getDatabaseConfiguration().getDriver());
+  }
 
+  public static void initGuiceInjector() {
+    if (dataSource == null) {
+      throw new RuntimeException(
+          "Datasource is not initialized. Call initConfiguration(File localConfigFile) before calling this method");
+    }
     DataSourceModule dataSourceModule = new DataSourceModule(dataSource);
     injector = Guice.createInjector(dataSourceModule);
   }
@@ -56,6 +76,10 @@ public abstract class DaoProviderUtil {
   }
 
   public static <T> T getInstance(Class<T> c) {
+    if (injector == null) {
+      throw new RuntimeException(
+          "Guice injector is not initialized. Call initGuiceInjector() before calling this method");
+    }
     return injector.getInstance(c);
   }
 
@@ -69,14 +93,22 @@ public abstract class DaoProviderUtil {
       this.dataSource = dataSource;
       entityMappingHolder = new EntityMappingHolder();
       try (Connection conn = dataSource.getConnection()) {
-        entityMappingHolder.register(conn, AnomalyFeedback.class, convertCamelCaseToUnderscore(AnomalyFeedback.class.getName()));
-        entityMappingHolder.register(conn, AnomalyFunction.class, convertCamelCaseToUnderscore(AnomalyFunction.class.getName()));
-        entityMappingHolder.register(conn, Job.class, convertCamelCaseToUnderscore(Job.class.getName()));
-        entityMappingHolder.register(conn, AnomalyMergedResult.class, convertCamelCaseToUnderscore(AnomalyMergedResult.class.getName()));
-        entityMappingHolder.register(conn, AnomalyRawResult.class, convertCamelCaseToUnderscore(AnomalyRawResult.class.getName()));
-        entityMappingHolder.register(conn, Task.class, convertCamelCaseToUnderscore(Task.class.getName()));
-        entityMappingHolder.register(conn, EmailConfiguration.class, convertCamelCaseToUnderscore(EmailConfiguration.class.getName()));
-        entityMappingHolder.register(conn, WebappConfig.class, convertCamelCaseToUnderscore(WebappConfig.class.getName()));
+        entityMappingHolder.register(conn, AnomalyFeedback.class,
+            convertCamelCaseToUnderscore(AnomalyFeedback.class.getSimpleName()));
+        entityMappingHolder.register(conn, AnomalyFunction.class,
+            convertCamelCaseToUnderscore(AnomalyFunction.class.getSimpleName()));
+        entityMappingHolder.register(conn, Job.class,
+            convertCamelCaseToUnderscore(Job.class.getSimpleName()));
+        entityMappingHolder.register(conn, AnomalyMergedResult.class,
+            convertCamelCaseToUnderscore(AnomalyMergedResult.class.getSimpleName()));
+        entityMappingHolder.register(conn, AnomalyRawResult.class,
+            convertCamelCaseToUnderscore(AnomalyRawResult.class.getSimpleName()));
+        entityMappingHolder.register(conn, Task.class,
+            convertCamelCaseToUnderscore(Task.class.getSimpleName()));
+        entityMappingHolder.register(conn, EmailConfiguration.class,
+            convertCamelCaseToUnderscore(EmailConfiguration.class.getSimpleName()));
+        entityMappingHolder.register(conn, WebappConfig.class,
+            convertCamelCaseToUnderscore(WebappConfig.class.getSimpleName()));
       } catch (Exception e) {
         throw new RuntimeException(e);
       }
@@ -90,8 +122,7 @@ public abstract class DaoProviderUtil {
     }
 
     @Override
-    protected void configure() {
-    }
+    protected void configure() {}
 
     @Provides
     javax.sql.DataSource getDataSource() {
@@ -103,7 +134,8 @@ public abstract class DaoProviderUtil {
       return builder;
     }
 
-    @Provides GenericResultSetMapper getResultSetMapper() {
+    @Provides
+    GenericResultSetMapper getResultSetMapper() {
       return genericResultSetMapper;
     }
   }

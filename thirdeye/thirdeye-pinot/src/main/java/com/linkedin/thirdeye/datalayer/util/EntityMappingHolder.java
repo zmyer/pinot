@@ -3,12 +3,14 @@ package com.linkedin.thirdeye.datalayer.util;
 import com.google.common.collect.BiMap;
 import com.google.common.collect.HashBiMap;
 import com.linkedin.thirdeye.datalayer.entity.AbstractEntity;
+import com.linkedin.thirdeye.datalayer.entity.AbstractJsonEntity;
 import com.linkedin.thirdeye.db.entity.AbstractBaseEntity;
 
 import java.lang.reflect.Field;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -28,21 +30,23 @@ public class EntityMappingHolder {
     DatabaseMetaData databaseMetaData = connection.getMetaData();
     String catalog = null;
     String schemaPattern = null;
-    String tableNamePattern = tableName;
     String columnNamePattern = null;
-    ResultSet rs =
-        databaseMetaData.getColumns(catalog, schemaPattern, tableNamePattern, columnNamePattern);
-
+    //listTables(databaseMetaData, catalog, schemaPattern);
     tableToEntityNameMap.put(tableName, entityClass.getSimpleName());
     columnMappingPerTable.put(tableName, HashBiMap.create());
     LinkedHashMap<String, ColumnInfo> columnInfoMap = new LinkedHashMap<>();
-
-    while (rs.next()) {
-      String columnName = rs.getString(4);
-      ColumnInfo columnInfo = new ColumnInfo();
-      columnInfo.columnNameInDB = columnName.toLowerCase();
-      columnInfo.sqlType = rs.getInt(5);
-      columnInfoMap.put(columnName.toLowerCase(), columnInfo);
+    //try both upper case and lower case 
+    String[] tableNamePatterns = new String[] {tableName.toLowerCase(), tableName.toUpperCase()};
+    for (String tableNamePattern : tableNamePatterns) {
+      ResultSet rs =
+          databaseMetaData.getColumns(catalog, schemaPattern, tableNamePattern, columnNamePattern);
+      while (rs.next()) {
+        String columnName = rs.getString(4);
+        ColumnInfo columnInfo = new ColumnInfo();
+        columnInfo.columnNameInDB = columnName.toLowerCase();
+        columnInfo.sqlType = rs.getInt(5);
+        columnInfoMap.put(columnName.toLowerCase(), columnInfo);
+      }
     }
     List<Field> fields = new ArrayList<>();
     getAllFields(fields, entityClass);
@@ -70,6 +74,17 @@ public class EntityMappingHolder {
     columnInfoPerTable.put(tableName, columnInfoMap);
   }
 
+  private void listTables(DatabaseMetaData databaseMetaData, String catalog, String schemaPattern)
+      throws SQLException {
+    ResultSet tablesResultSet = databaseMetaData.getTables(catalog, schemaPattern, "%", null);
+    while (tablesResultSet.next()) {
+      for (int i = 1; i <= tablesResultSet.getMetaData().getColumnCount(); i++) {
+        System.out.print(tablesResultSet.getString(i) + ", ");
+      }
+      System.out.println("");
+    }
+  }
+
   public static List<Field> getAllFields(List<Field> fields, Class<?> type) {
     fields.addAll(Arrays.asList(type.getDeclaredFields()));
     if (type.getSuperclass() != null) {
@@ -79,6 +94,18 @@ public class EntityMappingHolder {
   }
 
 }
+
+
+class TableInfo {
+  String dbTableName;
+  String className;
+
+  String getDbTableName(Class<? extends AbstractJsonEntity> clazz) {
+    return null;
+  }
+
+}
+
 
 class ColumnInfo {
   String columnNameInDB;

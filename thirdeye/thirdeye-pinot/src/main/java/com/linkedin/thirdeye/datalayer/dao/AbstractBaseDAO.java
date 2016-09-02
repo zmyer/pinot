@@ -5,8 +5,6 @@ import com.linkedin.thirdeye.datalayer.entity.AbstractJsonEntity;
 import com.linkedin.thirdeye.datalayer.util.GenericResultSetMapper;
 import com.linkedin.thirdeye.datalayer.util.Predicate;
 import com.linkedin.thirdeye.datalayer.util.SqlQueryBuilder;
-import com.linkedin.thirdeye.db.entity.AbstractBaseEntity;
-
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -18,16 +16,22 @@ import java.util.Map;
 import java.util.Set;
 import javax.sql.DataSource;
 
+import org.codehaus.jackson.map.ObjectMapper;
+
 public class AbstractBaseDAO<E extends AbstractJsonEntity> {
 
   final Class<E> entityClass;
 
-  @Inject GenericResultSetMapper genericResultSetMapper;
+  @Inject
+  GenericResultSetMapper genericResultSetMapper;
 
-  @Inject SqlQueryBuilder sqlQueryBuilder;
+  @Inject
+  SqlQueryBuilder sqlQueryBuilder;
 
   @Inject
   DataSource dataSource;
+
+  ObjectMapper objectMapper = new ObjectMapper();
 
   /**
    * Use at your own risk!!! Ensure to close the connection after using it or it can cause a leak.
@@ -53,6 +57,10 @@ public class AbstractBaseDAO<E extends AbstractJsonEntity> {
     return runTask(new QueryTask<Long>() {
       @Override
       public Long handle(Connection connection) throws Exception {
+        if (entity instanceof AbstractJsonEntity) {
+          String jsonVal = objectMapper.writeValueAsString(entity);
+          entity.setJsonVal(jsonVal);
+        }
         PreparedStatement insertStatement =
             sqlQueryBuilder.createInsertStatement(connection, entity);
         int affectedRows = insertStatement.executeUpdate();
