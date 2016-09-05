@@ -1,12 +1,14 @@
-package com.linkedin.thirdeye.db.entity;
+package com.linkedin.thirdeye.datalayer.pojo;
 
 import javax.persistence.GeneratedValue;
 import javax.persistence.GenerationType;
 import javax.persistence.Id;
 import javax.persistence.MappedSuperclass;
 
+import com.linkedin.thirdeye.datalayer.dto.AbstractDTO;
+
 @MappedSuperclass
-public abstract class AbstractBaseEntity {
+public abstract class AbstractBean extends AbstractDTO{
   @Id
   @GeneratedValue(strategy = GenerationType.IDENTITY)
   private Long id;

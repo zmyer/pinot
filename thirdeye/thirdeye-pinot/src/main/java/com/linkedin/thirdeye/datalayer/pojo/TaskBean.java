@@ -1,4 +1,4 @@
-package com.linkedin.thirdeye.db.entity;
+package com.linkedin.thirdeye.datalayer.pojo;
 
 import java.sql.Timestamp;
 import java.util.Objects;
@@ -27,11 +27,11 @@ import com.linkedin.thirdeye.anomaly.task.TaskConstants.TaskType;
 @Entity
 @Table(name = "anomaly_tasks")
 
-public class AnomalyTaskSpec extends AbstractBaseEntity {
+public class TaskBean extends AbstractBean {
 
   @ManyToOne(cascade = CascadeType.MERGE, fetch = FetchType.EAGER, optional = true)
   @JoinColumn(name = "job_id")
-  private AnomalyJobSpec job;
+  private JobBean job;
 
   @Enumerated(EnumType.STRING)
   @Column(name = "task_type", nullable = false)
@@ -65,11 +65,11 @@ public class AnomalyTaskSpec extends AbstractBaseEntity {
   private int version;
 
 
-  public AnomalyJobSpec getJob() {
+  public JobBean getJob() {
     return job;
   }
 
-  public void setJob(AnomalyJobSpec job) {
+  public void setJob(JobBean job) {
     this.job = job;
   }
 
@@ -140,10 +140,10 @@ public class AnomalyTaskSpec extends AbstractBaseEntity {
 
   @Override
   public boolean equals(Object o) {
-    if (!(o instanceof AnomalyTaskSpec)) {
+    if (!(o instanceof TaskBean)) {
       return false;
     }
-    AnomalyTaskSpec af = (AnomalyTaskSpec) o;
+    TaskBean af = (TaskBean) o;
     return Objects.equals(getId(), af.getId()) && Objects.equals(status, af.getStatus())
         && Objects.equals(taskStartTime, af.getTaskStartTime()) && Objects.equals(taskEndTime, af.getTaskEndTime())
         && Objects.equals(taskInfo, af.getTaskInfo()) && Objects.equals(job, af.getJob());

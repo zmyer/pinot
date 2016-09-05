@@ -1,6 +1,8 @@
-package com.linkedin.thirdeye.db.entity;
+package com.linkedin.thirdeye.datalayer.pojo;
 
 import com.linkedin.thirdeye.constant.MetricAggFunction;
+import com.linkedin.thirdeye.datalayer.dto.AbstractDTO;
+
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
@@ -17,7 +19,7 @@ import com.linkedin.thirdeye.util.ThirdEyeUtils;
 
 @Entity
 @Table(name = "anomaly_functions")
-public class AnomalyFunctionSpec extends AbstractBaseEntity {
+public class AnomalyFunctionBean extends AbstractDTO{
 
   @Column(name = "collection", nullable = false)
   private String collection;
@@ -207,10 +209,10 @@ public class AnomalyFunctionSpec extends AbstractBaseEntity {
 
   @Override
   public boolean equals(Object o) {
-    if (!(o instanceof AnomalyFunctionSpec)) {
+    if (!(o instanceof AnomalyFunctionBean)) {
       return false;
     }
-    AnomalyFunctionSpec af = (AnomalyFunctionSpec) o;
+    AnomalyFunctionBean af = (AnomalyFunctionBean) o;
     return Objects.equals(getId(), af.getId()) && Objects.equals(collection, af.getCollection())
         && Objects.equals(metric, af.getMetric())
         && Objects.equals(metricFunction, af.getMetricFunction())

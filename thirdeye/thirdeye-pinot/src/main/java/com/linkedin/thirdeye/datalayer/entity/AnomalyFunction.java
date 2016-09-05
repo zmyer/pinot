@@ -11,7 +11,6 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.google.common.base.MoreObjects;
 import com.google.common.collect.Multimap;
 import com.linkedin.thirdeye.constant.MetricAggFunction;
-import com.linkedin.thirdeye.db.entity.AnomalyFunctionSpec;
 import com.linkedin.thirdeye.util.ThirdEyeUtils;
 
 public class AnomalyFunction extends AbstractJsonEntity {
@@ -222,10 +221,10 @@ public class AnomalyFunction extends AbstractJsonEntity {
 
   @Override
   public boolean equals(Object o) {
-    if (!(o instanceof AnomalyFunctionSpec)) {
+    if (!(o instanceof AnomalyFunction)) {
       return false;
     }
-    AnomalyFunctionSpec af = (AnomalyFunctionSpec) o;
+    AnomalyFunction af = (AnomalyFunction) o;
     return Objects.equals(getId(), af.getId()) && Objects.equals(collection, af.getCollection())
         && Objects.equals(metric, af.getMetric())
         && Objects.equals(metricFunction, af.getMetricFunction())
