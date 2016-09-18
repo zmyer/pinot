@@ -51,7 +51,7 @@ public class SegmentCompletionProtocol {
    * MAX_SEGMENT_COMMIT_TIME_MS is the longest time (msecs) a server will take to complete building a segment and committing
    * it  (via a SegmentCommit message) after the server has been notified that it is the committer.
    */
-  public static final long MAX_SEGMENT_COMMIT_TIME_MS = 15000;
+  public static final long MAX_SEGMENT_COMMIT_TIME_MS = 120000;
 
   public enum ControllerResponseStatus {
     /** Never sent by the controller, but locally used by server when sending a request fails */

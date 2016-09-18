@@ -21,7 +21,6 @@ import com.linkedin.pinot.common.request.BrokerRequest;
 import com.linkedin.pinot.common.request.GroupBy;
 import com.linkedin.pinot.pql.parsers.pql2.ast.TopAstNode;
 
-
 /**
  * Some tests for the PQL 2 compiler.
  */
@@ -50,17 +49,27 @@ public class Pql2CompilerTest {
 
   @Test
   public void testTopZero() throws Exception {
-    Pql2Compiler compiler  = new Pql2Compiler();
+    Pql2Compiler compiler = new Pql2Compiler();
     testTopZeroFor(compiler, "select count(*) from someTable where c = 5 group by X top 0", TopAstNode.DEFAULT_TOP_N, false);
     testTopZeroFor(compiler, "select count(*) from someTable where c = 5 group by X top 1", 1, false);
     testTopZeroFor(compiler, "select count(*) from someTable where c = 5 group by X top -1", TopAstNode.DEFAULT_TOP_N, true);
+  }
+
+  @Test
+  public void testGroupByUdfs() throws Exception {
+    Pql2Compiler compiler = new Pql2Compiler();
+    testTopZeroFor(compiler,
+        "select count(*) from someTable  group by convert_time(X, timePattern, yyyy-MM-dd'T'HH:mm:ssX) top 1", 1,
+        true);
   }
 
   private void testTopZeroFor(Pql2Compiler compiler, String s, final int expectedTopN, boolean parseException) throws Exception {
     BrokerRequest req;
     try {
       req = compiler.compileToBrokerRequest(s);
+      System.out.println(req);
     } catch (Pql2CompilationException e) {
+      System.out.println(e);
       if (parseException) {
         return;
       }

@@ -99,7 +99,6 @@ import kafka.javaapi.producer.Producer;
 import kafka.producer.KeyedMessage;
 import kafka.producer.ProducerConfig;
 
-
 /**
  * Shared implementation details of the cluster integration tests.
  */
@@ -203,176 +202,14 @@ public abstract class BaseClusterIntegrationTest extends ClusterTest {
   }
 
   protected void runQuery(final String pqlQuery, List<String> sqlQueries) throws Exception {
-    try {
       // TODO Use Pinot client API for this
       queryCount++;
       Statement statement = _connection.createStatement(ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);
 
       // Run the query
       JSONObject response = postQuery(pqlQuery);
-      if (response.getJSONArray("exceptions").length() > 0) {
-        String processingException = response.getJSONArray("exceptions").get(0).toString();
-        if (GATHER_FAILED_QUERIES) {
-          saveFailedQuery(pqlQuery, sqlQueries, "Got exceptions in pql query " + pqlQuery + ", got " + response + " " +
-              processingException);
-        } else {
-          Assert.fail("Got exceptions in pql query: " + pqlQuery + " " + processingException);
-        }
-      }
-
-      if (response.has("aggregationResults") && response.getJSONArray("aggregationResults").length() != 0) {
-        JSONArray aggregationResultsArray = response.getJSONArray("aggregationResults");
-        JSONObject firstAggregationResult = aggregationResultsArray.getJSONObject(0);
-        if (firstAggregationResult.has("value")) {
-          LOGGER.debug("Trying to execute sql query: " + sqlQueries.get(0));
-          statement.execute(sqlQueries.get(0));
-          ResultSet rs = statement.getResultSet();
-          LOGGER.debug("Trying to get result from sql: " + rs);
-          // Single value result for the aggregation, compare with the actual value
-          final String bqlValue = firstAggregationResult.getString("value");
-
-          rs.first();
-          final String sqlValue = rs.getString(1);
-
-          LOGGER.debug("bql value: " + bqlValue);
-          LOGGER.debug("sql value: " + sqlValue);
-          long compareSqlValue = -1;
-          long compareBqlValue = -1;
-
-          if (bqlValue != null && sqlValue != null) {
-            // H2 returns float and double values in scientific notation. Convert them to plain notation first..
-            try {
-              compareSqlValue = new BigDecimal(sqlValue).longValue();
-              compareBqlValue = new BigDecimal(bqlValue).longValue();
-            } catch (NumberFormatException e) {
-              LOGGER.warn("Ignoring number format excection in " + sqlValue);
-              compareBqlValue=-2; // So comparison will fail below
-            }
-          }
-
-          if (GATHER_FAILED_QUERIES) {
-            if (!EqualityUtils.isEqual(compareBqlValue, compareSqlValue)) {
-              saveFailedQuery(pqlQuery, sqlQueries, "Values did not match for query " + pqlQuery + ", expected "
-                  + sqlValue + ", got " + bqlValue);
-            }
-          } else {
-            Assert.assertEquals(compareBqlValue, compareSqlValue, "Values did not match for query " + pqlQuery + ",SQL:" + sqlValue + ",BQL:" + bqlValue);
-          }
-        } else if (firstAggregationResult.has("groupByResult")) {
-          // Load values from the query result
-          for (int aggregationGroupIndex = 0; aggregationGroupIndex < aggregationResultsArray.length(); aggregationGroupIndex++) {
-            JSONArray groupByResults =
-                aggregationResultsArray.getJSONObject(aggregationGroupIndex).getJSONArray("groupByResult");
-            if (groupByResults.length() != 0) {
-              int groupKeyCount = groupByResults.getJSONObject(0).getJSONArray("group").length();
-
-              Map<String, String> actualValues = new TreeMap<String, String>(new NullableStringComparator());
-              for (int resultIndex = 0; resultIndex < groupByResults.length(); ++resultIndex) {
-                JSONArray group = groupByResults.getJSONObject(resultIndex).getJSONArray("group");
-                String pinotGroupKey = group.getString(0);
-                for (int groupKeyIndex = 1; groupKeyIndex < groupKeyCount; groupKeyIndex++) {
-                  pinotGroupKey += "\t" + group.getString(groupKeyIndex);
-                }
-
-                actualValues.put(pinotGroupKey, groupByResults.getJSONObject(resultIndex).getString("value"));
-              }
-
-              // Grouped result, build correct values and iterate through to compare both
-              Map<String, String> correctValues = new TreeMap<String, String>(new NullableStringComparator());
-              LOGGER.debug("Trying to execute sql query:{}", sqlQueries.get(aggregationGroupIndex));
-              statement.execute(sqlQueries.get(aggregationGroupIndex));
-              ResultSet rs = statement.getResultSet();
-              LOGGER.debug("Trying to get result from sql: " + rs);
-              rs.beforeFirst();
-              try {
-                while (rs.next()) {
-                  String h2GroupKey = rs.getString(1);
-                  for (int groupKeyIndex = 1; groupKeyIndex < groupKeyCount; groupKeyIndex++) {
-                    h2GroupKey += "\t" + rs.getString(groupKeyIndex + 1);
-                  }
-                  correctValues.put(h2GroupKey, rs.getString(groupKeyCount + 1));
-                }
-              } catch (Exception e) {
-                LOGGER.error("Catch exception when constructing H2 results for group by query", e);
-              }
-              LOGGER.debug("Trying to get result from sql: " + correctValues.toString());
-              LOGGER.debug("Trying to compare result from bql: " + actualValues);
-              LOGGER.debug("Trying to compare result from sql: " + correctValues);
-
-              if (correctValues.size() < 10000) {
-                // Check that Pinot results are contained in the SQL results
-                Set<String> pinotKeys = actualValues.keySet();
-                for (String pinotKey : pinotKeys) {
-                  if (GATHER_FAILED_QUERIES) {
-                    if (!correctValues.containsKey((pinotKey))) {
-                      saveFailedQuery(pqlQuery, sqlQueries, "Result group '" + pinotKey
-                          + "' returned by Pinot was not returned by H2 for query " + pqlQuery, "Bql values: "
-                          + actualValues, "Sql values: " + correctValues);
-                      break;
-                    } else {
-                      double actualValue = Double.parseDouble(actualValues.get(pinotKey));
-                      double correctValue = Double.parseDouble(correctValues.get(pinotKey));
-                      if (1.0 < Math.abs(actualValue - correctValue)) {
-                        saveFailedQuery(pqlQuery, sqlQueries, "Results differ between Pinot and H2 for query "
-                            + pqlQuery + ", expected " + correctValue + ", got " + actualValue + " for group "
-                            + pinotKey, "Bql values: " + actualValues, "Sql values: " + correctValues);
-                        break;
-                      }
-                    }
-                  } else {
-                    if(!correctValues.containsKey(pinotKey)){
-                      LOGGER.error("actualValues from Pinot: " + actualValues);
-                      LOGGER.error("correct values from H2: " + correctValues);
-                    }
-                    Assert.assertTrue(correctValues.containsKey(pinotKey), "Result group '" + pinotKey
-                        + "' returned by Pinot was not returned by H2 for query " + pqlQuery);
-                    Assert.assertEquals(
-                        Double.parseDouble(actualValues.get(pinotKey)),
-                        Double.parseDouble(correctValues.get(pinotKey)),
-                        1.0d,
-                        "Results differ between Pinot and H2 for query " + pqlQuery + ", expected "
-                            + correctValues.get(pinotKey) + ", got " + actualValues.get(pinotKey) + " for group "
-                            + pinotKey + "\nBql values: " + actualValues + "\nSql values: " + correctValues);
-                  }
-                }
-              } else {
-                LOGGER.warn("SQL: {} returned more than 10k rows, skipping comparison", sqlQueries.get(aggregationGroupIndex));
-                queryCount--;
-              }
-            } else {
-              // No records in group by, check that the result set is empty
-              statement.execute(sqlQueries.get(aggregationGroupIndex));
-              ResultSet rs = statement.getResultSet();
-              rs.beforeFirst();
-              int rowCount = 0;
-              while (rs.next()) {
-                rowCount++;
-              }
-
-              if (rowCount != 0) {
-                // Resultset not empty, while Pinot has no results
-                if (GATHER_FAILED_QUERIES) {
-                  saveFailedQuery(pqlQuery, sqlQueries, "Pinot did not return any results while " + rowCount
-                      + " rows were expected for query " + pqlQuery);
-                } else {
-                  Assert.fail("Pinot did not return any results while " + rowCount
-                      + " results were expected for query " + pqlQuery);
-                }
-              }
-            }
-          }
-        }
-      } else {
-        // Don't compare selection results for now
-      }
-    } catch (JSONException exception) {
-      if (GATHER_FAILED_QUERIES) {
-        saveFailedQuery(pqlQuery, sqlQueries, "Query did not return valid JSON while running query " + pqlQuery);
-        exception.printStackTrace();
-      } else {
-        Assert.fail("Query did not return valid JSON while running query " + pqlQuery, exception);
-      }
-    }
+      System.out.println("pql = " + pqlQuery);
+      System.out.println("resp = " + response);
   }
 
   public static void createH2SchemaAndInsertAvroFiles(List<File> avroFiles, Connection connection) {
@@ -643,7 +480,7 @@ public abstract class BaseClusterIntegrationTest extends ClusterTest {
 
       // Non-nullable single value?
       if (fieldType != Schema.Type.ARRAY && fieldType != Schema.Type.UNION) {
-        switch(fieldType) {
+        switch (fieldType) {
           case INT:
             genericRecord.put(field.name(), random.nextInt(100000));
             break;
@@ -658,7 +495,7 @@ public abstract class BaseClusterIntegrationTest extends ClusterTest {
         }
       } else if (fieldType == Schema.Type.UNION) { // Nullable field?
         // Use first type of union to determine actual data type
-        switch(field.schema().getTypes().get(0).getType()) {
+        switch (field.schema().getTypes().get(0).getType()) {
           case INT:
             genericRecord.put(field.name(), random.nextInt(100000));
             break;
@@ -677,7 +514,7 @@ public abstract class BaseClusterIntegrationTest extends ClusterTest {
         int multivalueCount = random.nextInt(MAX_MULTIVALUES);
         List<Object> values = new ArrayList<>(multivalueCount);
 
-        switch(field.schema().getElementType().getType()) {
+        switch (field.schema().getElementType().getType()) {
           case INT:
             for (int i = 0; i < multivalueCount; i++) {
               values.add(random.nextInt(100000));
@@ -707,58 +544,58 @@ public abstract class BaseClusterIntegrationTest extends ClusterTest {
       final com.linkedin.pinot.common.data.Schema inputPinotSchema) {
     int segmentCount = avroFiles.size();
     LOGGER.info("Building " + segmentCount + " segments in parallel");
-    List<ListenableFutureTask<Pair<File, File>>> futureTasks = new ArrayList<ListenableFutureTask<Pair<File,File>>>();
+    List<ListenableFutureTask<Pair<File, File>>> futureTasks = new ArrayList<ListenableFutureTask<Pair<File, File>>>();
 
     for (int i = 1; i <= segmentCount; ++i) {
       final int segmentIndex = i - 1;
       final int segmentNumber = i + baseSegmentIndex;
 
       final ListenableFutureTask<Pair<File, File>> buildSegmentFutureTask =
-          ListenableFutureTask.<Pair<File, File>>create(new Callable<Pair<File, File>>() {
-        @Override
-        public Pair<File, File> call() throws Exception {
-          try {
-            // Build segment
-            LOGGER.info("Starting to build segment " + segmentNumber);
-            File outputDir = new File(baseDirectory, "segment-" + segmentNumber);
-            final File inputAvroFile = avroFiles.get(segmentIndex);
-            final SegmentGeneratorConfig genConfig = SegmentTestUtils
-                .getSegmentGenSpecWithSchemAndProjectedColumns(inputAvroFile, outputDir, TimeUnit.DAYS, tableName, inputPinotSchema);
+          ListenableFutureTask.<Pair<File, File>> create(new Callable<Pair<File, File>>() {
+            @Override
+            public Pair<File, File> call() throws Exception {
+              try {
+                // Build segment
+                LOGGER.info("Starting to build segment " + segmentNumber);
+                File outputDir = new File(baseDirectory, "segment-" + segmentNumber);
+                final File inputAvroFile = avroFiles.get(segmentIndex);
+                final SegmentGeneratorConfig genConfig = SegmentTestUtils
+                    .getSegmentGenSpecWithSchemAndProjectedColumns(inputAvroFile, outputDir, TimeUnit.DAYS, tableName, inputPinotSchema);
 
-            if (inputPinotSchema != null) {
-              genConfig.setSchema(inputPinotSchema);
-            }
+                if (inputPinotSchema != null) {
+                  genConfig.setSchema(inputPinotSchema);
+                }
 
-            // jfim: We add a space and a special character to do a regression test for PINOT-3296 Segments with spaces
-            // in their filename don't work properly
-            genConfig.setSegmentNamePostfix(Integer.toString(segmentNumber) + " %");
-            genConfig.setEnableStarTreeIndex(createStarTreeIndex);
+                // jfim: We add a space and a special character to do a regression test for PINOT-3296 Segments with spaces
+                // in their filename don't work properly
+                genConfig.setSegmentNamePostfix(Integer.toString(segmentNumber) + " %");
+                genConfig.setEnableStarTreeIndex(createStarTreeIndex);
 
-            // Enable off heap star tree format in the integration test.
-            StarTreeIndexSpec starTreeIndexSpec = null;
-            if (createStarTreeIndex) {
-              starTreeIndexSpec = new StarTreeIndexSpec();
-              starTreeIndexSpec.setEnableOffHeapFormat(true);
-            }
-            genConfig.setStarTreeIndexSpec(starTreeIndexSpec);
+                // Enable off heap star tree format in the integration test.
+                StarTreeIndexSpec starTreeIndexSpec = null;
+                if (createStarTreeIndex) {
+                  starTreeIndexSpec = new StarTreeIndexSpec();
+                  starTreeIndexSpec.setEnableOffHeapFormat(true);
+                }
+                genConfig.setStarTreeIndexSpec(starTreeIndexSpec);
 
-            final SegmentIndexCreationDriver driver = SegmentCreationDriverFactory.get(null);
-            driver.init(genConfig);
-            driver.build();
+                final SegmentIndexCreationDriver driver = SegmentCreationDriverFactory.get(null);
+                driver.init(genConfig);
+                driver.build();
 
-            // Tar segment
-            String segmentName = outputDir.list()[0];
-            final String tarGzPath = TarGzCompressionUtils.createTarGzOfDirectory(outputDir.getAbsolutePath() + "/" +
+                // Tar segment
+                String segmentName = outputDir.list()[0];
+                final String tarGzPath = TarGzCompressionUtils.createTarGzOfDirectory(outputDir.getAbsolutePath() + "/" +
                     segmentName, new File(segmentTarDir, segmentName).getAbsolutePath());
-            LOGGER.info("Completed segment " + segmentNumber + " : " + segmentName +" from file " + inputAvroFile.getName());
-            return new ImmutablePair<File, File>(inputAvroFile, new File(tarGzPath));
-          } catch (Exception e) {
+                LOGGER.info("Completed segment " + segmentNumber + " : " + segmentName + " from file " + inputAvroFile.getName());
+                return new ImmutablePair<File, File>(inputAvroFile, new File(tarGzPath));
+              } catch (Exception e) {
                 LOGGER.error("Exception while building segment input: {} output {} ",
                     avroFiles.get(segmentIndex), "segment-" + segmentNumber);
                 throw new RuntimeException(e);
-          }
-        }
-      });
+              }
+            }
+          });
 
       futureTasks.add(buildSegmentFutureTask);
       executor.execute(buildSegmentFutureTask);
@@ -766,16 +603,17 @@ public abstract class BaseClusterIntegrationTest extends ClusterTest {
 
     ListenableFuture<List<Pair<File, File>>> pairListFuture = Futures.allAsList(futureTasks);
     return Futures.transform(pairListFuture, new AsyncFunction<List<Pair<File, File>>, Map<File, File>>() {
-      @Override
-      public ListenableFuture<Map<File, File>> apply(List<Pair<File, File>> input) throws Exception {
-        Map<File, File> avroToSegmentMap = new HashMap<File, File>();
-        for (Pair<File, File> avroToSegmentPair : input) {
-          avroToSegmentMap.put(avroToSegmentPair.getLeft(), avroToSegmentPair.getRight());
-        }
-        return Futures.immediateFuture(avroToSegmentMap);
-      }
-    });
+
+  @Override
+  public ListenableFuture<Map<File, File>> apply(List<Pair<File, File>> input) throws Exception {
+    Map<File, File> avroToSegmentMap = new HashMap<File, File>();
+    for (Pair<File, File> avroToSegmentPair : input) {
+      avroToSegmentMap.put(avroToSegmentPair.getLeft(), avroToSegmentPair.getRight());
+    }
+    return Futures.immediateFuture(avroToSegmentMap);
   }
+
+  });}
 
   protected void waitForRecordCountToStabilizeToExpectedCount(int expectedRecordCount, long deadlineMs) throws Exception {
     int pinotRecordCount = -1;
@@ -802,7 +640,7 @@ public abstract class BaseClusterIntegrationTest extends ClusterTest {
         final long now = System.currentTimeMillis();
         if (now > deadlineMs) {
           Assert.fail("Failed to read " + expectedRecordCount + " records within the deadline (deadline=" + deadlineMs + "ms,now="
-                  + now + "ms,NumRecordsRead=" + pinotRecordCount + ")");
+              + now + "ms,NumRecordsRead=" + pinotRecordCount + ")");
         }
       }
     } while (pinotRecordCount < expectedRecordCount);
@@ -891,8 +729,9 @@ public abstract class BaseClusterIntegrationTest extends ClusterTest {
   public static List<File> unpackAvroData(File tmpDir, int segmentCount)
       throws IOException, ArchiveException {
     TarGzCompressionUtils.unTar(new File(TestUtils.getFileFromResourceUrl(
-            RealtimeClusterIntegrationTest.class.getClassLoader()
-                .getResource("On_Time_On_Time_Performance_2014_100k_subset_nonulls.tar.gz"))), tmpDir);
+        RealtimeClusterIntegrationTest.class.getClassLoader()
+            .getResource("On_Time_On_Time_Performance_2014_100k_subset_nonulls.tar.gz"))),
+        tmpDir);
 
     tmpDir.mkdirs();
     final List<File> avroFiles = new ArrayList<File>(segmentCount);
@@ -954,7 +793,7 @@ public abstract class BaseClusterIntegrationTest extends ClusterTest {
     }
   }
 
-  @Test(enabled = false)  // jfim: This is disabled because testGeneratedQueriesWithMultivalues covers the same thing
+  @Test(enabled = false) // jfim: This is disabled because testGeneratedQueriesWithMultivalues covers the same thing
   public void testGeneratedQueries() throws Exception {
     int generatedQueryCount = getGeneratedQueryCount();
 
@@ -1006,40 +845,10 @@ public abstract class BaseClusterIntegrationTest extends ClusterTest {
 
   protected String[] getHardCodedQuerySet() {
     String[] queries =
-        new String[] { "SELECT AirTime, avg(TotalAddGTime) FROM 'mytable'  WHERE DivAirportLandings BETWEEN 0 AND 0 OR Quarter IN (2, 2, 4, 2, 3, 1, 1, 1) GROUP BY AirTime LIMIT 10000",
-            "SELECT count(*) FROM 'mytable'  WHERE DayofMonth IN ('19', '10', '28', '1', '25', '2') ",
-            "SELECT count(*) FROM 'mytable'  WHERE TaxiOut IN ('35', '70', '29', '74', '126', '106', '70', '134', '118', '43') OR DayofMonth IN ('19', '10', '28', '1', '25') ",
-            "SELECT ArrDelay, avg(DestCityMarketID) FROM 'mytable'  WHERE TaxiOut IN ('35', '70', '29', '74', '126', '106', '70', '134', '118', '43') OR DayofMonth IN ('19', '10', '28', '1', '25') GROUP BY ArrDelay LIMIT 10000",
-            "SELECT OriginAirportSeqID, min(CRSArrTime) FROM 'mytable'  WHERE TaxiOut BETWEEN 140 AND 26 OR DestCityName >= 'Gainesville, FL' GROUP BY OriginAirportSeqID LIMIT 10000",
-            "SELECT NASDelay, DestAirportSeqID, min(DayOfWeek) FROM 'mytable'  WHERE DaysSinceEpoch IN ('16426', '16176', '16314', '16321') GROUP BY NASDelay, DestAirportSeqID LIMIT 10000",
-            "SELECT DestState, avg(DistanceGroup) FROM 'mytable'  GROUP BY DestState LIMIT 10000",
-            "SELECT ActualElapsedTime, DestCityMarketID, sum(OriginAirportSeqID) FROM 'mytable'  WHERE DestStateName > 'Oklahoma' GROUP BY ActualElapsedTime, DestCityMarketID LIMIT 10000",
-            "SELECT sum(CarrierDelay) FROM 'mytable'  WHERE CRSDepTime < '1047' OR DestWac = '84' LIMIT 16",
-            "SELECT Year, sum(CarrierDelay) FROM 'mytable'  WHERE DestWac BETWEEN '84' AND '37' OR CRSDepTime < '1047' GROUP BY Year LIMIT 10000",
-            "select count(*) from 'mytable'", "select sum(DepDelay) from 'mytable'",
-            "select count(DepDelay) from 'mytable'",
-            "select min(DepDelay) from 'mytable'",
-            "select max(DepDelay) from 'mytable'",
-            "select avg(DepDelay) from 'mytable'",
-            "select Carrier, count(*) from 'mytable' group by Carrier  ",
-            "select Carrier, count(*) from 'mytable' where ArrDelay > 15 group by Carrier  ",
-            "select Carrier, count(*) from 'mytable' where Cancelled = 1 group by Carrier  ",
-            "select Carrier, count(*) from 'mytable' where DepDelay >= 15 group by Carrier  ",
-            "select Carrier, count(*) from 'mytable' where DepDelay < 15 group by Carrier ",
-            "select Carrier, count(*) from 'mytable' where ArrDelay <= 15 group by Carrier  ",
-            "select Carrier, count(*) from 'mytable' where DepDelay >= 15 or ArrDelay >= 15 group by Carrier  ",
-            "select Carrier, count(*) from 'mytable' where DepDelay < 15 and ArrDelay <= 15 group by Carrier ",
-            "select Carrier, count(*) from 'mytable' where DepDelay between 5 and 15 group by Carrier  ",
-            "select Carrier, count(*) from 'mytable' where DepDelay in (2, 8, 42) group by Carrier ",
-            "select Carrier, count(*) from 'mytable' where DepDelay not in (4, 16) group by Carrier ",
-            "select Carrier, count(*) from 'mytable' where Cancelled <> 1 group by Carrier ",
-            "select Carrier, min(ArrDelay) from 'mytable' group by Carrier ",
-            "select Carrier, max(ArrDelay) from 'mytable' group by Carrier ",
-            "select Carrier, sum(ArrDelay) from 'mytable' group by Carrier ",
-            "select TailNum, avg(ArrDelay) from 'mytable' group by TailNum ",
-            "select FlightNum, avg(ArrDelay) from 'mytable' group by FlightNum ",
-            "select distinctCount(Carrier) from 'mytable' where TailNum = 'D942DN' ",
-            "SELECT count(*) FROM 'mytable'  WHERE OriginStateName BETWEEN 'U.S. Pacific Trust Territories and Possessions' AND 'Maryland'  ",
+        new String[] {
+            "select Carrier, count(*) from 'mytable' where ArrDelay > 15 group by Carrier, FlightDate",
+            "select Carrier, count(*) from 'mytable' where ArrDelay > 15 group by Carrier, convert_time_pattern_to_days(FlightDate, TimePattern, yyyy-MM-dd)",
+            "select Carrier, count(*) from 'mytable' where ArrDelay > 15 group by Carrier, convert_time_pattern_to_seconds(FlightDate, TimePattern, yyyy-MM-dd)",
         };
     return queries;
   }
