@@ -1,6 +1,5 @@
 package com.linkedin.thirdeye.util;
 
-import java.util.concurrent.TimeUnit;
 
 import org.testng.Assert;
 import org.testng.annotations.DataProvider;
@@ -13,19 +12,7 @@ import com.google.common.collect.Multimap;
 @Test
 public class ThirdEyeUtilsTest {
 
-  @Test(dataProvider = "testConstructCronDataProvider")
-  public void testConstructCron(String scheduleMinute, String scheduleHour, String repeatEvery, String expectedCron)
-  throws Exception {
-    String actualCron = null;
-    try {
-      actualCron = ThirdEyeUtils.constructCron(scheduleMinute, scheduleHour, TimeUnit.valueOf(repeatEvery));
-    } catch (Exception e) {
-
-    }
-    Assert.assertEquals(actualCron, expectedCron);
-  }
-
-  @Test(dataProvider = "testSortedFiltersDataProvider")
+  /*@Test(dataProvider = "testSortedFiltersDataProvider")
   public void testSortedFilters(String filters, String expectedFilters) {
     String sortedFilters = ThirdEyeUtils.getSortedFilters(filters);
     Assert.assertEquals(sortedFilters, expectedFilters);
@@ -109,6 +96,42 @@ public class ThirdEyeUtilsTest {
             multimap2, "a=b;a=c;i=c;k=b;z=g"
         }
     };
+  }*/
+
+  @Test
+  public void testGetRoundedValue() throws Exception {
+    double value = 123;
+    Assert.assertEquals(ThirdEyeUtils.getRoundedValue(value), "123");
+    value = 123.24;
+    Assert.assertEquals(ThirdEyeUtils.getRoundedValue(value), "123.24");
+    value = 123.246;
+    Assert.assertEquals(ThirdEyeUtils.getRoundedValue(value), "123.25");
+    value = 123.241;
+    Assert.assertEquals(ThirdEyeUtils.getRoundedValue(value), "123.24");
+    value = 0.23;
+    Assert.assertEquals(ThirdEyeUtils.getRoundedValue(value), "0.23");
+    value = 0.236;
+    Assert.assertEquals(ThirdEyeUtils.getRoundedValue(value), "0.24");
+    value = 0.01;
+    Assert.assertEquals(ThirdEyeUtils.getRoundedValue(value), "0.01");
+    value = 0.016;
+    Assert.assertEquals(ThirdEyeUtils.getRoundedValue(value), "0.016");
+    value = 0.0167;
+    Assert.assertEquals(ThirdEyeUtils.getRoundedValue(value), "0.017");
+    value = 0.001;
+    Assert.assertEquals(ThirdEyeUtils.getRoundedValue(value), "0.001");
+    value = 0.0013;
+    Assert.assertEquals(ThirdEyeUtils.getRoundedValue(value), "0.0013");
+    value = 0.00135;
+    Assert.assertEquals(ThirdEyeUtils.getRoundedValue(value), "0.0014");
+    value = 0;
+    Assert.assertEquals(ThirdEyeUtils.getRoundedValue(value), "0");
+    value = 0.0000;
+    Assert.assertEquals(ThirdEyeUtils.getRoundedValue(value), "0");
+    value = 0.0000009;
+    Assert.assertEquals(ThirdEyeUtils.getRoundedValue(value), "0");
+    value = 0.00123456789;
+    Assert.assertEquals(ThirdEyeUtils.getRoundedValue(value), "0.0012");
   }
 
 }

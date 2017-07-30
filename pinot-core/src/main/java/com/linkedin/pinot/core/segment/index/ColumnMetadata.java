@@ -15,6 +15,16 @@
  */
 package com.linkedin.pinot.core.segment.index;
 
+import java.lang.reflect.Field;
+import java.util.List;
+import java.util.concurrent.TimeUnit;
+import org.apache.commons.configuration.PropertiesConfiguration;
+import org.apache.commons.lang.StringEscapeUtils;
+import org.apache.commons.lang.math.IntRange;
+import org.codehaus.jackson.annotate.JsonProperty;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import com.linkedin.pinot.common.config.ColumnPartitionConfig;
 import com.linkedin.pinot.common.data.DimensionFieldSpec;
 import com.linkedin.pinot.common.data.FieldSpec;
 import com.linkedin.pinot.common.data.FieldSpec.DataType;
@@ -22,15 +32,10 @@ import com.linkedin.pinot.common.data.FieldSpec.FieldType;
 import com.linkedin.pinot.common.data.MetricFieldSpec;
 import com.linkedin.pinot.common.data.MetricFieldSpec.DerivedMetricType;
 import com.linkedin.pinot.common.data.TimeFieldSpec;
+import com.linkedin.pinot.core.data.partition.PartitionFunction;
+import com.linkedin.pinot.core.data.partition.PartitionFunctionFactory;
 import com.linkedin.pinot.core.segment.creator.impl.V1Constants;
 import com.linkedin.pinot.core.startree.hll.HllUtil;
-import java.lang.reflect.Field;
-import java.util.concurrent.TimeUnit;
-import org.apache.commons.configuration.PropertiesConfiguration;
-import org.apache.commons.lang.StringEscapeUtils;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import static com.linkedin.pinot.core.segment.creator.impl.V1Constants.MetadataKeys.Column.*;
 import static com.linkedin.pinot.core.segment.creator.impl.V1Constants.MetadataKeys.Segment.SEGMENT_PADDING_CHARACTER;
 import static com.linkedin.pinot.core.segment.creator.impl.V1Constants.MetadataKeys.Segment.TIME_UNIT;
@@ -50,8 +55,11 @@ public class ColumnMetadata {
   private final int stringColumnMaxLength;
   private final FieldType fieldType;
   private final boolean isSorted;
+  @JsonProperty
   private final boolean containsNulls;
+  @JsonProperty
   private final boolean hasDictionary;
+  @JsonProperty
   private final boolean hasInvertedIndex;
   private final boolean isSingleValue;
   private final int maxNumberOfMultiValues;
@@ -63,6 +71,11 @@ public class ColumnMetadata {
   private final DerivedMetricType derivedMetricType;
   private final int fieldSize;
   private final String originColumnName;
+  private final Comparable minValue;
+  private final Comparable maxValue;
+  private final PartitionFunction partitionFunction;
+  private final int numPartitions;
+  private final List<IntRange> partitionRanges;
 
   public static ColumnMetadata fromPropertiesConfiguration(String column, PropertiesConfiguration config) {
     Builder builder = new Builder();
@@ -73,7 +86,8 @@ public class ColumnMetadata {
     builder.setTotalDocs(totalDocs);
     builder.setTotalRawDocs(config.getInt(getKeyFor(column, TOTAL_RAW_DOCS), totalDocs));
     builder.setTotalAggDocs(config.getInt(getKeyFor(column, TOTAL_AGG_DOCS), 0));
-    builder.setDataType(DataType.valueOf(config.getString(getKeyFor(column, DATA_TYPE)).toUpperCase()));
+    DataType dataType = DataType.valueOf(config.getString(getKeyFor(column, DATA_TYPE)).toUpperCase());
+    builder.setDataType(dataType);
     builder.setBitsPerElement(config.getInt(getKeyFor(column, BITS_PER_ELEMENT)));
     builder.setStringColumnMaxLength(config.getInt(getKeyFor(column, DICTIONARY_ELEMENT_SIZE)));
     builder.setFieldType(FieldType.valueOf(config.getString(getKeyFor(column, COLUMN_TYPE)).toUpperCase()));
@@ -97,7 +111,7 @@ public class ColumnMetadata {
     // DERIVED_METRIC_TYPE property is used to check whether this field is derived or not
     // ORIGIN_COLUMN property is used to indicate the origin field of this derived metric
     String typeStr = config.getString(getKeyFor(column, DERIVED_METRIC_TYPE), null);
-    DerivedMetricType derivedMetricType = (typeStr == null)? null : DerivedMetricType.valueOf(typeStr.toUpperCase());
+    DerivedMetricType derivedMetricType = (typeStr == null) ? null : DerivedMetricType.valueOf(typeStr.toUpperCase());
 
     if (derivedMetricType != null) {
       switch (derivedMetricType) {
@@ -108,7 +122,8 @@ public class ColumnMetadata {
             final String originColumnName = config.getString(getKeyFor(column, ORIGIN_COLUMN));
             builder.setOriginColumnName(originColumnName);
           } catch (RuntimeException e) {
-            LOGGER.error("Column: " + column + " is HLL derived column, but missing log2m, fieldSize or originColumnName.");
+            LOGGER.error(
+                "Column: " + column + " is HLL derived column, but missing log2m, fieldSize or originColumnName.");
             throw e;
           }
           break;
@@ -119,7 +134,62 @@ public class ColumnMetadata {
       builder.setDerivedMetricType(derivedMetricType);
     }
 
+    // Set min/max value if available.
+    String minString = config.getString(getKeyFor(column, MIN_VALUE), null);
+    String maxString = config.getString(getKeyFor(column, MAX_VALUE), null);
+    if ((minString != null) && (maxString != null)) {
+      switch (dataType) {
+        case INT:
+          builder.setMinValue(Integer.valueOf(minString));
+          builder.setMaxValue(Integer.valueOf(maxString));
+          break;
+        case LONG:
+          builder.setMinValue(Long.valueOf(minString));
+          builder.setMaxValue(Long.valueOf(maxString));
+          break;
+        case FLOAT:
+          builder.setMinValue(Float.valueOf(minString));
+          builder.setMaxValue(Float.valueOf(maxString));
+          break;
+        case DOUBLE:
+          builder.setMinValue(Double.valueOf(minString));
+          builder.setMaxValue(Double.valueOf(maxString));
+          break;
+        case STRING:
+          builder.setMinValue(minString);
+          builder.setMaxValue(maxString);
+          break;
+        default:
+          throw new IllegalStateException("Unsupported data type: " + dataType + " for column: " + column);
+      }
+    }
+
+    String partitionFunctionName =
+        config.getString(getKeyFor(column, V1Constants.MetadataKeys.Column.PARTITION_FUNCTION));
+    if (partitionFunctionName != null) {
+      int numPartitions = config.getInt(getKeyFor(column, V1Constants.MetadataKeys.Column.NUM_PARTITIONS));
+      PartitionFunction partitionFunction =
+          PartitionFunctionFactory.getPartitionFunction(partitionFunctionName, numPartitions);
+      builder.setPartitionFunction(partitionFunction);
+      builder.setNumPartitions(numPartitions);
+
+      String[] valueString = config.getStringArray(getKeyFor(column, V1Constants.MetadataKeys.Column.PARTITION_VALUES));
+      builder.setPartitionValues(ColumnPartitionConfig.rangesFromString(valueString));
+    }
+
     return builder.build();
+  }
+
+  public PartitionFunction getPartitionFunction() {
+    return partitionFunction;
+  }
+
+  public int getNumPartitions() {
+    return numPartitions;
+  }
+
+  public List<IntRange> getPartitionRanges() {
+    return partitionRanges;
   }
 
   public static class Builder {
@@ -146,6 +216,11 @@ public class ColumnMetadata {
     private DerivedMetricType derivedMetricType;
     private int fieldSize;
     private String originColumnName;
+    private Comparable minValue;
+    private Comparable maxValue;
+    private PartitionFunction partitionFunction;
+    private List<IntRange> partitionValues = null;
+    private int numPartitions;
 
     public Builder setColumnName(String columnName) {
       this.columnName = columnName;
@@ -262,11 +337,36 @@ public class ColumnMetadata {
       return this;
     }
 
+    public Builder setMinValue(Comparable minValue) {
+      this.minValue = minValue;
+      return this;
+    }
+
+    public Builder setMaxValue(Comparable maxValue) {
+      this.maxValue = maxValue;
+      return this;
+    }
+
+    public Builder setPartitionFunction(PartitionFunction partitionFunction) {
+      this.partitionFunction = partitionFunction;
+      return this;
+    }
+
+    public void setNumPartitions(int numPartitions) {
+      this.numPartitions = numPartitions;
+    }
+
+    public Builder setPartitionValues(List<IntRange> partitionValues) {
+      this.partitionValues = partitionValues;
+      return this;
+    }
+
     public ColumnMetadata build() {
       return new ColumnMetadata(columnName, cardinality, totalDocs, totalRawDocs, totalAggDocs, dataType,
           bitsPerElement, stringColumnMaxLength, fieldType, isSorted, containsNulls, hasDictionary, hasInvertedIndex,
           isSingleValue, maxNumberOfMultiValues, totalNumberOfEntries, isAutoGenerated, defaultNullValueString,
-          timeUnit, paddingCharacter, derivedMetricType, fieldSize, originColumnName);
+          timeUnit, paddingCharacter, derivedMetricType, fieldSize, originColumnName, minValue, maxValue,
+          partitionFunction, numPartitions, partitionValues);
     }
   }
 
@@ -275,7 +375,8 @@ public class ColumnMetadata {
       boolean hasNulls, boolean hasDictionary, boolean hasInvertedIndex, boolean isSingleValue,
       int maxNumberOfMultiValues, int totalNumberOfEntries, boolean isAutoGenerated, String defaultNullValueString,
       TimeUnit timeUnit, char paddingCharacter, DerivedMetricType derivedMetricType, int fieldSize,
-      String originColumnName) {
+      String originColumnName, Comparable minValue, Comparable maxValue, PartitionFunction partitionFunction,
+      int numPartitions, List<IntRange> partitionRanges) {
     this.columnName = columnName;
     this.cardinality = cardinality;
     this.totalDocs = totalDocs;
@@ -299,6 +400,11 @@ public class ColumnMetadata {
     this.derivedMetricType = derivedMetricType;
     this.fieldSize = fieldSize;
     this.originColumnName = originColumnName;
+    this.minValue = minValue;
+    this.maxValue = maxValue;
+    this.partitionFunction = partitionFunction;
+    this.numPartitions = numPartitions;
+    this.partitionRanges = partitionRanges;
 
     switch (fieldType) {
       case DIMENSION:
@@ -323,6 +429,12 @@ public class ColumnMetadata {
     return columnName;
   }
 
+  /**
+   * When a realtime segment has no-dictionary columns, the cardinality for those columns will be
+   * set to Constants.UNKNOWN_CARDINALITY
+   *
+   * @return The cardinality of the column.
+   */
   public int getCardinality() {
     return cardinality;
   }
@@ -409,6 +521,14 @@ public class ColumnMetadata {
 
   public FieldSpec getFieldSpec() {
     return fieldSpec;
+  }
+
+  public Comparable getMinValue() {
+    return minValue;
+  }
+
+  public Comparable getMaxValue() {
+    return maxValue;
   }
 
   @Override

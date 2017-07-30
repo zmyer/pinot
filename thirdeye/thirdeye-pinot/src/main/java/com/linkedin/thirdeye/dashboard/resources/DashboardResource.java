@@ -1,6 +1,7 @@
 package com.linkedin.thirdeye.dashboard.resources;
 
 import com.linkedin.thirdeye.constant.MetricAggFunction;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URLDecoder;
@@ -34,24 +35,10 @@ import org.slf4j.LoggerFactory;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.google.common.base.Joiner;
-import com.google.common.cache.CacheLoader.InvalidCacheLoadException;
 import com.google.common.cache.LoadingCache;
-import com.linkedin.thirdeye.api.CollectionSchema;
 import com.linkedin.thirdeye.api.TimeGranularity;
-import com.linkedin.thirdeye.client.MetricExpression;
-import com.linkedin.thirdeye.client.ThirdEyeCacheRegistry;
-import com.linkedin.thirdeye.client.cache.CollectionsCache;
-import com.linkedin.thirdeye.client.cache.QueryCache;
-import com.linkedin.thirdeye.client.timeseries.TimeSeriesHandler;
-import com.linkedin.thirdeye.client.timeseries.TimeSeriesRequest;
-import com.linkedin.thirdeye.client.timeseries.TimeSeriesResponse;
-import com.linkedin.thirdeye.client.timeseries.TimeSeriesRow;
-import com.linkedin.thirdeye.client.timeseries.TimeSeriesRow.TimeSeriesMetric;
+import com.linkedin.thirdeye.api.TimeSpec;
 import com.linkedin.thirdeye.dashboard.Utils;
-import com.linkedin.thirdeye.dashboard.configs.AbstractConfig;
-import com.linkedin.thirdeye.dashboard.configs.CollectionConfig;
-import com.linkedin.thirdeye.dashboard.configs.DashboardConfig;
-import com.linkedin.thirdeye.dashboard.configs.WebappConfigFactory.WebappConfigType;
 import com.linkedin.thirdeye.dashboard.views.DashboardView;
 import com.linkedin.thirdeye.dashboard.views.contributor.ContributorViewHandler;
 import com.linkedin.thirdeye.dashboard.views.contributor.ContributorViewRequest;
@@ -62,41 +49,51 @@ import com.linkedin.thirdeye.dashboard.views.heatmap.HeatMapViewResponse;
 import com.linkedin.thirdeye.dashboard.views.tabular.TabularViewHandler;
 import com.linkedin.thirdeye.dashboard.views.tabular.TabularViewRequest;
 import com.linkedin.thirdeye.dashboard.views.tabular.TabularViewResponse;
-import com.linkedin.thirdeye.datalayer.bao.WebappConfigManager;
-import com.linkedin.thirdeye.datalayer.dto.WebappConfigDTO;
+import com.linkedin.thirdeye.datalayer.bao.DashboardConfigManager;
+import com.linkedin.thirdeye.datalayer.bao.MetricConfigManager;
+import com.linkedin.thirdeye.datalayer.dto.DashboardConfigDTO;
+import com.linkedin.thirdeye.datalayer.dto.DatasetConfigDTO;
+import com.linkedin.thirdeye.datalayer.dto.MetricConfigDTO;
+import com.linkedin.thirdeye.datasource.DAORegistry;
+import com.linkedin.thirdeye.datasource.MetricExpression;
+import com.linkedin.thirdeye.datasource.ThirdEyeCacheRegistry;
+import com.linkedin.thirdeye.datasource.cache.DatasetListCache;
+import com.linkedin.thirdeye.datasource.cache.QueryCache;
+import com.linkedin.thirdeye.datasource.timeseries.TimeSeriesHandler;
+import com.linkedin.thirdeye.datasource.timeseries.TimeSeriesRequest;
+import com.linkedin.thirdeye.datasource.timeseries.TimeSeriesResponse;
+import com.linkedin.thirdeye.datasource.timeseries.TimeSeriesRow;
+import com.linkedin.thirdeye.datasource.timeseries.TimeSeriesRow.TimeSeriesMetric;
 import com.linkedin.thirdeye.util.ThirdEyeUtils;
 
 import io.dropwizard.views.View;
 
 @Path(value = "/dashboard")
-// @Produces(MediaType.APPLICATION_JSON)
 public class DashboardResource {
   private static final ThirdEyeCacheRegistry CACHE_REGISTRY_INSTANCE = ThirdEyeCacheRegistry
       .getInstance();
+  private static final DAORegistry DAO_REGISTRY = DAORegistry.getInstance();
   private static final Logger LOG = LoggerFactory.getLogger(DashboardResource.class);
   private static final String DEFAULT_TIMEZONE_ID = "UTC";
   private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
-  private static String DEFAULT_DASHBOARD = "Default_Dashboard";
-  private static String COUNT_METRIC = "__COUNT";
 
   private QueryCache queryCache;
-  private CollectionsCache collectionsCache;
-  private LoadingCache<String,CollectionSchema> collectionSchemaCache;
-  private LoadingCache<String, CollectionConfig> collectionConfigCache;
+  private DatasetListCache collectionsCache;
   private LoadingCache<String, Long> collectionMaxDataTimeCache;
   private LoadingCache<String,String> dashboardsCache;
   private LoadingCache<String, String> dimensionFiltersCache;
-  private WebappConfigManager webappConfigDAO;
 
-  public DashboardResource(WebappConfigManager webappConfigDAO) {
+  private MetricConfigManager metricConfigDAO;
+  private DashboardConfigManager dashboardConfigDAO;
+
+  public DashboardResource() {
     this.queryCache = CACHE_REGISTRY_INSTANCE.getQueryCache();
-    this.collectionsCache = CACHE_REGISTRY_INSTANCE.getCollectionsCache();
-    this.collectionSchemaCache = CACHE_REGISTRY_INSTANCE.getCollectionSchemaCache();
-    this.collectionConfigCache = CACHE_REGISTRY_INSTANCE.getCollectionConfigCache();
+    this.collectionsCache = CACHE_REGISTRY_INSTANCE.getDatasetsCache();
     this.collectionMaxDataTimeCache = CACHE_REGISTRY_INSTANCE.getCollectionMaxDataTimeCache();
     this.dashboardsCache = CACHE_REGISTRY_INSTANCE.getDashboardsCache();
     this.dimensionFiltersCache = CACHE_REGISTRY_INSTANCE.getDimensionFiltersCache();
-    this.webappConfigDAO = webappConfigDAO;
+    this.metricConfigDAO = DAO_REGISTRY.getMetricConfigDAO();
+    this.dashboardConfigDAO = DAO_REGISTRY.getDashboardConfigDAO();
   }
 
   @GET
@@ -106,25 +103,13 @@ public class DashboardResource {
     return new DashboardView();
   }
 
+
   @GET
   @Path(value = "/data/datasets")
   @Produces(MediaType.APPLICATION_JSON)
   public List<String> getCollections() throws Exception {
     try {
-      List<String> collections = new ArrayList<>();
-      for (String collection : collectionsCache.getCollections()) {
-        CollectionConfig collectionConfig = null;
-        try {
-          collectionConfig = collectionConfigCache.get(collection);
-          String collectionAlias = collectionConfig.getCollectionAlias();
-          if (StringUtils.isNotEmpty(collectionAlias)) {
-            collection = collectionAlias;
-          }
-        } catch (InvalidCacheLoadException e) {
-          LOG.debug("No CollectionConfig for collection {}", collection);
-        }
-        collections.add(collection);
-      }
+      List<String> collections = collectionsCache.getDatasets();
       return collections;
     } catch (Exception e) {
       LOG.error("Error while fetching datasets", e);
@@ -137,18 +122,10 @@ public class DashboardResource {
   @Produces(MediaType.APPLICATION_JSON)
   public List<String> getMetrics(@QueryParam("dataset") String collection) throws Exception {
     try {
-      collection = ThirdEyeUtils.getCollectionFromAlias(collection);
-      CollectionSchema schema = collectionSchemaCache.get(collection);
-      List<String> metrics = schema.getMetricNames();
-      CollectionConfig collectionConfig = null;
-      try {
-        collectionConfig = collectionConfigCache.get(collection);
-      } catch (InvalidCacheLoadException e) {
-        LOG.debug("No collection configs for collection {}", collection);
-      }
-      if (collectionConfig != null && collectionConfig.getDerivedMetrics() != null) {
-        metrics.addAll(collectionConfig.getDerivedMetrics().keySet());
-        metrics.removeAll(collectionConfig.getDerivedMetrics().values());
+      List<String> metrics = new ArrayList<>();
+      List<MetricConfigDTO> metricConfigs = metricConfigDAO.findActiveByDataset(collection);
+      for (MetricConfigDTO metricConfig : metricConfigs) {
+        metrics.add(metricConfig.getName());
       }
       Collections.sort(metrics);
       return metrics;
@@ -164,15 +141,11 @@ public class DashboardResource {
   public String getDimensions(@QueryParam("dataset") String collection) {
     String jsonDimensions = null;
     try {
-
-      collection = ThirdEyeUtils.getCollectionFromAlias(collection);
-
-      List<String> dimensions = Utils.getDimensions(queryCache, collection);
+      List<String> dimensions = Utils.getSortedDimensionNames(collection);
       jsonDimensions = OBJECT_MAPPER.writeValueAsString(dimensions);
     } catch (Exception e) {
       LOG.error("Error while fetching dimensions for collection: " + collection, e);
     }
-
     return jsonDimensions;
   }
 
@@ -182,9 +155,6 @@ public class DashboardResource {
   public String getDashboards(@QueryParam("dataset") String collection) {
     String jsonDashboards = null;
     try {
-
-      collection = ThirdEyeUtils.getCollectionFromAlias(collection);
-
       jsonDashboards = dashboardsCache.get(collection);
     } catch (Exception e) {
       LOG.error("Error while fetching dashboards for collection: " + collection, e);
@@ -199,24 +169,24 @@ public class DashboardResource {
     String collectionInfo = null;
     try {
 
-      collection = ThirdEyeUtils.getCollectionFromAlias(collection);
-
       HashMap<String, String> map = new HashMap<>();
       long maxDataTime = collectionMaxDataTimeCache.get(collection);
-      CollectionSchema collectionSchema = collectionSchemaCache.get(collection);
-      TimeGranularity dataGranularity = collectionSchema.getTime().getDataGranularity();
+      DatasetConfigDTO datasetConfig = CACHE_REGISTRY_INSTANCE.getDatasetConfigCache().get(collection);
+      TimeSpec timespec = ThirdEyeUtils.getTimestampTimeSpecFromDatasetConfig(datasetConfig);
+      TimeGranularity dataGranularity = timespec.getDataGranularity();
       map.put("maxTime", "" + maxDataTime);
       map.put("dataGranularity", dataGranularity.getUnit().toString());
 
-      CollectionConfig collectionConfig = null;
-      try {
-        collectionConfig = collectionConfigCache.get(collection);
-      } catch (InvalidCacheLoadException e) {
-        LOG.debug("No collection configs for collection {}", collection);
+      List<MetricConfigDTO> metricConfigs = metricConfigDAO.findActiveByDataset(collection);
+      List<String> inverseMetrics = new ArrayList<>();
+      for (MetricConfigDTO metricConfig : metricConfigs) {
+        if (metricConfig.isInverseMetric()) {
+          inverseMetrics.add(metricConfig.getName());
+        }
       }
-      if (collectionConfig != null
-          && CollectionUtils.isNotEmpty(collectionConfig.getInvertColorMetrics())) {
-        map.put("invertColorMetrics", Joiner.on(",").join(collectionConfig.getInvertColorMetrics()));
+
+      if (CollectionUtils.isNotEmpty(inverseMetrics)) {
+        map.put("invertColorMetrics", Joiner.on(",").join(inverseMetrics));
       }
       collectionInfo = OBJECT_MAPPER.writeValueAsString(map);
 
@@ -229,13 +199,9 @@ public class DashboardResource {
   @GET
   @Path(value = "/data/filters")
   @Produces(MediaType.APPLICATION_JSON)
-  public String getFilters(@QueryParam("dataset") String collection,
-      @QueryParam("start") String start, @QueryParam("end") String end) {
+  public String getFilters(@QueryParam("dataset") String collection) {
     String jsonFilters = null;
     try {
-
-      collection = ThirdEyeUtils.getCollectionFromAlias(collection);
-
       jsonFilters = dimensionFiltersCache.get(collection);
     } catch (ExecutionException e) {
       LOG.error("Exception while getting filters for collection {}", collection, e);
@@ -256,59 +222,45 @@ public class DashboardResource {
       @QueryParam("aggTimeGranularity") String aggTimeGranularity) {
     try {
 
-      collection = ThirdEyeUtils.getCollectionFromAlias(collection);
-
       TabularViewRequest request = new TabularViewRequest();
       request.setCollection(collection);
-      List<MetricExpression> metricExpressions;
-      if (dashboardName == null || DEFAULT_DASHBOARD.equals(dashboardName)) {
-        CollectionConfig collectionConfig = null;
-        try {
-          collectionConfig = collectionConfigCache.get(collection);
-        } catch (InvalidCacheLoadException e) {
-          LOG.debug("No collection configs for collection {}", collection);
-        }
-        CollectionSchema collectionSchema = collectionSchemaCache.get(collection);
 
-        metricExpressions = new ArrayList<>();
-        List<String> metricNames = collectionSchema.getMetricNames();
-        for (String metric : metricNames) {
-          if (metric.equals(COUNT_METRIC)
-              && (collectionConfig == null || !collectionConfig.isEnableCount())) {
-            continue;
-          }
-          metricExpressions.add(new MetricExpression(metric));
-        }
-      } else {
-        List<WebappConfigDTO> webappConfigs = webappConfigDAO
-            .findByCollectionAndType(collection, WebappConfigType.DASHBOARD_CONFIG);
-        DashboardConfig dashboardConfig = null;
-        for (WebappConfigDTO webappConfig : webappConfigs) {
-          if (webappConfig.getName().equals(dashboardName)) {
-            String configJson = Utils.getJsonFromObject(webappConfig.getConfigMap());
-            dashboardConfig = AbstractConfig.fromJSON(configJson, DashboardConfig.class);
-            break;
-          }
-        }
-        metricExpressions = dashboardConfig.getMetricExpressions();
+      List<MetricExpression> metricExpressions = new ArrayList<>();
+      DashboardConfigDTO dashboardConfig = dashboardConfigDAO.findByName(dashboardName);
+      List<Long> metricIds = dashboardConfig.getMetricIds();
+      for (Long metricId : metricIds) {
+        MetricConfigDTO metricConfig = metricConfigDAO.findById(metricId);
+        MetricExpression metricExpression = ThirdEyeUtils.getMetricExpressionFromMetricConfig(metricConfig);
+        metricExpressions.add(metricExpression);
       }
       request.setMetricExpressions(metricExpressions);
+
       long maxDataTime = collectionMaxDataTimeCache.get(collection);
       if (currentEnd > maxDataTime) {
         long delta = currentEnd - maxDataTime;
         currentEnd = currentEnd - delta;
         baselineEnd = baselineEnd - delta;
       }
-      request.setBaselineStart(new DateTime(baselineStart, DateTimeZone.forID(timeZone)));
-      request.setBaselineEnd(new DateTime(baselineEnd, DateTimeZone.forID(timeZone)));
-      request.setCurrentStart(new DateTime(currentStart, DateTimeZone.forID(timeZone)));
-      request.setCurrentEnd(new DateTime(currentEnd, DateTimeZone.forID(timeZone)));
+
+      // The input start and end time (i.e., currentStart, currentEnd, baselineStart, and
+      // baselineEnd) are given in millisecond since epoch, which is timezone insensitive. On the
+      // other hand, the start and end time of the request to be sent to backend database (e.g.,
+      // Pinot) could be converted to SimpleDateFormat, which is timezone sensitive. Therefore,
+      // we need to store user's start and end time in DateTime objects with data's timezone
+      // in order to ensure that the conversion to SimpleDateFormat is always correct regardless
+      // user and server's timezone, including daylight saving time.
+      DateTimeZone timeZoneForCollection = Utils.getDataTimeZone(collection);
+      request.setBaselineStart(new DateTime(baselineStart, timeZoneForCollection));
+      request.setBaselineEnd(new DateTime(baselineEnd, timeZoneForCollection));
+      request.setCurrentStart(new DateTime(currentStart, timeZoneForCollection));
+      request.setCurrentEnd(new DateTime(currentEnd, timeZoneForCollection));
+
       if (filterJson != null && !filterJson.isEmpty()) {
         filterJson = URLDecoder.decode(filterJson, "UTF-8");
         request.setFilters(ThirdEyeUtils.convertToMultiMap(filterJson));
       }
 
-      request.setTimeGranularity(Utils.getAggregationTimeGranularity(aggTimeGranularity));
+      request.setTimeGranularity(Utils.getAggregationTimeGranularity(aggTimeGranularity, collection));
 
       TabularViewHandler handler = new TabularViewHandler(queryCache);
       String jsonResponse = null;
@@ -335,8 +287,6 @@ public class DashboardResource {
       @QueryParam("compareMode") String compareMode, @QueryParam("metrics") String metricsJson)
       throws Exception {
 
-    collection = ThirdEyeUtils.getCollectionFromAlias(collection);
-
     HeatMapViewRequest request = new HeatMapViewRequest();
 
     request.setCollection(collection);
@@ -349,10 +299,14 @@ public class DashboardResource {
       currentEnd = currentEnd - delta;
       baselineEnd = baselineEnd - delta;
     }
-    request.setBaselineStart(new DateTime(baselineStart, DateTimeZone.forID(timeZone)));
-    request.setBaselineEnd(new DateTime(baselineEnd, DateTimeZone.forID(timeZone)));
-    request.setCurrentStart(new DateTime(currentStart, DateTimeZone.forID(timeZone)));
-    request.setCurrentEnd(new DateTime(currentEnd, DateTimeZone.forID(timeZone)));
+
+    // See {@link #getDashboardData} for the reason that the start and end time are stored in a
+    // DateTime object with data's timezone.
+    DateTimeZone timeZoneForCollection = Utils.getDataTimeZone(collection);
+    request.setBaselineStart(new DateTime(baselineStart, timeZoneForCollection));
+    request.setBaselineEnd(new DateTime(baselineEnd, timeZoneForCollection));
+    request.setCurrentStart(new DateTime(currentStart, timeZoneForCollection));
+    request.setCurrentEnd(new DateTime(currentEnd, timeZoneForCollection));
     // filter
     if (filterJson != null && !filterJson.isEmpty()) {
       filterJson = URLDecoder.decode(filterJson, "UTF-8");
@@ -385,8 +339,6 @@ public class DashboardResource {
       @QueryParam("aggTimeGranularity") String aggTimeGranularity,
       @QueryParam("metrics") String metricsJson) throws Exception {
 
-    collection = ThirdEyeUtils.getCollectionFromAlias(collection);
-
     TabularViewRequest request = new TabularViewRequest();
     request.setCollection(collection);
 
@@ -400,15 +352,19 @@ public class DashboardResource {
       baselineEnd = baselineEnd - delta;
     }
 
-    request.setBaselineStart(new DateTime(baselineStart, DateTimeZone.forID(timeZone)));
-    request.setBaselineEnd(new DateTime(baselineEnd, DateTimeZone.forID(timeZone)));
-    request.setCurrentStart(new DateTime(currentStart, DateTimeZone.forID(timeZone)));
-    request.setCurrentEnd(new DateTime(currentEnd, DateTimeZone.forID(timeZone)));
+    // See {@link #getDashboardData} for the reason that the start and end time are stored in a
+    // DateTime object with data's timezone.
+    DateTimeZone timeZoneForCollection = Utils.getDataTimeZone(collection);
+    request.setBaselineStart(new DateTime(baselineStart, timeZoneForCollection));
+    request.setBaselineEnd(new DateTime(baselineEnd, timeZoneForCollection));
+    request.setCurrentStart(new DateTime(currentStart, timeZoneForCollection));
+    request.setCurrentEnd(new DateTime(currentEnd, timeZoneForCollection));
+
     if (filterJson != null && !filterJson.isEmpty()) {
       filterJson = URLDecoder.decode(filterJson, "UTF-8");
       request.setFilters(ThirdEyeUtils.convertToMultiMap(filterJson));
     }
-    request.setTimeGranularity(Utils.getAggregationTimeGranularity(aggTimeGranularity));
+    request.setTimeGranularity(Utils.getAggregationTimeGranularity(aggTimeGranularity, collection));
 
     TabularViewHandler handler = new TabularViewHandler(queryCache);
     String jsonResponse = null;
@@ -437,8 +393,6 @@ public class DashboardResource {
       @QueryParam("metrics") String metricsJson, @QueryParam("dimensions") String groupByDimensions)
       throws Exception {
 
-    collection = ThirdEyeUtils.getCollectionFromAlias(collection);
-
     ContributorViewRequest request = new ContributorViewRequest();
     request.setCollection(collection);
 
@@ -451,16 +405,20 @@ public class DashboardResource {
       currentEnd = currentEnd - delta;
       baselineEnd = baselineEnd - delta;
     }
-    request.setBaselineStart(new DateTime(baselineStart, DateTimeZone.forID(timeZone)));
-    request.setBaselineEnd(new DateTime(baselineEnd, DateTimeZone.forID(timeZone)));
-    request.setCurrentStart(new DateTime(currentStart, DateTimeZone.forID(timeZone)));
-    request.setCurrentEnd(new DateTime(currentEnd, DateTimeZone.forID(timeZone)));
+
+    // See {@link #getDashboardData} for the reason that the start and end time are stored in a
+    // DateTime object with data's timezone.
+    DateTimeZone timeZoneForCollection = Utils.getDataTimeZone(collection);
+    request.setBaselineStart(new DateTime(baselineStart, timeZoneForCollection));
+    request.setBaselineEnd(new DateTime(baselineEnd, timeZoneForCollection));
+    request.setCurrentStart(new DateTime(currentStart, timeZoneForCollection));
+    request.setCurrentEnd(new DateTime(currentEnd, timeZoneForCollection));
 
     if (filterJson != null && !filterJson.isEmpty()) {
       filterJson = URLDecoder.decode(filterJson, "UTF-8");
       request.setFilters(ThirdEyeUtils.convertToMultiMap(filterJson));
     }
-    request.setTimeGranularity(Utils.getAggregationTimeGranularity(aggTimeGranularity));
+    request.setTimeGranularity(Utils.getAggregationTimeGranularity(aggTimeGranularity, collection));
     if (groupByDimensions != null && !groupByDimensions.isEmpty()) {
       request.setGroupByDimensions(Arrays.asList(groupByDimensions.trim().split(",")));
     }
@@ -491,12 +449,15 @@ public class DashboardResource {
       @QueryParam("metrics") String metricsJson, @QueryParam("dimensions") String groupByDimensions)
       throws Exception {
 
-    collection = ThirdEyeUtils.getCollectionFromAlias(collection);
 
     TimeSeriesRequest request = new TimeSeriesRequest();
     request.setCollectionName(collection);
-    request.setStart(new DateTime(start, DateTimeZone.forID(timeZone)));
-    request.setEnd(new DateTime(end, DateTimeZone.forID(timeZone)));
+
+    // See {@link #getDashboardData} for the reason that the start and end time are stored in a
+    // DateTime object with data's timezone.
+    DateTimeZone timeZoneForCollection = Utils.getDataTimeZone(collection);
+    request.setStart(new DateTime(start, timeZoneForCollection));
+    request.setEnd(new DateTime(end, timeZoneForCollection));
 
     if (groupByDimensions != null && !groupByDimensions.isEmpty()) {
       request.setGroupByDimensions(Arrays.asList(groupByDimensions.trim().split(",")));
@@ -508,10 +469,13 @@ public class DashboardResource {
     List<MetricExpression> metricExpressions =
         Utils.convertToMetricExpressions(metricsJson, MetricAggFunction.SUM, collection);
     request.setMetricExpressions(metricExpressions);
-    request.setAggregationTimeGranularity(Utils.getAggregationTimeGranularity(aggTimeGranularity));
-    CollectionSchema collectionSchema = CACHE_REGISTRY_INSTANCE.getCollectionSchemaCache().get(collection);
+
+    request.setAggregationTimeGranularity(Utils.getAggregationTimeGranularity(aggTimeGranularity, collection));
+    DatasetConfigDTO datasetConfig = CACHE_REGISTRY_INSTANCE.getDatasetConfigCache().get(collection);
+    TimeSpec timespec = ThirdEyeUtils.getTimeSpecFromDatasetConfig(datasetConfig);
+
     if (!request.getAggregationTimeGranularity().getUnit().equals(TimeUnit.DAYS) ||
-        !StringUtils.isBlank(collectionSchema.getTime().getFormat())) {
+        !StringUtils.isBlank(timespec.getFormat())) {
       request.setEndDateInclusive(true);
     }
 
@@ -535,11 +499,14 @@ public class DashboardResource {
         TimeSeriesRow timeSeriesRow = response.getRow(i);
         for (TimeSeriesMetric metricTimeSeries : timeSeriesRow.getMetrics()) {
           String key = metricTimeSeries.getMetricName();
-          if (timeSeriesRow.getDimensionName() != null
-              && timeSeriesRow.getDimensionName().trim().length() > 0) {
-            key =
-                key + "|" + timeSeriesRow.getDimensionName() + "|"
-                    + timeSeriesRow.getDimensionValue();
+          if (timeSeriesRow.getDimensionNames() != null
+              && timeSeriesRow.getDimensionNames().size() > 0) {
+            StringBuilder sb = new StringBuilder(key);
+            for (int idx = 0; idx < timeSeriesRow.getDimensionNames().size(); ++idx) {
+              sb.append("||").append(timeSeriesRow.getDimensionNames().get(idx));
+              sb.append("|").append(timeSeriesRow.getDimensionValues().get(idx));
+            }
+            key = sb.toString();
           }
           JSONArray valueArray;
           if (!timeseriesMap.has(key)) {
@@ -589,7 +556,7 @@ public class DashboardResource {
 
     String file = null;
     if (type.equals("dataset")) {
-      List<String> collections = queryCache.getClient().getCollections();
+      List<String> collections = CACHE_REGISTRY_INSTANCE.getDatasetsCache().getDatasets();
       JSONArray array = new JSONArray(collections);
       response = array.toString();
       // file = "assets/data/getdataset.json";

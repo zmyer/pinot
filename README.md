@@ -1,13 +1,14 @@
 # Introduction to Pinot
 
-[![Build Status](https://travis-ci.org/linkedin/pinot.svg?branch=master)](https://travis-ci.org/linkedin/pinot) [![Join the chat at https://gitter.im/linkedin/pinot](https://badges.gitter.im/Join%20Chat.svg)](https://gitter.im/linkedin/pinot?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
+[![Build Status](https://travis-ci.org/linkedin/pinot.svg?branch=master)](https://travis-ci.org/linkedin/pinot) [![codecov.io](https://codecov.io/github/linkedin/pinot/branch/master/graph/badge.svg)](https://codecov.io/github/linkedin/pinot) [![Join the chat at https://gitter.im/linkedin/pinot](https://badges.gitter.im/Join%20Chat.svg)](https://gitter.im/linkedin/pinot?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge) [![license](https://img.shields.io/github/license/linkedin/pinot.svg)](LICENSE)
 
 Pinot is a realtime distributed OLAP datastore, which is used at LinkedIn to deliver scalable real time analytics with low latency. It can ingest data from offline data sources (such as Hadoop and flat files) as well as online sources (such as Kafka). Pinot is designed to scale horizontally.
 
-These two presentations on Pinot give an overview of Pinot and how it is used at LinkedIn:
+These three presentations on Pinot give an overview of Pinot and how it is used at LinkedIn:
 
 * [Pinot: Realtime Distributed OLAP Datastore (Aug 2015)](http://www.slideshare.net/KishoreGopalakrishna/pinot-realtime-distributed-olap-datastore)
 * [Introduction to Pinot (Jan 2016)](http://www.slideshare.net/jeanfrancoisim/intro-to-pinot-20160104) 
+* [Open Source Analytics Pipeline at LinkedIn (Sep 2016, covers Gobblin and Pinot)](http://www.slideshare.net/IssacBuenrostro/open-source-linkedin-analytics-pipeline-vldb-2016)
 
 ## What is it for (and not)?
 
@@ -55,7 +56,9 @@ For more information on Pinot Design and Architecture can be found [here](https:
 
 ## Quick Start 
 
-### 1: Build and install Pinot
+You can either build Pinot manually or use Docker to run Pinot.
+
+### 1: Build and install Pinot (optional if you have Docker installed)
 
 ```
 git clone https://github.com/linkedin/pinot.git
@@ -67,16 +70,14 @@ chmod +x bin/*.sh
 
 ### Run
 
-We will load BaseBall stats from 1878 to 2013 into Pinot and run queries against it. There are 100000 records and 15 columns ([schema](https://github.com/linkedin/pinot/blob/master/pinot-tools/src/main/resources/sample_data/baseball.schema)) in this dataset.
+We will load BaseBall stats from 1878 to 2013 into Pinot and run queries against it. There are 100000 records and 15 columns ([schema](https://github.com/linkedin/pinot/blob/master/pinot-tools/src/main/resources/sample_data/baseballStats_schema.json)) in this dataset.
 
 Execute the quick-start-offline.sh script in bin folder which performs the following:
 - Converts Baseball data in CSV format into Pinot Index Segments.
 - Starts Pinot components, Zookeeper, Controller, Broker, Server.
 - Uploads segment to Pinot
 
-```
-bin/quick-start-offline.sh
-```
+If you have Docker, run `docker run -it -p 9000:9000 linkedin/pinot-quickstart-offline`. If you have built Pinot, run `bin/quick-start-offline.sh`.
 
 We should see the following output.
 
@@ -126,10 +127,7 @@ Execute quick-start-realtime.sh script in bin folder which performs the followin
 - start zookeeper, pinot controller, pinot broker, pinot-server.
 - configure the realtime source 
 
-```
-bin/quick-start-realtime.sh
-```
-
+If you have Docker, run `docker run -it -p 9000:9000 linkedin/pinot-quickstart-realtime`. If you have built Pinot, run `bin/quick-start-realtime.sh`.
 
 ```
 Starting Kafka

@@ -19,24 +19,33 @@ import com.linkedin.pinot.common.data.FieldSpec;
 import com.linkedin.pinot.common.data.MetricFieldSpec;
 import com.linkedin.pinot.common.data.Schema;
 import com.linkedin.pinot.common.request.AggregationInfo;
+import com.linkedin.pinot.common.request.transform.TransformExpressionTree;
 import com.linkedin.pinot.common.segment.ReadMode;
 import com.linkedin.pinot.core.data.GenericRow;
 import com.linkedin.pinot.core.data.readers.RecordReader;
 import com.linkedin.pinot.core.indexsegment.IndexSegment;
 import com.linkedin.pinot.core.indexsegment.generator.SegmentGeneratorConfig;
-import com.linkedin.pinot.core.operator.aggregation.AggregationExecutor;
-import com.linkedin.pinot.core.operator.aggregation.DefaultAggregationExecutor;
+import com.linkedin.pinot.core.operator.BReusableFilteredDocIdSetOperator;
+import com.linkedin.pinot.core.operator.BaseOperator;
+import com.linkedin.pinot.core.operator.MProjectionOperator;
+import com.linkedin.pinot.core.operator.blocks.TransformBlock;
+import com.linkedin.pinot.core.operator.filter.MatchEntireSegmentOperator;
+import com.linkedin.pinot.core.operator.transform.TransformExpressionOperator;
+import com.linkedin.pinot.core.plan.AggregationFunctionInitializer;
+import com.linkedin.pinot.core.query.aggregation.AggregationExecutor;
+import com.linkedin.pinot.core.query.aggregation.AggregationFunctionContext;
+import com.linkedin.pinot.core.query.aggregation.DefaultAggregationExecutor;
 import com.linkedin.pinot.core.segment.creator.impl.SegmentIndexCreationDriverImpl;
 import com.linkedin.pinot.core.segment.index.loader.Loaders;
+import com.linkedin.pinot.util.TestUtils;
 import java.io.File;
-import java.io.Serializable;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import org.apache.commons.io.FileUtils;
-import org.apache.commons.lang.mutable.MutableLong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.testng.Assert;
@@ -118,12 +127,33 @@ public class DefaultAggregationExecutorTest {
    */
   @Test
   void testAggregation() {
-    AggregationExecutor aggregationExecutor = new DefaultAggregationExecutor(_indexSegment, _aggregationInfoList);
+    Map<String, BaseOperator> dataSourceMap = new HashMap<>();
+    for (String column : _indexSegment.getColumnNames()) {
+      dataSourceMap.put(column, _indexSegment.getDataSource(column));
+    }
+    int totalRawDocs = _indexSegment.getSegmentMetadata().getTotalRawDocs();
+    MatchEntireSegmentOperator matchEntireSegmentOperator = new MatchEntireSegmentOperator(totalRawDocs);
+    BReusableFilteredDocIdSetOperator docIdSetOperator =
+        new BReusableFilteredDocIdSetOperator(matchEntireSegmentOperator, totalRawDocs, 10000);
+    MProjectionOperator projectionOperator = new MProjectionOperator(dataSourceMap, docIdSetOperator);
+    TransformExpressionOperator transformOperator =
+        new TransformExpressionOperator(projectionOperator, Collections.<TransformExpressionTree>emptyList());
+    TransformBlock transformBlock = (TransformBlock) transformOperator.nextBlock();
+    int numAggFuncs = _aggregationInfoList.size();
+    AggregationFunctionContext[] aggrFuncContextArray = new AggregationFunctionContext[numAggFuncs];
+    AggregationFunctionInitializer aggFuncInitializer =
+        new AggregationFunctionInitializer(_indexSegment.getSegmentMetadata());
+    for (int i = 0; i < numAggFuncs; i++) {
+      AggregationInfo aggregationInfo = _aggregationInfoList.get(i);
+      aggrFuncContextArray[i] = AggregationFunctionContext.instantiate(aggregationInfo);
+      aggrFuncContextArray[i].getAggregationFunction().accept(aggFuncInitializer);
+    }
+    AggregationExecutor aggregationExecutor = new DefaultAggregationExecutor(aggrFuncContextArray);
     aggregationExecutor.init();
-    aggregationExecutor.aggregate(_docIdSet, 0, NUM_ROWS);
+    aggregationExecutor.aggregate(transformBlock);
     aggregationExecutor.finish();
 
-    List<Serializable> result = aggregationExecutor.getResult();
+    List<Object> result = aggregationExecutor.getResult();
     for (int i = 0; i < result.size(); i++) {
       double actual = (double) result.get(i);
       double expected = computeAggregation(AGGREGATION_FUNCTIONS[i], _inputData[i]);
@@ -187,7 +217,7 @@ public class DefaultAggregationExecutorTest {
     }
 
     SegmentIndexCreationDriverImpl driver = new SegmentIndexCreationDriverImpl();
-    RecordReader reader = createReader(schema, data);
+    RecordReader reader = new TestUtils.GenericRowRecordReader(schema, data);
 
     driver.init(config, reader);
     driver.build();
@@ -271,57 +301,5 @@ public class DefaultAggregationExecutorTest {
       min = Math.min(min, values[i]);
     }
     return min;
-  }
-
-  /**
-   * Record reader to generate the index segment.
-   *
-   * @param schema
-   * @param data
-   * @return
-   */
-  private RecordReader createReader(final Schema schema, final List<GenericRow> data) {
-    return new RecordReader() {
-
-      int counter = 0;
-
-      @Override
-      public void rewind()
-          throws Exception {
-        counter = 0;
-      }
-
-      @Override
-      public GenericRow next() {
-        return data.get(counter++);
-      }
-
-      @Override
-      public void init()
-          throws Exception {
-
-      }
-
-      @Override
-      public boolean hasNext() {
-        return counter < data.size();
-      }
-
-      @Override
-      public Schema getSchema() {
-        return schema;
-      }
-
-      @Override
-      public Map<String, MutableLong> getNullCountMap() {
-        return null;
-      }
-
-      @Override
-      public void close()
-          throws Exception {
-
-      }
-    };
   }
 }

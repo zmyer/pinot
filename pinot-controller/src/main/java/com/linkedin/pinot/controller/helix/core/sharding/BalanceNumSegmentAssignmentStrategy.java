@@ -20,6 +20,7 @@ import com.linkedin.pinot.common.segment.SegmentMetadata;
 import com.linkedin.pinot.common.utils.ControllerTenantNameBuilder;
 import com.linkedin.pinot.common.utils.Pairs;
 import com.linkedin.pinot.common.utils.Pairs.Number2ObjectPair;
+import com.linkedin.pinot.common.utils.helix.HelixHelper;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -27,7 +28,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.PriorityQueue;
 import org.apache.helix.HelixAdmin;
+import org.apache.helix.ZNRecord;
 import org.apache.helix.model.IdealState;
+import org.apache.helix.store.zk.ZkHelixPropertyStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -39,21 +42,21 @@ public class BalanceNumSegmentAssignmentStrategy implements SegmentAssignmentStr
   private static final Logger LOGGER = LoggerFactory.getLogger(BalanceNumSegmentAssignmentStrategy.class);
 
   @Override
-  public List<String> getAssignedInstances(HelixAdmin helixAdmin, String helixClusterName,
-      SegmentMetadata segmentMetadata, int numReplicas, String tenantName) {
+  public List<String> getAssignedInstances(HelixAdmin helixAdmin, ZkHelixPropertyStore<ZNRecord> propertyStore,
+      String helixClusterName, SegmentMetadata segmentMetadata, int numReplicas, String tenantName) {
     String serverTenantName;
     String tableName;
     if ("realtime".equalsIgnoreCase(segmentMetadata.getIndexType())) {
-      tableName = TableNameBuilder.REALTIME_TABLE_NAME_BUILDER.forTable(segmentMetadata.getTableName());
+      tableName = TableNameBuilder.REALTIME.tableNameWithType(segmentMetadata.getTableName());
       serverTenantName = ControllerTenantNameBuilder.getRealtimeTenantNameForTenant(tenantName);
     } else {
-      tableName = TableNameBuilder.OFFLINE_TABLE_NAME_BUILDER.forTable(segmentMetadata.getTableName());
+      tableName = TableNameBuilder.OFFLINE.tableNameWithType(segmentMetadata.getTableName());
       serverTenantName = ControllerTenantNameBuilder.getOfflineTenantNameForTenant(tenantName);
     }
 
     List<String> selectedInstances = new ArrayList<String>();
     Map<String, Integer> currentNumSegmentsPerInstanceMap = new HashMap<String, Integer>();
-    List<String> allTaggedInstances = helixAdmin.getInstancesInClusterWithTag(helixClusterName, serverTenantName);
+    List<String> allTaggedInstances = HelixHelper.getEnabledInstancesWithTag(helixAdmin, helixClusterName, serverTenantName);
 
     for (String instance : allTaggedInstances) {
       currentNumSegmentsPerInstanceMap.put(instance, 0);

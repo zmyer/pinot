@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2014-2015 LinkedIn Corp. (pinot-core@linkedin.com)
+ * Copyright (C) 2014-2016 LinkedIn Corp. (pinot-core@linkedin.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,25 +13,27 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package com.linkedin.pinot.controller.api.restlet.resources;
 
+import com.alibaba.fastjson.JSONObject;
+import com.linkedin.pinot.common.metrics.ControllerMetrics;
+import com.linkedin.pinot.common.protocols.SegmentCompletionProtocol;
+import com.linkedin.pinot.common.utils.LLCSegmentName;
+import com.linkedin.pinot.controller.ControllerConf;
+import com.linkedin.pinot.controller.helix.ControllerTest;
+import com.linkedin.pinot.controller.helix.core.realtime.SegmentCompletionManager;
+import com.yammer.metrics.core.MetricsRegistry;
 import java.io.IOException;
 import java.util.concurrent.ConcurrentHashMap;
 import org.apache.helix.HelixManager;
 import org.restlet.Application;
 import org.restlet.Context;
+import org.restlet.data.Reference;
 import org.restlet.representation.Representation;
 import org.testng.Assert;
 import org.testng.annotations.Test;
-import com.alibaba.fastjson.JSONObject;
-import com.linkedin.pinot.common.protocols.SegmentCompletionProtocol;
-import com.linkedin.pinot.common.utils.LLCSegmentName;
-import com.linkedin.pinot.controller.ControllerConf;
-import com.linkedin.pinot.controller.helix.ControllerTestUtils;
-import com.linkedin.pinot.controller.helix.core.realtime.SegmentCompletionManager;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
+
+import static org.mockito.Mockito.*;
 
 
 public class LLCSegmentCommitTest {
@@ -43,7 +45,8 @@ public class LLCSegmentCommitTest {
 
   @Test
   public void testSegmentCommit() throws Exception {
-    SegmentCompletionManager.create(createMockHelixManager(), null, new ControllerConf());
+    SegmentCompletionManager.create(createMockHelixManager(), null, new ControllerConf(),
+        new ControllerMetrics(new MetricsRegistry()));
     FakeLLCSegmentCommit segmentCommit = new FakeLLCSegmentCommit();
     Representation representation;
     String strResponse;
@@ -97,17 +100,16 @@ public class LLCSegmentCommitTest {
     }
 
     @Override
-    boolean extractParams() {
-      _offset = 1235L;
-      _segmentNameStr = _segmentName.getSegmentName();
-      _instanceId = "Server_0";
-      return true;
+    public Reference getReference() {
+      return new Reference().addQueryParameter("offset", "1235")
+          .addQueryParameter("instance", "Server_0")
+          .addQueryParameter("name", _segmentName.getSegmentName());
     }
 
     Context createMockContext() {
       Context context = mock(Context.class);
       ConcurrentHashMap<String, Object> map = new ConcurrentHashMap<>(1);
-      map.put(ControllerConf.class.toString(), ControllerTestUtils.getDefaultControllerConfiguration());
+      map.put(ControllerConf.class.toString(), ControllerTest.getDefaultControllerConfiguration());
       when(context.getAttributes()).thenReturn(map);
       return context;
     }
@@ -145,22 +147,22 @@ public class LLCSegmentCommitTest {
     public boolean uploadSuccess;
 
     protected FakeSegmentCompletionManager() {
-      super(null, null);
+      super(null, null, new ControllerMetrics(new MetricsRegistry()));
     }
 
     @Override
-    public SegmentCompletionProtocol.Response segmentConsumed(final String segmentNameStr, final String instanceId, final long offset) {
+    public SegmentCompletionProtocol.Response segmentConsumed(SegmentCompletionProtocol.Request.Params reqParams) {
       return null;
     }
 
     @Override
-    public SegmentCompletionProtocol.Response segmentCommitStart(final String segmentNameStr, final String instanceId, final long offset) {
+    public SegmentCompletionProtocol.Response segmentCommitStart(SegmentCompletionProtocol.Request.Params reqParams) {
       commitStartCalled = true;
       return commitStartResponse;
     }
 
     @Override
-    public SegmentCompletionProtocol.Response segmentCommitEnd(final String segmentNameStr, final String instanceId, final long offset, boolean success) {
+    public SegmentCompletionProtocol.Response segmentCommitEnd(SegmentCompletionProtocol.Request.Params reqParams, boolean success, boolean isSplitCommit) {
       commitEndCalled = true;
       uploadSuccess = success;
       return commitEndResponse;

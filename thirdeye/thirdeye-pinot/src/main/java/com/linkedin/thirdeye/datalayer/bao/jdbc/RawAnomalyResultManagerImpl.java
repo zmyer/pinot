@@ -1,14 +1,14 @@
 package com.linkedin.thirdeye.datalayer.bao.jdbc;
 
-import java.util.ArrayList;
-import java.util.List;
-
+import com.google.inject.Singleton;
 import com.linkedin.thirdeye.datalayer.bao.RawAnomalyResultManager;
 import com.linkedin.thirdeye.datalayer.dto.RawAnomalyResultDTO;
 import com.linkedin.thirdeye.datalayer.pojo.AnomalyFeedbackBean;
 import com.linkedin.thirdeye.datalayer.pojo.RawAnomalyResultBean;
 import com.linkedin.thirdeye.datalayer.util.Predicate;
+import java.util.List;
 
+@Singleton
 public class RawAnomalyResultManagerImpl extends AbstractManagerImpl<RawAnomalyResultDTO>
     implements RawAnomalyResultManager {
 
@@ -41,7 +41,7 @@ public class RawAnomalyResultManagerImpl extends AbstractManagerImpl<RawAnomalyR
     return id;
   }
 
-  public void update(RawAnomalyResultDTO entity) {
+  public int update(RawAnomalyResultDTO entity) {
     RawAnomalyResultBean bean =
         (RawAnomalyResultBean) convertDTO2Bean(entity, RawAnomalyResultBean.class);
     if (entity.getFeedback() != null) {
@@ -56,7 +56,7 @@ public class RawAnomalyResultManagerImpl extends AbstractManagerImpl<RawAnomalyR
     if (entity.getFunction() != null) {
       bean.setFunctionId(entity.getFunction().getId());
     }
-    genericPojoDao.update(bean);
+    return genericPojoDao.update(bean);
   }
 
   public RawAnomalyResultDTO findById(Long id) {
@@ -81,13 +81,7 @@ public class RawAnomalyResultManagerImpl extends AbstractManagerImpl<RawAnomalyR
     Predicate functionIdPredicate = Predicate.EQ("functionId", functionId);
     Predicate finalPredicate =
         Predicate.AND(functionIdPredicate, Predicate.OR(endTimeTimePredicate, startTimePredicate));
-    List<RawAnomalyResultBean> list =
-        genericPojoDao.get(finalPredicate, RawAnomalyResultBean.class);
-    List<RawAnomalyResultDTO> result = new ArrayList<>();
-    for (RawAnomalyResultBean bean : list) {
-      result.add(createRawAnomalyDTOFromBean(bean));
-    }
-    return result;
+    return findByPredicate(finalPredicate);
   }
 
   public List<RawAnomalyResultDTO> findUnmergedByFunctionId(Long functionId) {
@@ -99,21 +93,11 @@ public class RawAnomalyResultManagerImpl extends AbstractManagerImpl<RawAnomalyR
         Predicate.EQ("merged", false), //
         Predicate.EQ("dataMissing", false) //
     );
-    List<RawAnomalyResultBean> list = genericPojoDao.get(predicate, RawAnomalyResultBean.class);
-    List<RawAnomalyResultDTO> result = new ArrayList<>();
-    for (RawAnomalyResultBean bean : list) {
-      result.add(createRawAnomalyDTOFromBean(bean));
-    }
-    return result;
+    return findByPredicate(predicate);
   }
 
   public List<RawAnomalyResultDTO> findByFunctionId(Long functionId) {
     Predicate predicate = Predicate.EQ("functionId", functionId);
-    List<RawAnomalyResultBean> list = genericPojoDao.get(predicate, RawAnomalyResultBean.class);
-    List<RawAnomalyResultDTO> result = new ArrayList<>();
-    for (RawAnomalyResultBean bean : list) {
-      result.add(createRawAnomalyDTOFromBean(bean));
-    }
-    return result;
+    return findByPredicate(predicate);
   }
 }

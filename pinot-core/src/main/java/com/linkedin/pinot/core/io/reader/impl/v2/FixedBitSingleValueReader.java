@@ -16,6 +16,7 @@
 package com.linkedin.pinot.core.io.reader.impl.v2;
 
 import com.linkedin.pinot.core.io.reader.BaseSingleColumnSingleValueReader;
+import com.linkedin.pinot.core.io.reader.ReaderContext;
 import com.linkedin.pinot.core.segment.memory.PinotDataBuffer;
 import com.linkedin.pinot.core.util.SizeUtil;
 import java.io.IOException;
@@ -27,7 +28,7 @@ import org.slf4j.LoggerFactory;
  * Reads integers that were bit compressed. It unpacks 32 values at a time (since these are aligned
  * to integer boundary). Which means it reads 32 * numBits/8 bytes at a time.
  * for e.g if its 3 bit compressed, then we read 3 int (96 bytes at one go).
- * This may seem over kill because in order to read 1 value, we uncompress 32 values.
+ * This may seem over kill because in order to read 1 value, we decompress 32 values.
  * But in reality the cost get amortized when we read a range of values.
  */
 public class FixedBitSingleValueReader extends BaseSingleColumnSingleValueReader {
@@ -168,45 +169,16 @@ public class FixedBitSingleValueReader extends BaseSingleColumnSingleValueReader
   }
 
   @Override
-  public char getChar(int row) {
-    throw new UnsupportedOperationException();
-  }
-
-  @Override
-  public short getShort(int row) {
-    throw new UnsupportedOperationException();
-  }
-
-  @Override
-  public long getLong(int row) {
-    throw new UnsupportedOperationException();
-  }
-
-  @Override
-  public float getFloat(int row) {
-    throw new UnsupportedOperationException();
-  }
-
-  @Override
-  public double getDouble(int row) {
-    throw new UnsupportedOperationException();
-  }
-
-  @Override
-  public String getString(int row) {
-    throw new UnsupportedOperationException();
-  }
-
-  @Override
-  public byte[] getBytes(int row) {
-    throw new UnsupportedOperationException();
-  }
-
-  @Override
   public void readValues(int[] rows, int rowStartPos, int rowSize, int[] values, int valuesStartPos) {
     int endPos = rowStartPos + rowSize;
     for (int ri = rowStartPos; ri < endPos; ++ri) {
       values[valuesStartPos++] = getInt(rows[ri]);
     }
+  }
+
+  @Override
+  public ReaderContext createContext() {
+    //no need of context for fixedbit 
+    return null;
   }
 }

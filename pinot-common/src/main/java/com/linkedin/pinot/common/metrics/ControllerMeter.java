@@ -26,6 +26,7 @@ public enum ControllerMeter implements AbstractMetrics.Meter {
   CONTROLLER_INTERNAL_ERROR("InternalError", true),
   CONTROLLER_INSTANCE_GET_ERROR("InstanceGetError", true),
   CONTROLLER_INSTANCE_POST_ERROR("InstancePostError", true),
+  CONTROLLER_INSTANCE_DELETE_ERROR("InstanceDeleteError", true),
   CONTROLLER_SEGMENT_GET_ERROR("SegmentGetError", true),
   CONTROLLER_SEGMENT_DELETE_ERROR("SegmentDeleteError", true),
   CONTROLLER_SEGMENT_UPLOAD_ERROR("SegmentUploadError", true),
@@ -36,13 +37,18 @@ public enum ControllerMeter implements AbstractMetrics.Meter {
   CONTROLLER_TABLE_INSTANCES_GET_ERROR("TableInstancesGetError", true),
   CONTROLLER_TABLE_ADD_ERROR("TableAddError", true),
   CONTROLLER_TABLE_GET_ERROR("TableGetError", true),
+  CONTROLLER_TABLE_UPDATE_ERROR("TableUpdateError", true),
   CONTROLLER_TABLE_SCHEMA_GET_ERROR("TableSchemaGetError", true),
   CONTROLLER_TABLE_SCHEMA_UPDATE_ERROR("TableSchemaUpdateError", true),
   CONTROLLER_TABLE_TENANT_UPDATE_ERROR("TableTenantUpdateError", true),
   CONTROLLER_TABLE_TENANT_CREATE_ERROR("TableTenantCreateError", true),
   CONTROLLER_TABLE_TENANT_DELETE_ERROR("TableTenantDeleteError", true),
   CONTROLLER_TABLE_TENANT_GET_ERROR("TableTenantGetError", true),
-  CONTROLLER_REALTIME_TABLE_SEGMENT_ASSIGNMENT_ERROR("errors", true);
+  CONTROLLER_REALTIME_TABLE_SEGMENT_ASSIGNMENT_ERROR("errors", true),
+  LLC_STATE_MACHINE_ABORTS("aborts", false),
+  LLC_AUTO_CREATED_PARTITIONS("creates", false),
+  LLC_ZOOKEPER_UPDATE_FAILURES("failures", false),
+  LLC_KAFKA_DATA_LOSS("dataLoss", false);
 
 
   private final String brokerMeterName;

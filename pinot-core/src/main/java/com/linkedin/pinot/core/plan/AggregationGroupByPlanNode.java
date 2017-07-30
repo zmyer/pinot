@@ -17,61 +17,58 @@ package com.linkedin.pinot.core.plan;
 
 import com.linkedin.pinot.common.request.AggregationInfo;
 import com.linkedin.pinot.common.request.BrokerRequest;
+import com.linkedin.pinot.common.request.GroupBy;
+import com.linkedin.pinot.common.segment.SegmentMetadata;
 import com.linkedin.pinot.core.common.Operator;
 import com.linkedin.pinot.core.indexsegment.IndexSegment;
-import com.linkedin.pinot.core.operator.MProjectionOperator;
-import com.linkedin.pinot.core.operator.aggregation.groupby.AggregationGroupByOperator;
-import java.util.Arrays;
-import java.util.HashSet;
-import java.util.Set;
+import com.linkedin.pinot.core.operator.query.AggregationGroupByOperator;
+import com.linkedin.pinot.core.operator.transform.TransformExpressionOperator;
+import com.linkedin.pinot.core.query.aggregation.function.AggregationFunctionUtils;
+import java.util.List;
+import javax.annotation.Nonnull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 
 /**
- * AggregationGroupByOperatorPlanNode takes care of how to apply multiple aggregation
- * functions and groupBy query to an IndexSegment.
+ * The <code>AggregationGroupByPlanNode</code> class provides the execution plan for aggregation group-by query on a
+ * single segment.
  */
 public class AggregationGroupByPlanNode implements PlanNode {
-  private static final Logger LOGGER = LoggerFactory.getLogger("QueryPlanLog");
+  private static final Logger LOGGER = LoggerFactory.getLogger(AggregationGroupByPlanNode.class);
+
   private final IndexSegment _indexSegment;
-  private final BrokerRequest _brokerRequest;
-  private final ProjectionPlanNode _projectionPlanNode;
+  private final List<AggregationInfo> _aggregationInfos;
+  private final GroupBy _groupBy;
+  private final TransformPlanNode _transformPlanNode;
+  private final int _numGroupsLimit;
 
-  public AggregationGroupByPlanNode(IndexSegment indexSegment, BrokerRequest query) {
+  public AggregationGroupByPlanNode(@Nonnull IndexSegment indexSegment, @Nonnull BrokerRequest brokerRequest,
+      int numGroupsLimit) {
     _indexSegment = indexSegment;
-    _brokerRequest = query;
-    _projectionPlanNode = new ProjectionPlanNode(_indexSegment, getAggregationGroupByRelatedColumns(),
-        new DocIdSetPlanNode(_indexSegment, _brokerRequest, 5000));
-  }
-
-  private String[] getAggregationGroupByRelatedColumns() {
-    Set<String> aggregationGroupByRelatedColumns = new HashSet<>();
-    for (AggregationInfo aggregationInfo : _brokerRequest.getAggregationsInfo()) {
-      if (aggregationInfo.getAggregationType().equalsIgnoreCase("count")) {
-        continue;
-      }
-      String columns = aggregationInfo.getAggregationParams().get("column").trim();
-      aggregationGroupByRelatedColumns.addAll(Arrays.asList(columns.split(",")));
-    }
-    aggregationGroupByRelatedColumns.addAll(_brokerRequest.getGroupBy().getColumns());
-    return aggregationGroupByRelatedColumns.toArray(new String[aggregationGroupByRelatedColumns.size()]);
+    _aggregationInfos = brokerRequest.getAggregationsInfo();
+    _groupBy = brokerRequest.getGroupBy();
+    _numGroupsLimit = numGroupsLimit;
+    _transformPlanNode = new TransformPlanNode(_indexSegment, brokerRequest);
   }
 
   @Override
   public Operator run() {
-    MProjectionOperator projectionOperator = (MProjectionOperator) _projectionPlanNode.run();
-    return new AggregationGroupByOperator(_indexSegment, _brokerRequest.getAggregationsInfo(),
-        _brokerRequest.getGroupBy(), projectionOperator);
+    TransformExpressionOperator transformOperator = (TransformExpressionOperator) _transformPlanNode.run();
+    SegmentMetadata segmentMetadata = _indexSegment.getSegmentMetadata();
+    return new AggregationGroupByOperator(
+        AggregationFunctionUtils.getAggregationFunctionContexts(_aggregationInfos, segmentMetadata), _groupBy,
+        _numGroupsLimit, transformOperator, segmentMetadata.getTotalRawDocs());
   }
 
   @Override
   public void showTree(String prefix) {
-    LOGGER.debug(prefix + "Inner-Segment Plan Node :");
-    LOGGER.debug(prefix + "Operator: MAggregationGroupByOperator");
-    LOGGER.debug(prefix + "Argument 0: Projection - ");
-    _projectionPlanNode.showTree(prefix + "    ");
-    LOGGER.debug(prefix + "Argument 1: AggregationGroupBy");
+    LOGGER.debug(prefix + "Segment Level Inner-Segment Plan Node:");
+    LOGGER.debug(prefix + "Operator: AggregationGroupByOperator");
+    LOGGER.debug(prefix + "Argument 0: IndexSegment - " + _indexSegment.getSegmentName());
+    LOGGER.debug(prefix + "Argument 1: Aggregations - " + _aggregationInfos);
+    LOGGER.debug(prefix + "Argument 2: GroupBy - " + _groupBy);
+    LOGGER.debug(prefix + "Argument 3: Transform -");
+    _transformPlanNode.showTree(prefix + "    ");
   }
-
 }

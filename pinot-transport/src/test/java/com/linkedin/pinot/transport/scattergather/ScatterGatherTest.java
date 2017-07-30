@@ -15,9 +15,6 @@
  */
 package com.linkedin.pinot.transport.scattergather;
 
-import com.google.common.util.concurrent.Futures;
-import com.google.common.util.concurrent.ListenableFuture;
-import io.netty.channel.ChannelHandlerContext;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -33,6 +30,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.testng.Assert;
 import org.testng.annotations.Test;
+import com.google.common.util.concurrent.Futures;
+import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.linkedin.pinot.common.metrics.BrokerMetrics;
 import com.linkedin.pinot.common.request.BrokerRequest;
@@ -45,7 +44,6 @@ import com.linkedin.pinot.transport.common.RoundRobinReplicaSelection;
 import com.linkedin.pinot.transport.common.SegmentId;
 import com.linkedin.pinot.transport.common.SegmentIdSet;
 import com.linkedin.pinot.transport.metrics.NettyClientMetrics;
-import com.linkedin.pinot.transport.netty.NettyClientConnection;
 import com.linkedin.pinot.transport.netty.NettyServer.RequestHandler;
 import com.linkedin.pinot.transport.netty.NettyServer.RequestHandlerFactory;
 import com.linkedin.pinot.transport.netty.NettyTCPServer;
@@ -54,6 +52,7 @@ import com.linkedin.pinot.transport.pool.KeyedPoolImpl;
 import com.linkedin.pinot.transport.scattergather.ScatterGatherImpl.ScatterGatherRequestContext;
 import com.yammer.metrics.core.MetricsRegistry;
 import io.netty.buffer.ByteBuf;
+import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.util.HashedWheelTimer;
@@ -96,7 +95,7 @@ public class ScatterGatherTest {
       Map<ServerInstance, SegmentIdSet> resultMap = ctxt.getSelectedServers();
       Assert.assertEquals(resultMap.size(), 1, "Count");
       Assert.assertEquals(resultMap.get(serverInstance1), pg, "Element check");
-      System.out.println(ctxt);
+//      System.out.println(ctxt);
     }
 
     {
@@ -132,7 +131,7 @@ public class ScatterGatherTest {
       Assert.assertEquals(resultMap.size(), 2, "Count");
       Assert.assertEquals(resultMap.get(serverInstance1), pg, "Element check");
       Assert.assertEquals(resultMap.get(serverInstance2), pg2, "Element check");
-      System.out.println(ctxt);
+//      System.out.println(ctxt);
     }
 
     {
@@ -164,14 +163,14 @@ public class ScatterGatherTest {
       Map<ServerInstance, SegmentIdSet> resultMap = ctxt.getSelectedServers();
       Assert.assertEquals(resultMap.size(), 1, "Count");
       Assert.assertEquals(resultMap.get(serverInstance1), pg, "Element check"); // first server is getting selected
-      System.out.println(ctxt);
+//      System.out.println(ctxt);
 
       // Run selection again. Now the second server should be selected
       scImpl.selectServices(ctxt);
       resultMap = ctxt.getSelectedServers();
       Assert.assertEquals(resultMap.size(), 1, "Count");
       Assert.assertEquals(resultMap.get(serverInstance2), pg, "Element check"); // second server is getting selected
-      System.out.println(ctxt);
+//      System.out.println(ctxt);
     }
 
     {
@@ -203,14 +202,14 @@ public class ScatterGatherTest {
       Map<ServerInstance, SegmentIdSet> resultMap = ctxt.getSelectedServers();
       Assert.assertEquals(resultMap.size(), 2, "Count");
       Assert.assertFalse(resultMap.get(serverInstance1).equals(resultMap.get(serverInstance2)), "Element check"); // first server is getting selected
-      System.out.println(ctxt);
+//      System.out.println(ctxt);
 
       // Run selection again. Now the second server should be selected
       scImpl.selectServices(ctxt);
       resultMap = ctxt.getSelectedServers();
       Assert.assertEquals(resultMap.size(), 2, "Count");
       Assert.assertFalse(resultMap.get(serverInstance1).equals(resultMap.get(serverInstance2)), "Element check"); // first server is getting selected
-      System.out.println(ctxt);
+//      System.out.println(ctxt);
     }
   }
 
@@ -233,8 +232,8 @@ public class ScatterGatherTest {
     NettyClientMetrics clientMetrics = new NettyClientMetrics(registry, "client_");
     PooledNettyClientResourceManager rm =
         new PooledNettyClientResourceManager(eventLoopGroup, new HashedWheelTimer(), clientMetrics);
-    KeyedPoolImpl<ServerInstance, NettyClientConnection> pool =
-        new KeyedPoolImpl<ServerInstance, NettyClientConnection>(1, 1, 300000, 1, rm, timedExecutor, poolExecutor,
+    KeyedPoolImpl<PooledNettyClientResourceManager.PooledClientConnection> pool =
+        new KeyedPoolImpl<PooledNettyClientResourceManager.PooledClientConnection>(1, 1, 300000, 1, rm, timedExecutor, poolExecutor,
             registry);
     rm.setPool(pool);
 
@@ -255,7 +254,7 @@ public class ScatterGatherTest {
 
     final ScatterGatherStats scatterGatherStats = new ScatterGatherStats();
     BrokerMetrics brokerMetrics = new BrokerMetrics(new MetricsRegistry());
-    CompositeFuture<ServerInstance, ByteBuf> fut = scImpl.scatterGather(req, scatterGatherStats, brokerMetrics);
+    CompositeFuture<ByteBuf> fut = scImpl.scatterGather(req, scatterGatherStats, brokerMetrics);
     Map<ServerInstance, ByteBuf> v = fut.get();
     ByteBuf b = v.get(serverInstance1);
     byte[] b2 = new byte[b.readableBytes()];
@@ -301,8 +300,8 @@ public class ScatterGatherTest {
     NettyClientMetrics clientMetrics = new NettyClientMetrics(registry, "client_");
     PooledNettyClientResourceManager rm =
         new PooledNettyClientResourceManager(eventLoopGroup, new HashedWheelTimer(), clientMetrics);
-    KeyedPoolImpl<ServerInstance, NettyClientConnection> pool =
-        new KeyedPoolImpl<ServerInstance, NettyClientConnection>(1, 1, 300000, 1, rm, timedExecutor, poolExecutor,
+    KeyedPoolImpl<PooledNettyClientResourceManager.PooledClientConnection> pool =
+        new KeyedPoolImpl<PooledNettyClientResourceManager.PooledClientConnection>(1, 1, 300000, 1, rm, timedExecutor, poolExecutor,
             registry);
     rm.setPool(pool);
 
@@ -341,7 +340,7 @@ public class ScatterGatherTest {
     ScatterGatherImpl scImpl = new ScatterGatherImpl(pool, service);
     final ScatterGatherStats scatterGatherStats = new ScatterGatherStats();
     BrokerMetrics brokerMetrics = new BrokerMetrics(new MetricsRegistry());
-    CompositeFuture<ServerInstance, ByteBuf> fut = scImpl.scatterGather(req, scatterGatherStats, brokerMetrics);
+    CompositeFuture<ByteBuf> fut = scImpl.scatterGather(req, scatterGatherStats, brokerMetrics);
     Map<ServerInstance, ByteBuf> v = fut.get();
     Assert.assertEquals(v.size(), 4);
 
@@ -406,8 +405,8 @@ public class ScatterGatherTest {
     NettyClientMetrics clientMetrics = new NettyClientMetrics(registry, "client_");
     PooledNettyClientResourceManager rm =
         new PooledNettyClientResourceManager(eventLoopGroup, new HashedWheelTimer(), clientMetrics);
-    KeyedPoolImpl<ServerInstance, NettyClientConnection> pool =
-        new KeyedPoolImpl<ServerInstance, NettyClientConnection>(1, 1, 300000, 1, rm, timedExecutor, service, registry);
+    KeyedPoolImpl<PooledNettyClientResourceManager.PooledClientConnection> pool =
+        new KeyedPoolImpl<>(1, 1, 300000, 1, rm, timedExecutor, service, registry);
     rm.setPool(pool);
 
     SegmentIdSet pg1 = new SegmentIdSet();
@@ -447,7 +446,7 @@ public class ScatterGatherTest {
     ScatterGatherImpl scImpl = new ScatterGatherImpl(pool, service);
     final ScatterGatherStats scatterGatherStats = new ScatterGatherStats();
     BrokerMetrics brokerMetrics = new BrokerMetrics(new MetricsRegistry());
-    CompositeFuture<ServerInstance, ByteBuf> fut = scImpl.scatterGather(req, scatterGatherStats, brokerMetrics);
+    CompositeFuture<ByteBuf> fut = scImpl.scatterGather(req, scatterGatherStats, brokerMetrics);
     Map<ServerInstance, ByteBuf> v = fut.get();
 
     //Only 3 servers return value.
@@ -474,10 +473,8 @@ public class ScatterGatherTest {
     Map<ServerInstance, Throwable> errorMap = fut.getError();
     Assert.assertEquals(errorMap.size(), 1, "One error");
     Assert.assertNotNull(errorMap.get(serverInstance4), "Server4 returned timeout");
-    System.out.println("Error is :" + errorMap.get(serverInstance4));
 
     Thread.sleep(3000);
-    System.out.println("Pool Stats :" + pool.getStats());
     pool.getStats().refresh();
     Assert.assertEquals(pool.getStats().getTotalBadDestroyed(), 1, "Total Bad destroyed");
 
@@ -523,8 +520,8 @@ public class ScatterGatherTest {
     NettyClientMetrics clientMetrics = new NettyClientMetrics(registry, "client_");
     PooledNettyClientResourceManager rm =
         new PooledNettyClientResourceManager(eventLoopGroup, new HashedWheelTimer(), clientMetrics);
-    KeyedPoolImpl<ServerInstance, NettyClientConnection> pool =
-        new KeyedPoolImpl<ServerInstance, NettyClientConnection>(1, 1, 300000, 1, rm, timedExecutor, poolExecutor,
+    KeyedPoolImpl<PooledNettyClientResourceManager.PooledClientConnection> pool =
+        new KeyedPoolImpl<>(1, 1, 300000, 1, rm, timedExecutor, poolExecutor,
             registry);
     rm.setPool(pool);
 
@@ -565,7 +562,7 @@ public class ScatterGatherTest {
     ScatterGatherImpl scImpl = new ScatterGatherImpl(pool, service);
     final ScatterGatherStats scatterGatherStats = new ScatterGatherStats();
     final BrokerMetrics brokerMetrics = new BrokerMetrics(new MetricsRegistry());
-    CompositeFuture<ServerInstance, ByteBuf> fut = scImpl.scatterGather(req, scatterGatherStats, brokerMetrics);
+    CompositeFuture<ByteBuf> fut = scImpl.scatterGather(req, scatterGatherStats, brokerMetrics);
     Map<ServerInstance, ByteBuf> v = fut.get();
 
     //Only 3 servers return value.
@@ -592,10 +589,10 @@ public class ScatterGatherTest {
     Map<ServerInstance, Throwable> errorMap = fut.getError();
     Assert.assertEquals(errorMap.size(), 1, "One error");
     Assert.assertNotNull(errorMap.get(serverInstance4), "Server4 returned timeout");
-    System.out.println("Error is :" + errorMap.get(serverInstance4));
+//    System.out.println("Error is :" + errorMap.get(serverInstance4));
 
     Thread.sleep(3000);
-    System.out.println("Pool Stats :" + pool.getStats());
+//    System.out.println("Pool Stats :" + pool.getStats());
     pool.getStats().refresh();
     Assert.assertEquals(pool.getStats().getTotalBadDestroyed(), 1, "Total Bad destroyed");
 
@@ -780,7 +777,7 @@ public class ScatterGatherTest {
 
     @Override
     public ServerInstance selectServer(SegmentId p, List<ServerInstance> orderedServers, Object hashKey) {
-      System.out.println("Partition :" + p + ", Ordered Servers :" + orderedServers);
+//      System.out.println("Partition :" + p + ", Ordered Servers :" + orderedServers);
       return orderedServers.get(0);
     }
   }

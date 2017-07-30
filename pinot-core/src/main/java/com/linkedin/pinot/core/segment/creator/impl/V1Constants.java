@@ -85,6 +85,7 @@ public class V1Constants {
 
   public static class Indexes {
     public static final String UN_SORTED_SV_FWD_IDX_FILE_EXTENTION = ".sv.unsorted.fwd";
+    public static final String RAW_SV_FWD_IDX_FILE_EXTENTION = ".sv.raw.fwd";
     public static final String SORTED_FWD_IDX_FILE_EXTENTION = ".sv.sorted.fwd";
     public static final String UN_SORTED_MV_FWD_IDX_FILE_EXTENTION = ".mv.fwd";
     public static final String BITMAP_INVERTED_INDEX_FILE_EXTENSION = ".bitmap.inv";
@@ -158,6 +159,12 @@ public class V1Constants {
       public static final String DEFAULT_NULL_VALUE = "defaultNullValue";
       public static final String DERIVED_METRIC_TYPE = "derivedMetricType";
       public static final String ORIGIN_COLUMN = "originColumn";
+      public static final String MIN_VALUE = "minValue";
+      public static final String MAX_VALUE = "maxValue";
+      public static final String PARTITION_FUNCTION = "partitionFunction";
+      public static final String NUM_PARTITIONS = "numPartitions";
+      public static final String PARTITION_VALUES = "partitionValues";
+
 
       private static final String COLUMN_PROPS_KEY_PREFIX = "column.";
       public static String getKeyFor(String column, String key) {

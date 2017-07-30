@@ -1,19 +1,18 @@
 package com.linkedin.thirdeye.datalayer.pojo;
 
+import com.linkedin.thirdeye.api.DimensionMap;
 import java.util.Objects;
-
 import org.apache.commons.lang.ObjectUtils;
 import org.joda.time.DateTime;
 
-import com.google.common.base.MoreObjects;
-
+@Deprecated
 public class RawAnomalyResultBean extends AbstractBean implements Comparable<RawAnomalyResultBean> {
 
   private Long functionId;
   private Long AnomalyFeedbackId;
   private Long startTime;
   private Long endTime;
-  private String dimensions;
+  private DimensionMap dimensions;
 
   // significance level
   private double score;
@@ -25,16 +24,34 @@ public class RawAnomalyResultBean extends AbstractBean implements Comparable<Raw
   private Long creationTimeUtc;
   private boolean dataMissing;
   private boolean merged;
+  private double avgCurrentVal;
+  private double avgBaselineVal;
+
+  public double getAvgCurrentVal(){
+    return this.avgCurrentVal;
+  }
+
+  public double getAvgBaselineVal(){
+    return this.avgBaselineVal;
+  }
+
+  public void setAvgCurrentVal(double val){
+    this.avgCurrentVal = val;
+  }
+
+  public void setAvgBaselineVal(double val){
+    this.avgBaselineVal = val;
+  }
 
   public RawAnomalyResultBean() {
     creationTimeUtc = DateTime.now().getMillis();
   }
 
-  public String getDimensions() {
+  public DimensionMap getDimensions() {
     return dimensions;
   }
 
-  public void setDimensions(String dimensions) {
+  public void setDimensions(DimensionMap dimensions) {
     this.dimensions = dimensions;
   }
 
@@ -128,31 +145,24 @@ public class RawAnomalyResultBean extends AbstractBean implements Comparable<Raw
   }
 
   @Override
-  public String toString() {
-    return MoreObjects.toStringHelper(this).add("id", getId()).add("startTimeUtc", startTime)
-        .add("dimensions", dimensions).add("endTimeUtc", endTime).add("score", score)
-        .add("weight", weight).add("properties", properties).add("message", message)
-        .add("creationTimeUtc", creationTimeUtc).toString();
-  }
-
-  @Override
   public boolean equals(Object o) {
     if (!(o instanceof RawAnomalyResultBean)) {
       return false;
     }
     RawAnomalyResultBean r = (RawAnomalyResultBean) o;
-    return Objects.equals(getId(), r.getId()) && Objects.equals(startTime, r.getStartTime())
+    return Objects.equals(startTime, r.getStartTime())
         && Objects.equals(dimensions, r.getDimensions()) && Objects.equals(endTime, r.getEndTime())
         && Objects.equals(score, r.getScore()) && Objects.equals(weight, r.getWeight())
-        && Objects.equals(properties, r.getProperties()) && Objects.equals(message, r.getMessage());
+        && Objects.equals(properties, r.getProperties()) && Objects.equals(message, r.getMessage())
+        && Objects.equals(avgBaselineVal, r.getAvgBaselineVal()) && Objects.equals(avgCurrentVal, r.getAvgCurrentVal());
     // Intentionally omit creationTimeUtc, since start/end are the truly significant dates for
     // anomalies
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(getId(), dimensions, startTime, endTime, score, weight, properties,
-        message);
+    return Objects.hash(dimensions, startTime, endTime, score, weight, properties,
+        message, avgBaselineVal, avgCurrentVal);
     // Intentionally omit creationTimeUtc, since start/end are the truly significant dates for
     // anomalies
   }

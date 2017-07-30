@@ -1,0 +1,56 @@
+@mixin padding-reset() {
+  padding-left: 0;
+  padding-right: 0;
+  padding-bottom: 0;
+  padding-top: 0;
+}
+
+@mixin margin-reset() {
+  margin-left: 0;
+  margin-right: 0;
+  margin-bottom: 0;
+  margin-top: 0;
+}
+
+@mixin group-clearfix() {
+  &:after {
+  visibility: hidden;
+  display: block;
+  content: "";
+  clear: both;
+  height: 0;
+  }
+}
+
+@mixin truncate-mixin() {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  width: 100%;
+}
+
+@mixin app-title-mixin() {
+  font-size: 22px;
+  margin-top: $te-default-element-spacing;
+  color: app-shade(black, 6);
+  font-weight: normal;
+}
+
+@mixin app-sub-title-mixin() {
+  font-size: 18px;
+  color: app-shade(black, 6);
+  font-weight: 600;
+}
+
+@mixin app-hide() {
+  display: none;
+}
+
+@mixin vertical-align($position: relative) {
+  position: $position;
+  top: 50%;
+  -webkit-transform: translateY(-50%);
+  -ms-transform: translateY(-50%);
+  transform: translateY(-50%);
+}

@@ -16,19 +16,19 @@
 package com.linkedin.pinot.core.operator.docvalsets;
 
 import com.linkedin.pinot.common.data.FieldSpec.DataType;
+import com.linkedin.pinot.core.common.BaseBlockValSet;
 import com.linkedin.pinot.core.common.BlockValIterator;
-import com.linkedin.pinot.core.common.BlockValSet;
 import com.linkedin.pinot.core.io.reader.SingleColumnSingleValueReader;
 import com.linkedin.pinot.core.operator.docvaliterators.RealtimeSingleValueIterator;
 
-public final class RealtimeSingleValueSet implements BlockValSet {
+
+public final class RealtimeSingleValueSet extends BaseBlockValSet {
 
   private SingleColumnSingleValueReader reader;
   private int length;
   private DataType dataType;
 
-  public RealtimeSingleValueSet(SingleColumnSingleValueReader reader, int length,
-      DataType dataType) {
+  public RealtimeSingleValueSet(SingleColumnSingleValueReader reader, int length, DataType dataType) {
     super();
     this.reader = reader;
     this.length = length;
@@ -46,7 +46,8 @@ public final class RealtimeSingleValueSet implements BlockValSet {
   }
 
   @Override
-  public void readIntValues(int[] inDocIds, int inStartPos, int inDocIdsSize, int[] outDictionaryIds, int outStartPos) {
+  public void getDictionaryIds(int[] inDocIds, int inStartPos, int inDocIdsSize, int[] outDictionaryIds,
+      int outStartPos) {
     int endPos = inStartPos + inDocIdsSize;
     for (int iter = inStartPos; iter < endPos; ++iter) {
       int row = inDocIds[iter];

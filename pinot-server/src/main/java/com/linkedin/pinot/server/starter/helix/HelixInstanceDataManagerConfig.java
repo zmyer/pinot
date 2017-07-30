@@ -18,11 +18,10 @@ package com.linkedin.pinot.server.starter.helix;
 import java.util.Iterator;
 import org.apache.commons.configuration.Configuration;
 import org.apache.commons.configuration.ConfigurationException;
-
-import com.linkedin.pinot.common.segment.ReadMode;
-import com.linkedin.pinot.core.data.manager.config.InstanceDataManagerConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import com.linkedin.pinot.common.segment.ReadMode;
+import com.linkedin.pinot.core.data.manager.config.InstanceDataManagerConfig;
 
 
 /**
@@ -33,6 +32,9 @@ import org.slf4j.LoggerFactory;
 public class HelixInstanceDataManagerConfig implements InstanceDataManagerConfig {
   private static final Logger LOGGER = LoggerFactory.getLogger(HelixInstanceDataManagerConfig.class);
 
+  // Average number of values in multi-valued columns in any table in this instance.
+  // This value is used to allocate initial memory for multi-valued columns in realtime segments in consuming state.
+  private static final String AVERAGE_MV_COUNT = "realtime.averageMultiValueEntriesPerRow";
   private static final String INSTANCE_SEGMENT_METADATA_LOADER_CLASS = "segment.metadata.loader.class";
   // Key of instance id
   public static final String INSTANCE_ID = "id";
@@ -50,8 +52,12 @@ public class HelixInstanceDataManagerConfig implements InstanceDataManagerConfig
   public static final String READ_MODE = "readMode";
   // Key of the segment format this server can read
   public static final String SEGMENT_FORMAT_VERSION = "segment.format.version";
+
   // Key of whether to enable default columns
   private static final String ENABLE_DEFAULT_COLUMNS = "enable.default.columns";
+
+  // Key of whether to enable split commit
+  private static final String ENABLE_SPLIT_COMMIT = "enable.split.commit";
 
   private final static String[] REQUIRED_KEYS = { INSTANCE_ID, INSTANCE_DATA_DIR, READ_MODE };
   private Configuration _instanceDataManagerConfiguration = null;
@@ -118,6 +124,16 @@ public class HelixInstanceDataManagerConfig implements InstanceDataManagerConfig
   @Override
   public boolean isEnableDefaultColumns() {
     return _instanceDataManagerConfiguration.getBoolean(ENABLE_DEFAULT_COLUMNS, false);
+  }
+
+  @Override
+  public boolean isEnableSplitCommit() {
+    return _instanceDataManagerConfiguration.getBoolean(ENABLE_SPLIT_COMMIT, false);
+  }
+
+  @Override
+  public String getAvgMultiValueCount() {
+    return _instanceDataManagerConfiguration.getString(AVERAGE_MV_COUNT, null);
   }
 
   @Override

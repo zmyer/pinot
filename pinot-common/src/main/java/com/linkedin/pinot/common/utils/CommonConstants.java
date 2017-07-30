@@ -15,19 +15,14 @@
  */
 package com.linkedin.pinot.common.utils;
 
-import java.util.Collections;
-import java.util.Set;
-
+import java.io.File;
 import org.apache.commons.lang.StringUtils;
-
-import com.google.common.collect.Sets;
 
 
 public class CommonConstants {
   public static class Helix {
     public static final String IS_SHUTDOWN_IN_PROGRESS = "shutdownInProgress";
 
-    public static final String PREFIX_OF_BROKER_RESOURCE_TAG = "broker_";
     public static final String PREFIX_OF_SERVER_INSTANCE = "Server_";
     public static final String PREFIX_OF_BROKER_INSTANCE = "Broker_";
 
@@ -35,6 +30,7 @@ public class CommonConstants {
     public static final String BROKER_INSTANCE_TYPE = "broker";
 
     public static final String BROKER_RESOURCE_INSTANCE = "brokerResource";
+
     public static final String UNTAGGED_SERVER_INSTANCE = "server_untagged";
     public static final String UNTAGGED_BROKER_INSTANCE = "broker_untagged";
 
@@ -63,21 +59,25 @@ public class CommonConstants {
       }
     }
 
-    /**
-     * Resources names that are not Pinot resources (such as broker resource)
-     */
-    public static final Set<String> NON_PINOT_RESOURCE_RESOURCE_NAMES =
-        Collections.unmodifiableSet(Sets.newHashSet(BROKER_RESOURCE_INSTANCE));
-
     public static class DataSource {
       public static final String SCHEMA = "schema";
       public static final String KAFKA = "kafka";
       public static final String STREAM_PREFIX = "stream";
-
-      public static enum SegmentAssignmentStrategyType {
+      public enum SegmentAssignmentStrategyType {
         RandomAssignmentStrategy,
         BalanceNumSegmentAssignmentStrategy,
-        BucketizedSegmentAssignmentStrategy;
+        BucketizedSegmentAssignmentStrategy,
+        ReplicaGroupSegmentAssignmentStrategy
+      }
+
+      public enum RoutingTableBuilderName {
+        DefaultOffline,
+        DefaultRealtime,
+        BalancedRandom,
+        KafkaLowLevel,
+        KafkaHighLevel,
+        PartitionAwareOffline,
+        PartitionAwareRealtime
       }
 
       public static class Schema {
@@ -93,7 +93,23 @@ public class CommonConstants {
         public static final String STREAM_TYPE = "streamType";
         // Time threshold that will keep the realtime segment open for before we convert it into an offline segment
         public static final String REALTIME_SEGMENT_FLUSH_TIME = "realtime.segment.flush.threshold.time";
-        // Num records threshold in the realtime segment
+        // Time threshold that controller will wait for the segment to be built by the server
+        public static final String SEGMENT_COMMIT_TIMEOUT_SECONDS = "realtime.segment.commit.timeoutSeconds";
+        /**
+         * Row count flush threshold for realtime segments. This behaves in a similar way for HLC and LLC. For HLC,
+         * since there is only one consumer per server, this size is used as the size of the consumption buffer and
+         * determines after how many rows we flush to disk. For example, if this threshold is set to two million rows,
+         * then a high level consumer would have a buffer size of two million.
+         *
+         * For LLC, this size is divided across all the segments assigned to a given server and is set on a per segment
+         * basis. Assuming a low level consumer server is assigned four Kafka partitions to consume from and a flush
+         * size of two million, then each consuming segment would have a flush size of five hundred thousand rows, for a
+         * total of two million rows in memory.
+         *
+         * Keep in mind that this NOT a hard threshold, as other tables can also be assigned to this server, and that in
+         * certain conditions (eg. if the number of servers, replicas of Kafka partitions changes) where Kafka partition
+         * to server assignment changes, it's possible to end up with more (or less) than this number of rows in memory.
+         */
         public static final String REALTIME_SEGMENT_FLUSH_SIZE = "realtime.segment.flush.threshold.size";
 
         public static enum StreamType {
@@ -112,8 +128,13 @@ public class CommonConstants {
           public static final String DECODER_CLASS = "kafka.decoder.class.name";
           public static final String DECODER_PROPS_PREFIX = "kafka.decoder.prop";
           public static final String KAFKA_CONSUMER_PROPS_PREFIX = "kafka.consumer.prop";
+          public static final String KAFKA_CONNECTION_TIMEOUT_MILLIS = "kafka.connection.timeout.ms";
+          public static final String KAFKA_FETCH_TIMEOUT_MILLIS = "kafka.fetch.timeout.ms";
           public static final String ZK_BROKER_URL = "kafka.zk.broker.url";
           public static final String KAFKA_BROKER_LIST = "kafka.broker.list";
+
+          // Consumer properties
+          public static final String AUTO_OFFSET_RESET = "auto.offset.reset";
 
           public static String getDecoderPropertyKeyFor(String key) {
             return StringUtils.join(new String[] { DECODER_PROPS_PREFIX, key }, ".");
@@ -140,13 +161,14 @@ public class CommonConstants {
       public static final String INSTANCE_NAME = "instance.name";
       public static final String GROUP_ID_SUFFIX = "kafka.hlc.groupId";
       public static final String PARTITION_SUFFIX = "kafka.hlc.partition";
+      public static final String INSTANCE_ID_KEY = "instanceId";
+      public static final String DATA_DIR_KEY = "dataDir";
       public static final String ADMIN_PORT_KEY = "adminPort";
     }
 
-    public static enum TableType {
+    public enum TableType {
       OFFLINE,
-      REALTIME,
-      HYBRID;
+      REALTIME;
 
       public ServerType getServerType() {
         if (this == OFFLINE) {
@@ -161,6 +183,13 @@ public class CommonConstants {
     public static final String KEY_OF_BROKER_QUERY_PORT = "pinot.broker.client.queryPort";
     public static final int DEFAULT_BROKER_QUERY_PORT = 8099;
     public static final String KEY_OF_SERVER_NETTY_HOST = "pinot.server.netty.host";
+
+    public static final String HELIX_MANAGER_FLAPPING_TIME_WINDOW_KEY = "helixmanager.flappingTimeWindow";
+    public static final String HELIX_MANAGER_MAX_DISCONNECT_THRESHOLD_KEY = "helixmanager.maxDisconnectThreshold";
+    public static final String CONFIG_OF_HELIX_FLAPPING_TIMEWINDOW_MS = "pinot.server.flapping.timeWindowMs";
+    public static final String CONFIG_OF_HELIX_MAX_DISCONNECT_THRESHOLD = "pinot.server.flapping.maxDisconnectThreshold";
+    public static final String DEFAULT_HELIX_FLAPPING_TIMEWINDOW_MS = "1";
+    public static final String DEFAULT_HELIX_FLAPPING_MAX_DISCONNECT_THRESHOLD = "100";
 
   }
 
@@ -182,9 +211,10 @@ public class CommonConstants {
         "pinot.server.segment.minRetryDelayMillis";
     public static final String CONFIG_OF_SEGMENT_FORMAT_VERSION = "pinot.server.instance.segment.format.version";
     public static final String CONFIG_OF_ENABLE_DEFAULT_COLUMNS = "pinot.server.instance.enable.default.columns";
-    public static final String CONFIG_OF_HELIX_FLAPPING_TIMEWINDOW_MS = "pinot.server.flapping.timeWindowMs";
+    public static final String CONFIG_OF_ENABLE_SHUTDOWN_DELAY = "pinot.server.instance.enable.shutdown.delay";
+    public static final String CONFIG_OF_ENABLE_SPLIT_COMMIT = "pinot.server.instance.enable.split.commit";
 
-    public static final String DEFAULT_ADMIN_API_PORT = "8097";
+    public static final int DEFAULT_ADMIN_API_PORT = 8097;
     public static final String DEFAULT_READ_MODE = "heap";
     public static final String DEFAULT_INSTANCE_DATA_DIR = "/tmp/PinotServer/test/index";
     public static final String DEFAULT_INSTANCE_SEGMENT_TAR_DIR = "/tmp/PinotServer/test/segmentTar";
@@ -199,10 +229,24 @@ public class CommonConstants {
         "com.linkedin.pinot.server.request.SimpleRequestHandlerFactory";
     public static final String DEFAULT_SEGMENT_LOAD_MAX_RETRY_COUNT = "5";
     public static final String DEFAULT_SEGMENT_LOAD_MIN_RETRY_DELAY_MILLIS = "60000";
-    public static final String DEFAULT_HELIX_FLAPPING_TIMEWINDOW_MS = "0";
     public static final String PREFIX_OF_CONFIG_OF_SEGMENT_FETCHER_FACTORY = "pinot.server.segment.fetcher";
-    public static final String DEFAULT_SEGMENT_FORMAT_VERSION = "v1";
+    public static final String DEFAULT_SEGMENT_FORMAT_VERSION = "v3";
     public static final String DEFAULT_STAR_TREE_FORMAT_VERSION = "OFF_HEAP";
+    public static final String DEFAULT_COLUMN_MIN_MAX_VALUE_GENERATOR_MODE = "TIME";
+  }
+
+  public static class Minion {
+    public static final String INSTANCE_PREFIX = "Minion_";
+    public static final String INSTANCE_TYPE = "minion";
+    public static final String UNTAGGED_INSTANCE = "minion_untagged";
+    public static final String METRICS_PREFIX = "pinot.minion.";
+
+    // Config keys
+    public static final String METRICS_REGISTRY_REGISTRATION_LISTENERS_KEY = "metricsRegistryRegistrationListeners";
+
+    // Default settings
+    public static final int DEFAULT_HELIX_PORT = 9514;
+    public static final String DEFAULT_DATA_DIR = System.getProperty("java.io.tmpdir") + File.separator + "pinotMinion";
   }
 
   public static class Metric {
@@ -211,12 +255,11 @@ public class CommonConstants {
       public static final String CURRENT_NUMBER_OF_DOCUMENTS = "currentNumberOfDocuments";
       public static final String NUMBER_OF_DELETED_SEGMENTS = "numberOfDeletedSegments";
     }
-
   }
 
   public static class Segment {
     public static class Realtime {
-      public static enum Status {
+      public enum Status {
         IN_PROGRESS,
         DONE
       }
@@ -226,7 +269,7 @@ public class CommonConstants {
     public static class Offline {
       public static final String DOWNLOAD_URL = "segment.offline.download.url";
       public static final String PUSH_TIME = "segment.offline.push.time";
-      public static final String REFRESH_TIME = "segment.offline.refresh.time";;
+      public static final String REFRESH_TIME = "segment.offline.refresh.time";
     }
 
     public static final String SEGMENT_NAME = "segment.name";
@@ -239,8 +282,13 @@ public class CommonConstants {
     public static final String TOTAL_DOCS = "segment.total.docs";
     public static final String CRC = "segment.crc";
     public static final String CREATION_TIME = "segment.creation.time";
+    public static final String FLUSH_THRESHOLD_SIZE = "segment.flush.threshold.size";
+    public static final String PARTITION_METADATA = "segment.partition.metadata";
 
-    public static enum SegmentType {
+    public static final String SEGMENT_BACKUP_DIR_SUFFIX = ".segment.bak";
+    public static final String SEGMENT_TEMP_DIR_SUFFIX = ".segment.tmp";
+
+    public enum SegmentType {
       OFFLINE,
       REALTIME
     }

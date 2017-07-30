@@ -15,19 +15,35 @@
  */
 package com.linkedin.pinot.core.data.manager.offline;
 
-import org.apache.helix.ZNRecord;
-import org.apache.helix.store.zk.ZkHelixPropertyStore;
-
-import com.linkedin.pinot.common.config.AbstractTableConfig;
+import com.linkedin.pinot.common.config.TableConfig;
 import com.linkedin.pinot.common.data.DataManager;
 import com.linkedin.pinot.common.metadata.instance.InstanceZKMetadata;
 import com.linkedin.pinot.common.metadata.segment.SegmentZKMetadata;
+import java.util.Collection;
+import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
+import org.apache.helix.ZNRecord;
+import org.apache.helix.store.zk.ZkHelixPropertyStore;
 
 
 public interface InstanceDataManager extends DataManager {
+  /**
+   * Get table manager for given table
+   * @param tableName table name
+   * @return Table data manager for table, null if tableName does not exist
+   */
+  @Nullable
   TableDataManager getTableDataManager(String tableName);
 
-  void addSegment(ZkHelixPropertyStore<ZNRecord> propertyStore, AbstractTableConfig tableConfig,
-      InstanceZKMetadata instanceZKMetadata, SegmentZKMetadata segmentZKMetadata, String serverInstance) throws Exception;
+  @Nonnull
+  Collection<TableDataManager> getTableDataManagers();
 
+  /**
+   * Adds a segment into the REALTIME table.
+   * <p>The segment could be committed or under consuming.
+   */
+  void addSegment(@Nonnull ZkHelixPropertyStore<ZNRecord> propertyStore, @Nonnull TableConfig tableConfig,
+      @Nullable InstanceZKMetadata instanceZKMetadata, @Nonnull SegmentZKMetadata segmentZKMetadata,
+      @Nonnull String serverInstance)
+      throws Exception;
 }

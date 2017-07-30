@@ -15,33 +15,40 @@
  */
 package com.linkedin.pinot.integration.tests;
 
-import java.io.File;
-import java.util.Collections;
-import com.linkedin.pinot.common.data.Schema;
-import com.linkedin.pinot.common.utils.KafkaStarterUtils;
+import com.linkedin.pinot.common.config.TableNameBuilder;
+import com.linkedin.pinot.common.utils.CommonConstants;
+import java.util.List;
+import org.apache.avro.reflect.Nullable;
+import org.apache.helix.ZNRecord;
+import org.testng.Assert;
+import org.testng.annotations.Test;
 
 
 /**
- * Integration test that creates a Kafka broker, creates a Pinot cluster that consumes from Kafka and queries Pinot.
- *
+ * Integration test that extends RealtimeClusterIntegrationTest but uses low-level Kafka consumer.
  */
 public class LLCRealtimeClusterIntegrationTest extends RealtimeClusterIntegrationTest {
-  private static int KAFKA_PARTITION_COUNT = 2;
-
-  protected void setUpTable(String tableName, String timeColumnName, String timeColumnType, String kafkaZkUrl,
-      String kafkaTopic, File schemaFile, File avroFile) throws Exception {
-    Schema schema = Schema.fromFile(schemaFile);
-    addSchema(schemaFile, schema.getSchemaName());
-    addLLCRealtimeTable(tableName, timeColumnName, timeColumnType, -1, "", KafkaStarterUtils.DEFAULT_KAFKA_BROKER, kafkaTopic, schema.getSchemaName(),
-        null, null, avroFile, ROW_COUNT_FOR_REALTIME_SEGMENT_FLUSH, "Carrier", Collections.<String>emptyList(), "mmap");
-  }
-
-  protected void createKafkaTopic(String kafkaTopic, String zkStr) {
-    KafkaStarterUtils.createTopic(kafkaTopic, zkStr, KAFKA_PARTITION_COUNT);
-  }
 
   @Override
-  protected int getKafkaBrokerCount() {
-    return 2;
+  protected boolean useLlc() {
+    return true;
+  }
+
+  @Nullable
+  @Override
+  protected String getLoadMode() {
+    return "MMAP";
+  }
+
+  @Test
+  public void testSegmentFlushSize() throws Exception {
+    String zkSegmentsPath = "/SEGMENTS/" + TableNameBuilder.REALTIME.tableNameWithType(getTableName());
+    List<String> segmentNames = _propertyStore.getChildNames(zkSegmentsPath, 0);
+    for (String segmentName : segmentNames) {
+      ZNRecord znRecord = _propertyStore.get(zkSegmentsPath + "/" + segmentName, null, 0);
+      Assert.assertEquals(znRecord.getSimpleField(CommonConstants.Segment.FLUSH_THRESHOLD_SIZE),
+          Integer.toString(getRealtimeSegmentFlushSize() / getNumKafkaPartitions()),
+          "Segment: " + segmentName + " does not have the expected flush size");
+    }
   }
 }

@@ -18,8 +18,11 @@ package com.linkedin.pinot.core.segment.index.readers;
 import com.linkedin.pinot.core.segment.index.ColumnMetadata;
 import com.linkedin.pinot.core.segment.memory.PinotDataBuffer;
 import java.nio.charset.Charset;
+import java.util.Arrays;
+
 
 public class StringDictionary extends ImmutableDictionaryReader {
+  private static final String EMPTY_STRING = "";
   private final int lengthofMaxEntry;
   private static Charset UTF_8 = Charset.forName("UTF-8");
   private final char paddingChar;
@@ -31,15 +34,21 @@ public class StringDictionary extends ImmutableDictionaryReader {
   }
 
   @Override
+  @SuppressWarnings("unchecked")
   public int indexOf(Object rawValue) {
-    final String lookup = rawValue.toString();
-    final int differenceInLength = lengthofMaxEntry - lookup.length();
-    final StringBuilder bld = new StringBuilder();
-    bld.append(lookup);
-    for (int i = 0; i < differenceInLength; i++) {
-      bld.append(paddingChar);
+    final String lookup = (String) rawValue; // This will always be a string
+
+    byte[] lookupBytes = lookup.getBytes(UTF_8);
+    if (lookupBytes.length >= lengthofMaxEntry) {
+      // No need to pad the string
+      return stringIndexOf(lookup);
     }
-    return stringIndexOf(bld.toString());
+
+    // Need to pad the string before looking up
+    byte[] dest = new byte[lengthofMaxEntry];
+    System.arraycopy(lookupBytes, 0, dest, 0, lookupBytes.length);
+    Arrays.fill(dest, lookupBytes.length, dest.length, (byte) paddingChar);
+    return stringIndexOf(new String(dest, UTF_8));
   }
 
   @Override
@@ -47,14 +56,8 @@ public class StringDictionary extends ImmutableDictionaryReader {
     if ((dictionaryId == -1) || (dictionaryId >= length())) {
       return "null";
     }
-    String val = getString(dictionaryId);
-    byte[] bytes = val.getBytes(UTF_8);
-    for (int i = 0; i < lengthofMaxEntry; i++) {
-      if (bytes[i] == paddingChar) {
-        return new String(bytes, 0, i, UTF_8);
-      }
-    }
-    return val;
+    byte[] bytes = dataFileReader.getBytes(dictionaryId, 0);
+    return getUnpaddedString(bytes);
   }
 
   @Override
@@ -83,11 +86,6 @@ public class StringDictionary extends ImmutableDictionaryReader {
   }
 
   @Override
-  public String toString(int dictionaryId) {
-    return get(dictionaryId);
-  }
-
-  @Override
   public void readIntValues(int[] dictionaryIds, int startPos, int limit, int[] outValues, int outStartPos) {
     throw new RuntimeException("Can not convert string to int");
   }
@@ -113,17 +111,28 @@ public class StringDictionary extends ImmutableDictionaryReader {
     int outEndPos = outStartPos + limit;
     for (int i = outStartPos; i < outEndPos; i++) {
       String val = outValues[i];
-      byte[] bytes = val.getBytes(UTF_8);
-      for (int j = 0; j < lengthofMaxEntry; j++) {
-        if (bytes[j] == paddingChar) {
-          outValues[i] = new String(bytes, 0, j, UTF_8);
-          break;
-        }
-      }
+      outValues[i] = getUnpaddedString(val.getBytes(UTF_8));
     }
   }
 
   private String getString(int dictionaryId) {
     return dataFileReader.getString(dictionaryId, 0);
+  }
+
+  /**
+   * Helper method to build and return String from given byte[] after stripping out the padding character.
+   * It strips out all padding characters at the end of the string. This means that non-terminating padding character(s)
+   * may exist in the returned String.
+   *
+   * @param bytes Byte array
+   * @return Unpadded string of byte[]
+   */
+  private String getUnpaddedString(byte[] bytes) {
+    for (int i = lengthofMaxEntry - 1; i >= 0; i--) {
+      if (bytes[i] != paddingChar) {
+        return new String(bytes, 0, i + 1, UTF_8);
+      }
+    }
+    return EMPTY_STRING;
   }
 }

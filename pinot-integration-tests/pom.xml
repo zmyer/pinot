@@ -49,7 +49,7 @@
         <configuration>
           <programs>
             <program>
-              <mainClass>com.linkedin.pinot.integration.tests.HybridScanBasedCommandLineTestRunner</mainClass>
+              <mainClass>com.linkedin.pinot.integration.tests.HybridClusterIntegrationTestCommandLineRunner</mainClass>
               <name>pinot-hybrid-cluster-test</name>
               <jvmSettings>
                 <initialMemorySize>4G</initialMemorySize>
@@ -66,7 +66,7 @@
   </build>
   <profiles>
     <profile>
-      <id>travis</id>
+      <id>travis-integration-tests-only</id>
       <activation>
         <activeByDefault>false</activeByDefault>
       </activation>
@@ -76,23 +76,31 @@
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-surefire-plugin</artifactId>
             <configuration>
+              <skipTests>false</skipTests>
               <excludes>
-                <!-- jfim: Those two tests are covered by the HybridClusterIntegrationTest -->
-                <exclude>**/OfflineClusterIntegrationTest.java</exclude>
+                <!-- Covered by FlakyConsumerRealtimeClusterIntegrationTest -->
                 <exclude>**/RealtimeClusterIntegrationTest.java</exclude>
+                <!-- Covered by MinionClusterIntegrationTest -->
+                <exclude>**/HybridClusterIntegrationTest.java</exclude>
               </excludes>
             </configuration>
           </plugin>
+        </plugins>
+      </build>
+    </profile>
+    <profile>
+      <id>travis-no-integration-tests</id>
+      <activation>
+        <activeByDefault>false</activeByDefault>
+      </activation>
+      <build>
+        <plugins>
           <plugin>
-            <groupId>org.jacoco</groupId>
-            <artifactId>jacoco-maven-plugin</artifactId>
-            <version>0.7.7.201606060606</version>
-            <executions>
-              <execution>
-                <id>report</id>
-                <phase>none</phase>
-              </execution>
-            </executions>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-surefire-plugin</artifactId>
+            <configuration>
+              <skipTests>true</skipTests>
+            </configuration>
           </plugin>
         </plugins>
       </build>
@@ -154,12 +162,22 @@
       <artifactId>pinot-broker</artifactId>
     </dependency>
     <dependency>
+      <groupId>com.linkedin.pinot</groupId>
+      <artifactId>pinot-minion</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.linkedin.pinot</groupId>
+      <artifactId>pinot-minion</artifactId>
+      <version>${project.version}</version>
+      <type>test-jar</type>
+    </dependency>
+    <dependency>
       <groupId>org.testng</groupId>
       <artifactId>testng</artifactId>
     </dependency>
     <dependency>
-      <groupId>commons-lang</groupId>
-      <artifactId>commons-lang</artifactId>
+      <groupId>org.apache.commons</groupId>
+      <artifactId>commons-lang3</artifactId>
     </dependency>
     <dependency>
       <groupId>org.apache.avro</groupId>
@@ -172,7 +190,7 @@
     <dependency>
       <groupId>com.h2database</groupId>
       <artifactId>h2</artifactId>
-      <version>1.4.186</version>
+      <version>1.4.193</version>
     </dependency>
     <dependency>
       <groupId>com.github.jnr</groupId>

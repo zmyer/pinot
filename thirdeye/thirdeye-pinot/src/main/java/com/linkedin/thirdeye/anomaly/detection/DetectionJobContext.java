@@ -1,16 +1,39 @@
 package com.linkedin.thirdeye.anomaly.detection;
 
-import org.joda.time.DateTime;
+import java.util.List;
 
 import com.linkedin.thirdeye.anomaly.job.JobContext;
 import com.linkedin.thirdeye.datalayer.dto.AnomalyFunctionDTO;
 
 public class DetectionJobContext extends JobContext {
 
+  public enum DetectionJobType {
+    DEFAULT, BACKFILL, OFFLINE
+  }
+
+
   private Long anomalyFunctionId;
-  private DateTime windowStartTime;
-  private DateTime windowEndTime;
   private AnomalyFunctionDTO anomalyFunctionSpec;
+  private List<Long> startTimes;
+  private List<Long> endTimes;
+  private DetectionJobType detectionJobType;
+
+
+  public List<Long> getStartTimes() {
+    return startTimes;
+  }
+
+  public void setStartTimes(List<Long> startTimes) {
+    this.startTimes = startTimes;
+  }
+
+  public List<Long> getEndTimes() {
+    return endTimes;
+  }
+
+  public void setEndTimes(List<Long> endTimes) {
+    this.endTimes = endTimes;
+  }
 
   public Long getAnomalyFunctionId() {
     return anomalyFunctionId;
@@ -18,22 +41,6 @@ public class DetectionJobContext extends JobContext {
 
   public void setAnomalyFunctionId(Long anomalyFunctionId) {
     this.anomalyFunctionId = anomalyFunctionId;
-  }
-
-  public DateTime getWindowStartTime() {
-    return windowStartTime;
-  }
-
-  public void setWindowStartTime(DateTime windowStartTime) {
-    this.windowStartTime = windowStartTime;
-  }
-
-  public DateTime getWindowEndTime() {
-    return windowEndTime;
-  }
-
-  public void setWindowEndTime(DateTime windowEndTime) {
-    this.windowEndTime = windowEndTime;
   }
 
   public AnomalyFunctionDTO getAnomalyFunctionSpec() {
@@ -44,4 +51,11 @@ public class DetectionJobContext extends JobContext {
     this.anomalyFunctionSpec = anomalyFunctionSpec;
   }
 
+  public DetectionJobType getDetectionJobType() {
+    return detectionJobType;
+  }
+
+  public void setDetectionJobType(DetectionJobType detectionJobType) {
+    this.detectionJobType = detectionJobType;
+  }
 }

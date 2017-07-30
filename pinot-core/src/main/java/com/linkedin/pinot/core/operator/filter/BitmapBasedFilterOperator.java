@@ -15,10 +15,6 @@
  */
 package com.linkedin.pinot.core.operator.filter;
 
-import org.roaringbitmap.buffer.ImmutableRoaringBitmap;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import com.linkedin.pinot.core.common.Block;
 import com.linkedin.pinot.core.common.BlockId;
 import com.linkedin.pinot.core.common.DataSource;
@@ -28,11 +24,19 @@ import com.linkedin.pinot.core.operator.blocks.BitmapBlock;
 import com.linkedin.pinot.core.operator.filter.predicate.PredicateEvaluator;
 import com.linkedin.pinot.core.operator.filter.predicate.PredicateEvaluatorProvider;
 import com.linkedin.pinot.core.segment.index.readers.InvertedIndexReader;
-import com.linkedin.pinot.core.segment.index.readers.Dictionary;
+import java.util.ArrayList;
+import java.util.List;
+import org.roaringbitmap.buffer.ImmutableRoaringBitmap;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 
 public class BitmapBasedFilterOperator extends BaseFilterOperator {
   private static final Logger LOGGER = LoggerFactory.getLogger(BitmapBasedFilterOperator.class);
+  private static final String OPERATOR_NAME = "BitmapBasedFilterOperator";
+
+  private final PredicateEvaluator predicateEvaluator;
+  private final Predicate predicate;
 
   private DataSource dataSource;
   private BitmapBlock bitmapBlock;
@@ -42,12 +46,14 @@ public class BitmapBasedFilterOperator extends BaseFilterOperator {
   private int endDocId;
 
   /**
-   * 
+   * @param predicate
    * @param dataSource
    * @param startDocId inclusive
    * @param endDocId inclusive
    */
-  public BitmapBasedFilterOperator(DataSource dataSource, int startDocId, int endDocId) {
+  public BitmapBasedFilterOperator(Predicate predicate, DataSource dataSource, int startDocId, int endDocId) {
+    this.predicate = predicate;
+    this.predicateEvaluator = PredicateEvaluatorProvider.getPredicateFunctionFor(predicate, dataSource);
     this.dataSource = dataSource;
     this.startDocId = startDocId;
     this.endDocId = endDocId;
@@ -60,35 +66,52 @@ public class BitmapBasedFilterOperator extends BaseFilterOperator {
 
   @Override
   public BaseFilterBlock nextFilterBlock(BlockId BlockId) {
-    Predicate predicate = getPredicate();
     InvertedIndexReader invertedIndex = dataSource.getInvertedIndex();
     Block dataSourceBlock = dataSource.nextBlock();
-    Dictionary dictionary = dataSource.getDictionary();
-    PredicateEvaluator evaluator = PredicateEvaluatorProvider.getPredicateFunctionFor(predicate, dictionary);
     int[] dictionaryIds;
     boolean exclusion = false;
     switch (predicate.getType()) {
       case EQ:
       case IN:
       case RANGE:
-        dictionaryIds = evaluator.getMatchingDictionaryIds();
+        dictionaryIds = predicateEvaluator.getMatchingDictionaryIds();
         break;
 
       case NEQ:
       case NOT_IN:
         exclusion = true;
-        dictionaryIds = evaluator.getNonMatchingDictionaryIds();
+        dictionaryIds = predicateEvaluator.getNonMatchingDictionaryIds();
         break;
-      case REGEX:
+      case REGEXP_LIKE:
       default:
         throw new UnsupportedOperationException("Regex is not supported");
     }
-    ImmutableRoaringBitmap[] bitmaps = new ImmutableRoaringBitmap[dictionaryIds.length];
-    for (int i = 0; i < dictionaryIds.length; i++) {
-      bitmaps[i] = invertedIndex.getImmutable(dictionaryIds[i]);
+
+    // For realtime use case, it is possible that inverted index has not yet generated for the given dict id, so we
+    // filter out null bitmaps
+    int length = dictionaryIds.length;
+    List<ImmutableRoaringBitmap> bitmaps = new ArrayList<>(length);
+    for (int dictionaryId : dictionaryIds) {
+      ImmutableRoaringBitmap bitmap = invertedIndex.getImmutable(dictionaryId);
+      if (bitmap != null) {
+        bitmaps.add(bitmap);
+      }
     }
-    bitmapBlock = new BitmapBlock(dataSource.getOperatorName(), dataSourceBlock.getMetadata(), startDocId, endDocId, bitmaps, exclusion);
+
+    // Log size diff to verify the fix
+    int numBitmaps = bitmaps.size();
+    if (numBitmaps != length) {
+      LOGGER.info("Not all inverted indexes are generated, numDictIds: {}, numBitmaps: {}", length, numBitmaps);
+    }
+
+    bitmapBlock = new BitmapBlock(dataSource.getOperatorName(), dataSourceBlock.getMetadata(), startDocId, endDocId,
+        bitmaps.toArray(new ImmutableRoaringBitmap[numBitmaps]), exclusion);
     return bitmapBlock;
+  }
+
+  @Override
+  public boolean isResultEmpty() {
+    return predicateEvaluator.alwaysFalse();
   }
 
   @Override
@@ -96,4 +119,8 @@ public class BitmapBasedFilterOperator extends BaseFilterOperator {
     return true;
   }
 
+  @Override
+  public String getOperatorName() {
+    return OPERATOR_NAME;
+  }
 }

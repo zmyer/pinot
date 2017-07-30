@@ -16,7 +16,6 @@
 package com.linkedin.pinot.core.operator.blocks;
 
 import org.roaringbitmap.buffer.MutableRoaringBitmap;
-
 import com.linkedin.pinot.common.data.FieldSpec;
 import com.linkedin.pinot.common.data.FieldSpec.DataType;
 import com.linkedin.pinot.core.common.Block;
@@ -28,22 +27,22 @@ import com.linkedin.pinot.core.common.BlockValSet;
 import com.linkedin.pinot.core.common.Predicate;
 import com.linkedin.pinot.core.io.readerwriter.impl.FixedByteSingleColumnMultiValueReaderWriter;
 import com.linkedin.pinot.core.operator.docvalsets.RealtimeMultiValueSet;
-import com.linkedin.pinot.core.realtime.impl.dictionary.MutableDictionaryReader;
+import com.linkedin.pinot.core.realtime.impl.dictionary.MutableDictionary;
 import com.linkedin.pinot.core.segment.index.readers.Dictionary;
+
 
 public class RealtimeMultiValueBlock implements Block {
 
   private final MutableRoaringBitmap filteredBitmap;
   final FieldSpec spec;
-  private final MutableDictionaryReader dictionary;
+  private final MutableDictionary dictionary;
   final int docIdSearchableOffset;
   final FixedByteSingleColumnMultiValueReaderWriter reader;
   private Predicate p;
   private final int maxNumberOfMultiValues;
 
-  public RealtimeMultiValueBlock(FieldSpec spec, MutableDictionaryReader dictionary,
-      MutableRoaringBitmap filteredDocids, int docIdOffset, int maxNumberOfMultiValues,
-      FixedByteSingleColumnMultiValueReaderWriter indexReader) {
+  public RealtimeMultiValueBlock(FieldSpec spec, MutableDictionary dictionary, MutableRoaringBitmap filteredDocids,
+      int docIdOffset, int maxNumberOfMultiValues, FixedByteSingleColumnMultiValueReaderWriter indexReader) {
     this.spec = spec;
     this.dictionary = dictionary;
     this.filteredBitmap = filteredDocids;
@@ -147,5 +146,4 @@ public class RealtimeMultiValueBlock implements Block {
       }
     };
   }
-
 }

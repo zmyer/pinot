@@ -1,5 +1,6 @@
 package com.linkedin.thirdeye.datalayer.pojo;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
@@ -7,15 +8,17 @@ import javax.validation.Valid;
 import javax.validation.constraints.NotNull;
 
 import org.hibernate.validator.constraints.Email;
-
-import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.google.common.base.MoreObjects;
-import com.google.common.collect.Multimap;
-import com.linkedin.thirdeye.util.ThirdEyeUtils;
 
+@Deprecated
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class EmailConfigurationBean extends AbstractBean {
 
-  List<Long> functionIds;
+  private List<Long> functionIds;
+
+  private String name;
+
+  private Long lastNotifiedAnomalyId;
 
   @Valid
   @NotNull
@@ -24,6 +27,8 @@ public class EmailConfigurationBean extends AbstractBean {
   @Valid
   @NotNull
   private String metric;
+
+  private boolean active;
 
   @Valid
   @NotNull
@@ -40,32 +45,37 @@ public class EmailConfigurationBean extends AbstractBean {
 
   @Valid
   @NotNull
-  private String smtpHost;
-
-  @Valid
-  private int smtpPort = 25;
-
-  private String smtpUser;
-
-  private String smtpPassword;
-
-  @Valid
-  @NotNull
   private int windowSize = 7;
+
+  private Integer windowDelay;
+
+  private TimeUnit windowDelayUnit;
 
   @Valid
   @NotNull
   private TimeUnit windowUnit = TimeUnit.DAYS;
 
-  private boolean active;
-
   private boolean sendZeroAnomalyEmail;
 
-  private String filters;
+  private boolean reportEnabled;
 
-  private Integer windowDelay;
+  private List<String> dimensions;
 
-  private TimeUnit windowDelayUnit;
+  public String getName() {
+    return name;
+  }
+
+  public void setName(String name) {
+    this.name = name;
+  }
+
+  public Long getLastNotifiedAnomalyId() {
+    return lastNotifiedAnomalyId;
+  }
+
+  public void setLastNotifiedAnomalyId(Long lastNotifiedAnomalyId) {
+    this.lastNotifiedAnomalyId = lastNotifiedAnomalyId;
+  }
 
   public List<Long> getFunctionIds() {
     return functionIds;
@@ -115,38 +125,6 @@ public class EmailConfigurationBean extends AbstractBean {
     this.cron = cron;
   }
 
-  public String getSmtpHost() {
-    return smtpHost;
-  }
-
-  public void setSmtpHost(String smtpHost) {
-    this.smtpHost = smtpHost;
-  }
-
-  public int getSmtpPort() {
-    return smtpPort;
-  }
-
-  public void setSmtpPort(int smtpPort) {
-    this.smtpPort = smtpPort;
-  }
-
-  public String getSmtpUser() {
-    return smtpUser;
-  }
-
-  public void setSmtpUser(String smtpUser) {
-    this.smtpUser = smtpUser;
-  }
-
-  public String getSmtpPassword() {
-    return smtpPassword;
-  }
-
-  public void setSmtpPassword(String smtpPassword) {
-    this.smtpPassword = smtpPassword;
-  }
-
   public int getWindowSize() {
     return windowSize;
   }
@@ -171,26 +149,8 @@ public class EmailConfigurationBean extends AbstractBean {
     this.active = active;
   }
 
-  public boolean getSendZeroAnomalyEmail() {
-    return sendZeroAnomalyEmail;
-  }
-
   public void setSendZeroAnomalyEmail(boolean sendZeroAnomalyEmail) {
     this.sendZeroAnomalyEmail = sendZeroAnomalyEmail;
-  }
-
-  public String getFilters() {
-    return filters;
-  }
-
-  @JsonIgnore
-  public Multimap<String, String> getFilterSet() {
-    return ThirdEyeUtils.getFilterSet(filters);
-  }
-
-  public void setFilters(String filters) {
-    String sortedFilters = ThirdEyeUtils.getSortedFilters(filters);
-    this.filters = sortedFilters;
   }
 
   public Integer getWindowDelay() {
@@ -209,13 +169,23 @@ public class EmailConfigurationBean extends AbstractBean {
     this.windowDelayUnit = windowDelayUnit;
   }
 
-  @Override
-  public String toString() {
-    return MoreObjects.toStringHelper(this).add("collection", collection).add("metric", metric)
-        .add("fromAddress", fromAddress).add("toAddresses", toAddresses).add("cron", cron)
-        .add("smtpHost", smtpHost).add("smtpPort", smtpPort).add("smtpUser", smtpUser)
-        .add("windowSize", windowSize).add("windowUnit", windowUnit).add("isActive", active)
-        .add("sendZeroAnomalyEmail", sendZeroAnomalyEmail).add("filters", filters)
-        .add("windowDelay", windowDelay).add("windowDelayUnit", windowDelayUnit).toString();
+  public List<String> getDimensions() {
+    return dimensions;
+  }
+
+  public void setDimensions(List<String> dimensions) {
+    this.dimensions = dimensions;
+  }
+
+  public boolean isReportEnabled() {
+    return reportEnabled;
+  }
+
+  public void setReportEnabled(boolean reportEnabled) {
+    this.reportEnabled = reportEnabled;
+  }
+
+  public boolean isSendZeroAnomalyEmail() {
+    return sendZeroAnomalyEmail;
   }
 }

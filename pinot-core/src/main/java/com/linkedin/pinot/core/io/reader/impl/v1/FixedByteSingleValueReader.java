@@ -15,10 +15,11 @@
  */
 package com.linkedin.pinot.core.io.reader.impl.v1;
 
+import java.io.IOException;
 import com.linkedin.pinot.core.io.reader.BaseSingleColumnSingleValueReader;
+import com.linkedin.pinot.core.io.reader.ReaderContext;
 import com.linkedin.pinot.core.io.reader.impl.FixedByteSingleValueMultiColReader;
 import com.linkedin.pinot.core.segment.memory.PinotDataBuffer;
-import java.io.IOException;
 
 /**
  * Nov 13, 2014
@@ -33,8 +34,7 @@ public class FixedByteSingleValueReader extends BaseSingleColumnSingleValueReade
       boolean hasNulls) {
 
     // TODO: check what hasNulls was used for
-    dataFileReader = new FixedByteSingleValueMultiColReader(indexDataBuffer, rows, 1,
-        new int[] { columnSizeInBytes});
+    dataFileReader = new FixedByteSingleValueMultiColReader(indexDataBuffer, rows, new int[] { columnSizeInBytes});
     this.rows = rows;
   }
 
@@ -52,6 +52,11 @@ public class FixedByteSingleValueReader extends BaseSingleColumnSingleValueReade
   }
 
   @Override
+  public int getInt(int row, ReaderContext context) {
+    return dataFileReader.getInt(row, 0);
+  }
+
+  @Override
   public int getInt(int row) {
     return dataFileReader.getInt(row, 0);
   }
@@ -59,5 +64,11 @@ public class FixedByteSingleValueReader extends BaseSingleColumnSingleValueReade
   @Override
   public void readValues(int[] rows, int rowStartPos, int rowSize, int[] values, int valuesStartPos) {
     dataFileReader.readIntValues(rows, 0, rowStartPos, rowSize, values, valuesStartPos);
+  }
+
+  @Override
+  public ReaderContext createContext() {
+    //no need of context
+    return null;
   }
 }

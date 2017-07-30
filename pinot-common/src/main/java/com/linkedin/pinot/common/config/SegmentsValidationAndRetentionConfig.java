@@ -16,10 +16,11 @@
 package com.linkedin.pinot.common.config;
 
 import java.lang.reflect.Field;
-
+import org.codehaus.jackson.annotate.JsonIgnore;
 import org.codehaus.jackson.annotate.JsonIgnoreProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class SegmentsValidationAndRetentionConfig {
@@ -27,13 +28,15 @@ public class SegmentsValidationAndRetentionConfig {
 
   private String retentionTimeUnit;
   private String retentionTimeValue;
-  private String segmentPushFrequency;
+  private String segmentPushFrequency; // DO NOT REMOVE, this is used in internal segment generation management
   private String segmentPushType;
   private String replication; // For high-level kafka consumers, the number of replicas should be same as num server instances
   private String schemaName;
   private String timeColumnName;
   private String timeType;
+
   private String segmentAssignmentStrategy;
+  private ReplicaGroupStrategyConfig replicaGroupStrategyConfig;
 
   // Number of replicas per partition of low-level kafka consumers. This config is used for realtime tables only.
   private String replicasPerPartition;
@@ -60,9 +63,6 @@ public class SegmentsValidationAndRetentionConfig {
 
   public void setTimeType(String timeType) {
     this.timeType = timeType;
-  }
-
-  public SegmentsValidationAndRetentionConfig() {
   }
 
   public String getRetentionTimeUnit() {
@@ -100,9 +100,6 @@ public class SegmentsValidationAndRetentionConfig {
   public String getReplication() {
     return replication;
   }
-  public int getReplicationNumber() {
-    return Integer.parseInt(replication);
-  }
 
   public void setReplication(String replication) {
     this.replication = replication;
@@ -122,6 +119,19 @@ public class SegmentsValidationAndRetentionConfig {
 
   public void setReplicasPerPartition(String replicasPerPartition) {
     this.replicasPerPartition = replicasPerPartition;
+  }
+
+  public ReplicaGroupStrategyConfig getReplicaGroupStrategyConfig() {
+    return replicaGroupStrategyConfig;
+  }
+
+  public void setReplicaGroupStrategyConfig(ReplicaGroupStrategyConfig replicaGroupStrategyConfig) {
+    this.replicaGroupStrategyConfig = replicaGroupStrategyConfig;
+  }
+
+  @JsonIgnore
+  public int getReplicationNumber() {
+    return Integer.parseInt(replication);
   }
 
   @Override

@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2014-2015 LinkedIn Corp. (pinot-core@linkedin.com)
+ * Copyright (C) 2014-2016 LinkedIn Corp. (pinot-core@linkedin.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,10 +15,20 @@
  */
 package com.linkedin.pinot.controller.api.restlet.resources;
 
-import java.util.List;
-
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.common.io.ByteStreams;
 import com.linkedin.pinot.common.metrics.ControllerMeter;
+import com.linkedin.pinot.common.restlet.swagger.HttpVerb;
+import com.linkedin.pinot.common.restlet.swagger.Parameter;
+import com.linkedin.pinot.common.restlet.swagger.Paths;
+import com.linkedin.pinot.common.restlet.swagger.Response;
+import com.linkedin.pinot.common.restlet.swagger.Responses;
+import com.linkedin.pinot.common.restlet.swagger.Summary;
+import com.linkedin.pinot.common.restlet.swagger.Tags;
 import com.linkedin.pinot.controller.api.ControllerRestApplication;
+import com.linkedin.pinot.controller.api.pojos.Instance;
+import com.linkedin.pinot.controller.helix.core.PinotResourceManagerResponse;
+import java.util.List;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.helix.model.InstanceConfig;
 import org.json.JSONArray;
@@ -29,22 +39,11 @@ import org.restlet.data.Status;
 import org.restlet.representation.Representation;
 import org.restlet.representation.StringRepresentation;
 import org.restlet.representation.Variant;
+import org.restlet.resource.Delete;
 import org.restlet.resource.Get;
 import org.restlet.resource.Post;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.common.io.ByteStreams;
-import com.linkedin.pinot.controller.api.pojos.Instance;
-import com.linkedin.pinot.common.restlet.swagger.HttpVerb;
-import com.linkedin.pinot.common.restlet.swagger.Parameter;
-import com.linkedin.pinot.common.restlet.swagger.Paths;
-import com.linkedin.pinot.common.restlet.swagger.Response;
-import com.linkedin.pinot.common.restlet.swagger.Responses;
-import com.linkedin.pinot.common.restlet.swagger.Summary;
-import com.linkedin.pinot.common.restlet.swagger.Tags;
-import com.linkedin.pinot.controller.helix.core.PinotResourceManagerResponse;
 
 
 /**
@@ -222,7 +221,7 @@ public class PinotInstanceRestletResource extends BasePinotControllerRestletReso
     JSONObject object = new JSONObject();
     JSONArray instanceArray = new JSONArray();
 
-    List<String> instanceNames = _pinotHelixResourceManager.getAllInstanceNames();
+    List<String> instanceNames = _pinotHelixResourceManager.getAllInstances();
     for (String instanceName : instanceNames) {
       instanceArray.put(instanceName);
     }
@@ -267,6 +266,77 @@ public class PinotInstanceRestletResource extends BasePinotControllerRestletReso
       LOGGER.error(INVALID_INSTANCE_URI_ERROR);
       setStatus(Status.CLIENT_ERROR_BAD_REQUEST);
       return new StringRepresentation(INVALID_INSTANCE_URI_ERROR);
+    }
+  }
+
+  @Override
+  @Delete
+  public Representation delete() {
+    Representation presentation;
+    try {
+      final String instanceName = (String) getRequest().getAttributes().get(INSTANCE_NAME);
+      presentation = deleteInstanceInformation(instanceName);
+    } catch (final Exception e) {
+      presentation = exceptionToStringRepresentation(e);
+      LOGGER.error("Caught exception while deleting an instance ", e);
+      ControllerRestApplication.getControllerMetrics().addMeteredGlobalValue(ControllerMeter.CONTROLLER_INSTANCE_DELETE_ERROR, 1L);
+      setStatus(Status.SERVER_ERROR_INTERNAL);
+    }
+    return presentation;
+  }
+
+  /**
+   * Deletes an instance
+   *
+   * @param instanceName
+   */
+  @HttpVerb("delete")
+  @Summary("Deletes an instance")
+  @Tags({ "instance" })
+  @Paths({ "/instances/{instanceName}", "/instances/{instanceName}/" })
+  @Responses({
+      @Response(statusCode = "200", description = "The instance has been deleted successfully"),
+      @Response(statusCode = "404", description = "The specified instance does not exist"),
+      @Response(statusCode = "409", description = "Forbidden operation typically because the instance is live or "
+          + "idealstates still contain some information of this instance \n"),
+      @Response(statusCode = "500", description = "There was an error while cleaning files for the instance.")
+  })
+  private Representation deleteInstanceInformation(
+      @Parameter(
+          name = "instanceName",
+          description = "The name of the instance (eg. Server_1.2.3.4_1234 or Broker_someHost.example.com_2345)",
+          in = "path",
+          required = true)
+          String instanceName) {
+    try {
+      PinotResourceManagerResponse response;
+
+      // Check that the user input for an instance is correct
+      if (!_pinotHelixResourceManager.instanceExists(instanceName)) {
+        setStatus(Status.CLIENT_ERROR_NOT_FOUND);
+        response = new PinotResourceManagerResponse("Instance " + instanceName + " does not exist.", false);
+        return new StringRepresentation(response.toJSON().toString());
+      }
+
+      // Check that the instance is safe to drop
+      if (!_pinotHelixResourceManager.isInstanceDroppable(instanceName)) {
+        setStatus(Status.CLIENT_ERROR_CONFLICT);
+        response = new PinotResourceManagerResponse("Instance " + instanceName
+            + " is live or it still appears in the idealstate.", false);
+        return new StringRepresentation(response.toJSON().toString());
+      }
+
+      // Delete the instance information from Helix storage
+      response = _pinotHelixResourceManager.dropInstance(instanceName);
+      if (!response.isSuccessful()) {
+        setStatus(Status.SERVER_ERROR_INTERNAL);
+      }
+
+      return new StringRepresentation(response.toJSON().toString());
+    } catch (Exception e) {
+      LOGGER.warn("Caught exception while deleting information for instance {}", instanceName, e);
+      setStatus(Status.SERVER_ERROR_INTERNAL);
+      return new StringRepresentation("Caught exception while deleting information for instance " + instanceName);
     }
   }
 }

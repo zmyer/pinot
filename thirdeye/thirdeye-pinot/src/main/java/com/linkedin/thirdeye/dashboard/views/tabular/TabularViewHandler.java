@@ -15,23 +15,25 @@ import org.apache.commons.lang3.StringUtils;
 import org.joda.time.DateTime;
 
 import com.google.common.collect.Multimap;
-import com.linkedin.thirdeye.api.CollectionSchema;
-import com.linkedin.thirdeye.client.MetricExpression;
-import com.linkedin.thirdeye.client.ThirdEyeCacheRegistry;
-import com.linkedin.thirdeye.client.cache.QueryCache;
-import com.linkedin.thirdeye.client.comparison.Row;
-import com.linkedin.thirdeye.client.comparison.Row.Metric;
-import com.linkedin.thirdeye.client.comparison.TimeOnTimeComparisonHandler;
-import com.linkedin.thirdeye.client.comparison.TimeOnTimeComparisonRequest;
-import com.linkedin.thirdeye.client.comparison.TimeOnTimeComparisonResponse;
+import com.linkedin.thirdeye.api.TimeSpec;
 import com.linkedin.thirdeye.dashboard.views.GenericResponse;
 import com.linkedin.thirdeye.dashboard.views.GenericResponse.ResponseSchema;
 import com.linkedin.thirdeye.dashboard.views.TimeBucket;
 import com.linkedin.thirdeye.dashboard.views.ViewHandler;
 import com.linkedin.thirdeye.dashboard.views.heatmap.HeatMapCell;
+import com.linkedin.thirdeye.datalayer.dto.DatasetConfigDTO;
+import com.linkedin.thirdeye.datasource.MetricExpression;
+import com.linkedin.thirdeye.datasource.ThirdEyeCacheRegistry;
+import com.linkedin.thirdeye.datasource.cache.QueryCache;
+import com.linkedin.thirdeye.datasource.comparison.Row;
+import com.linkedin.thirdeye.datasource.comparison.TimeOnTimeComparisonHandler;
+import com.linkedin.thirdeye.datasource.comparison.TimeOnTimeComparisonRequest;
+import com.linkedin.thirdeye.datasource.comparison.TimeOnTimeComparisonResponse;
+import com.linkedin.thirdeye.datasource.comparison.Row.Metric;
+import com.linkedin.thirdeye.util.ThirdEyeUtils;
 
 public class TabularViewHandler implements ViewHandler<TabularViewRequest, TabularViewResponse> {
-  private static ThirdEyeCacheRegistry CACHE_REGISTRY_INSTANCE = ThirdEyeCacheRegistry.getInstance();
+  private static ThirdEyeCacheRegistry CACHE_REGISTRY = ThirdEyeCacheRegistry.getInstance();
 
   private final Comparator<Row> rowComparator = new Comparator<Row>() {
     @Override
@@ -59,9 +61,10 @@ public class TabularViewHandler implements ViewHandler<TabularViewRequest, Tabul
     DateTime currentStart = request.getCurrentStart();
     DateTime currentEnd = request.getCurrentEnd();
 
-    CollectionSchema collectionSchema = CACHE_REGISTRY_INSTANCE.getCollectionSchemaCache().get(collection);
+    DatasetConfigDTO datasetConfig = CACHE_REGISTRY.getDatasetConfigCache().get(collection);
+    TimeSpec timespec = ThirdEyeUtils.getTimeSpecFromDatasetConfig(datasetConfig);
     if (!request.getTimeGranularity().getUnit().equals(TimeUnit.DAYS) ||
-        !StringUtils.isBlank(collectionSchema.getTime().getFormat())) {
+        !StringUtils.isBlank(timespec.getFormat())) {
       comparisonRequest.setEndDateInclusive(true);
     }
 

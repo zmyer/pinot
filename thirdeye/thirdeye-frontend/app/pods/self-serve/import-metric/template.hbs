@@ -1,0 +1,103 @@
+<h1 class="te-title">Import Metrics: inGraph</h1>
+
+<div class="te-page-right">
+  <a class="thirdeye-link thirdeye-link-secondary" href="https://ingraphs.prod.linkedin.com/" target="_blank">Go to InGraphs</a>
+</div>
+
+
+<main class="alert-onboard paper-container paper-container--padded">
+
+  {{#bs-form model=this class="te-form" onSubmit=(action "submit") as |form|}}
+
+  <fieldset class="te-form__section">
+    <legend class="te-form__section-title">Existing Dashboard</legend>
+    <div class="form-group">
+      {{form.element
+        controlType="text"
+        label="Onboard Existing InGraph Dashboard"
+        placeholder="Type inGraph dashboard name..."
+        property="importExistingDashboardName"
+        disabled=isExistingDashFieldDisabled
+      }}
+      {{#if isDashboardExistError}}
+        <div class="alert alert-warning">Warning: This dashboard name does not exist in inGraphs. Please verify.</div>
+      {{/if}}
+    </div>
+  </fieldset>
+
+  <p class="te-form-text">Or</p>
+
+  <fieldset class="te-form__section">
+    <legend class="te-form__section-title">New Custom Dashboard</legend>
+    <div class="form-group">
+      {{form.element
+        controlType="text"
+        label="New Dataset Name"
+        placeholder="Type new dataset name..."
+        property="importCustomNewDataset"
+        disabled=isCustomDashFieldDisabled
+      }}
+      {{form.element
+        controlType="text"
+        label="New Metric Name"
+        placeholder="Type new metric name..."
+        property="importCustomNewMetric"
+        disabled=isCustomDashFieldDisabled
+      }}
+      {{form.element
+        controlType="text"
+        label="Provide RRD"
+        placeholder="RRD here"
+        property="importCustomNewRrd"
+        disabled=isCustomDashFieldDisabled
+      }}
+    </div>
+  </fieldset>
+
+    {{#if isImportSuccess}}
+      {{#bs-alert type="success"}}
+        <strong>Success!</strong> You have successfully onboarded the <strong>{{datasetName}}</strong> dataset
+        {{#if importedMetrics.length}}, including the following metrics:{{/if}}
+        {{#each importedMetrics as |metric|}}
+          <br>{{metric}}
+        {{else}}
+          <br>But no metrics were imported.
+        {{/each}}
+      {{/bs-alert}}
+    {{/if}}
+
+    {{#if isImportError}}
+      {{#bs-alert type="danger"}}
+        <strong>Error:</strong> Metrics not onboarded. Please check your dashboard, datased, and metric names.
+      {{/bs-alert}}
+    {{/if}}
+
+    <section class="te-form__section-submit">
+      {{bs-button
+        defaultText="Reset"
+        type="outline-primary"
+        onClick=(action "clearAll")
+        class="te-cancel-button"
+      }}
+
+      {{#if isFormDisabled}}
+        {{bs-button
+          defaultText="Onboard Another Dashboard"
+          type="primary"
+          onClick=(action "clearAll")
+          buttonType="submit"
+          class="te-submit-button"
+        }}
+      {{else}}
+        {{bs-button
+          defaultText="Import Metrics"
+          type="primary"
+          buttonType="submit"
+          class="te-submit-button"
+          disabled=isSubmitDisabled
+        }}
+      {{/if}}
+    </section>
+  {{/bs-form}}
+  {{outlet}}
+</main>

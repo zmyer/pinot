@@ -13,30 +13,38 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package com.linkedin.pinot.server.request;
 
+import com.google.common.base.Function;
+import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.linkedin.pinot.common.data.FieldSpec;
 import com.linkedin.pinot.common.exception.QueryException;
 import com.linkedin.pinot.common.metrics.ServerMetrics;
-import com.linkedin.pinot.common.query.QueryRequest;
+import com.linkedin.pinot.common.query.QueryExecutor;
+import com.linkedin.pinot.common.query.ServerQueryRequest;
 import com.linkedin.pinot.common.request.BrokerRequest;
 import com.linkedin.pinot.common.request.InstanceRequest;
+import com.linkedin.pinot.common.utils.DataSchema;
 import com.linkedin.pinot.common.utils.DataTable;
-import com.linkedin.pinot.common.utils.DataTableBuilder;
+import com.linkedin.pinot.core.common.datatable.DataTableBuilder;
+import com.linkedin.pinot.core.common.datatable.DataTableFactory;
+import com.linkedin.pinot.core.common.datatable.DataTableImplV2;
+import com.linkedin.pinot.core.query.executor.ServerQueryExecutorV1Impl;
 import com.linkedin.pinot.core.query.scheduler.QueryScheduler;
 import com.linkedin.pinot.serde.SerDe;
 import com.yammer.metrics.core.MetricsRegistry;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelHandlerContext;
+import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.Arrays;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import javax.annotation.Nullable;
 import org.apache.thrift.protocol.TCompactProtocol;
 import org.mockito.invocation.InvocationOnMock;
 import org.mockito.stubbing.Answer;
@@ -58,7 +66,7 @@ public class ScheduledRequestHandlerTest {
   private ServerMetrics serverMetrics;
   private ChannelHandlerContext channelHandlerContext;
   private QueryScheduler queryScheduler;
-
+  private QueryExecutor queryExecutor;
   @BeforeTest
   public void setupTestMethod() {
     serverMetrics = new ServerMetrics(new MetricsRegistry());
@@ -73,6 +81,7 @@ public class ScheduledRequestHandlerTest {
         });
 
     queryScheduler = mock(QueryScheduler.class);
+    queryExecutor = new ServerQueryExecutorV1Impl();
   }
 
   @Test
@@ -87,7 +96,7 @@ public class ScheduledRequestHandlerTest {
     Assert.assertTrue(response.isDone());
     byte[] responseBytes = response.get();
     Assert.assertTrue(responseBytes.length > 0);
-    DataTable expectedDT = new DataTable();
+    DataTable expectedDT = new DataTableImplV2();
     expectedDT.addException(QueryException.INTERNAL_ERROR);
     Assert.assertEquals(responseBytes, expectedDT.toBytes());
   }
@@ -111,16 +120,37 @@ public class ScheduledRequestHandlerTest {
   @Test
   public void testQueryProcessingException()
       throws Exception {
-    ScheduledRequestHandler handler = new ScheduledRequestHandler(new QueryScheduler(null) {
+    ScheduledRequestHandler handler = new ScheduledRequestHandler(new QueryScheduler(queryExecutor, serverMetrics) {
       @Override
-      public ListenableFuture<DataTable> submit(QueryRequest queryRequest) {
-        return queryWorkers.submit(new Callable<DataTable>() {
+      public ListenableFuture<byte[]> submit(ServerQueryRequest queryRequest) {
+        ListenableFuture<DataTable> dataTable = queryWorkers.submit(new Callable<DataTable>() {
           @Override
           public DataTable call()
               throws Exception {
             throw new RuntimeException("query processing error");
           }
         });
+        ListenableFuture<DataTable> queryResponse =
+            Futures.catching(dataTable, Throwable.class, new Function<Throwable, DataTable>() {
+              @Nullable
+              @Override
+              public DataTable apply(@Nullable Throwable input) {
+                DataTable result = new DataTableImplV2();
+                result.addException(QueryException.INTERNAL_ERROR);
+                return result;
+              }
+            });
+        return serializeData(queryResponse);
+      }
+
+      @Override
+      public void start() {
+
+      }
+
+      @Override
+      public String name() {
+        return "test";
       }
     }, serverMetrics);
 
@@ -129,30 +159,26 @@ public class ScheduledRequestHandlerTest {
     byte[] bytes = responseFuture.get(2, TimeUnit.SECONDS);
     // we get DataTable with exception information in case of query processing exception
     Assert.assertTrue(bytes.length > 0);
-    DataTable expectedDT = new DataTable();
+    DataTable expectedDT = new DataTableImplV2();
     expectedDT.addException(QueryException.INTERNAL_ERROR);
     Assert.assertEquals(bytes, expectedDT.toBytes());
   }
 
   @Test
   public void testValidQueryResponse()
-      throws InterruptedException, ExecutionException, TimeoutException {
-    ScheduledRequestHandler handler = new ScheduledRequestHandler(new QueryScheduler(null) {
+      throws InterruptedException, ExecutionException, TimeoutException, IOException {
+    ScheduledRequestHandler handler = new ScheduledRequestHandler(new QueryScheduler(queryExecutor, serverMetrics) {
       @Override
-      public ListenableFuture<DataTable> submit(QueryRequest queryRequest) {
-        return queryRunners.submit(new Callable<DataTable>() {
+      public ListenableFuture<byte[]> submit(ServerQueryRequest queryRequest) {
+        ListenableFuture<DataTable> response = queryRunners.submit(new Callable<DataTable>() {
           @Override
           public DataTable call()
               throws Exception {
-            String[] columns = new String[] { "foo", "bar"};
-            FieldSpec.DataType[] columnTypes = new FieldSpec.DataType[] {
-              FieldSpec.DataType.STRING,
-              FieldSpec.DataType.INT
-            };
-            DataTableBuilder.DataSchema dataSchema = new DataTableBuilder.DataSchema(
-                columns, columnTypes);
+            String[] columns = new String[]{"foo", "bar"};
+            FieldSpec.DataType[] columnTypes =
+                new FieldSpec.DataType[]{FieldSpec.DataType.STRING, FieldSpec.DataType.INT};
+            DataSchema dataSchema = new DataSchema(columns, columnTypes);
             DataTableBuilder dtBuilder = new DataTableBuilder(dataSchema);
-            dtBuilder.open();
             dtBuilder.startRow();
             dtBuilder.setColumn(0, "mars");
             dtBuilder.setColumn(1, 10);
@@ -161,17 +187,27 @@ public class ScheduledRequestHandlerTest {
             dtBuilder.setColumn(0, "jupiter");
             dtBuilder.setColumn(1, 100);
             dtBuilder.finishRow();
-            dtBuilder.seal();
             return dtBuilder.build();
           }
         });
+       return serializeData(response);
+      }
+
+      @Override
+      public void start() {
+
+      }
+
+      @Override
+      public String name() {
+        return "test";
       }
     }, serverMetrics);
 
     ByteBuf requestBuf = getSerializedInstanceRequest(getInstanceRequest());
     ListenableFuture<byte[]> responseFuture = handler.processRequest(channelHandlerContext, requestBuf);
     byte[] responseBytes = responseFuture.get(2, TimeUnit.SECONDS);
-    DataTable responseDT = new DataTable(responseBytes);
+    DataTable responseDT = DataTableFactory.getDataTable(responseBytes);
     Assert.assertEquals(responseDT.getNumberOfRows(), 2);
     Assert.assertEquals(responseDT.getString(0, 0), "mars");
     Assert.assertEquals(responseDT.getInt(0, 1), 10);
@@ -179,4 +215,18 @@ public class ScheduledRequestHandlerTest {
     Assert.assertEquals(responseDT.getInt(1, 1), 100);
   }
 
+  private ListenableFuture<byte[]> serializeData(ListenableFuture<DataTable> dataTable) {
+    return Futures.transform(dataTable, new Function<DataTable, byte[]>() {
+      @Nullable
+      @Override
+      public byte[] apply(@Nullable DataTable input) {
+        try {
+          return input.toBytes();
+        } catch (IOException e) {
+          LOGGER.error("Failed to transform");
+          return new byte[0];
+        }
+      }
+    });
+  }
 }

@@ -20,7 +20,7 @@
         </li>
         <li id="self-service-header-tab" class="header-tab" rel="self-service"><a href="#">Self
           Service</a></li>
-        <li id="admin-header-tab" class="header-tab" rel="admin" ><a href="#" onclick="renderAdminLogin()" >Admin</a></li>
+        <li id="new-ui-tab" class="header-tab header-tab--secondary"><button class="newui-button">New UI</button></li>
       </ul>
 
       <a id="header-help" class="data-uk-tooltip uk-float-right" title="How to use ThirdEye?"
@@ -37,7 +37,6 @@
     <li id="timeseries"></li>
     <li id="anomalies"></li>
     <li id="self-service"></li>
-    <li id="admin"></li>
   </ul>
 </div>
 
@@ -49,14 +48,15 @@
 <#include "tabs/compare-tab/metric-timeseries.ftl">
 <#include "tabs/compare-tab/tabular.ftl">
 <#include "tabs/compare-tab/heat-map.ftl">
+<#include "tabs/compare-tab/heat-map-summary.ftl">
 <#include "tabs/compare-tab/contributors.ftl">
 <#include "tabs/timeseries-tab/timeseries.ftl">
 <#include "tabs/anomalies-tab/anomalies.ftl">
+<#include "tabs/anomalies-tab/anomaly-details.ftl">
 <#include "tabs/self-service-tab/self-service.ftl">
 <#include "tabs/self-service-tab/anomaly-function-form.ftl">
 <#include "tabs/self-service-tab/self-service-existing-functions.ftl">
 <#include "tabs/self-service-tab/self-service-email.ftl">
-<#include "tabs/experimental/analyze-job.ftl">
 
 </body>
 

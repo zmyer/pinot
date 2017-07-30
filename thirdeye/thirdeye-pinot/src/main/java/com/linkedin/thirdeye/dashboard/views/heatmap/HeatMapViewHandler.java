@@ -12,38 +12,35 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
+import org.apache.commons.lang3.StringUtils;
 import org.joda.time.DateTime;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
-import com.google.common.cache.CacheLoader.InvalidCacheLoadException;
 import com.google.common.collect.Multimap;
-import com.linkedin.thirdeye.client.MetricExpression;
-import com.linkedin.thirdeye.client.MetricFunction;
-import com.linkedin.thirdeye.client.ThirdEyeCacheRegistry;
-import com.linkedin.thirdeye.client.cache.QueryCache;
-import com.linkedin.thirdeye.client.comparison.Row;
-import com.linkedin.thirdeye.client.comparison.Row.Metric;
-import com.linkedin.thirdeye.client.comparison.TimeOnTimeComparisonHandler;
-import com.linkedin.thirdeye.client.comparison.TimeOnTimeComparisonRequest;
-import com.linkedin.thirdeye.client.comparison.TimeOnTimeComparisonResponse;
 import com.linkedin.thirdeye.dashboard.Utils;
-import com.linkedin.thirdeye.dashboard.configs.CollectionConfig;
 import com.linkedin.thirdeye.dashboard.views.GenericResponse;
 import com.linkedin.thirdeye.dashboard.views.GenericResponse.Info;
 import com.linkedin.thirdeye.dashboard.views.GenericResponse.ResponseSchema;
 import com.linkedin.thirdeye.dashboard.views.ViewHandler;
+import com.linkedin.thirdeye.datalayer.dto.MetricConfigDTO;
+import com.linkedin.thirdeye.datasource.MetricExpression;
+import com.linkedin.thirdeye.datasource.MetricFunction;
+import com.linkedin.thirdeye.datasource.ThirdEyeCacheRegistry;
+import com.linkedin.thirdeye.datasource.cache.MetricDataset;
+import com.linkedin.thirdeye.datasource.cache.QueryCache;
+import com.linkedin.thirdeye.datasource.comparison.Row;
+import com.linkedin.thirdeye.datasource.comparison.TimeOnTimeComparisonHandler;
+import com.linkedin.thirdeye.datasource.comparison.TimeOnTimeComparisonRequest;
+import com.linkedin.thirdeye.datasource.comparison.TimeOnTimeComparisonResponse;
+import com.linkedin.thirdeye.datasource.comparison.Row.Metric;
 
 import jersey.repackaged.com.google.common.collect.Lists;
 
 public class HeatMapViewHandler implements ViewHandler<HeatMapViewRequest, HeatMapViewResponse> {
 
   private final QueryCache queryCache;
-  private CollectionConfig collectionConfig = null;
-  private static final Logger LOGGER = LoggerFactory.getLogger(HeatMapViewHandler.class);
-  private static final ThirdEyeCacheRegistry CACHE_REGISTRY_INSTANCE = ThirdEyeCacheRegistry
-      .getInstance();
+  private static final ThirdEyeCacheRegistry CACHE_REGISTRY = ThirdEyeCacheRegistry.getInstance();
   private static final String RATIO_SEPARATOR = "/";
+  private static final String TOPK = "_topk";
 
   public HeatMapViewHandler(QueryCache queryCache) {
     this.queryCache = queryCache;
@@ -61,8 +58,7 @@ public class HeatMapViewHandler implements ViewHandler<HeatMapViewRequest, HeatM
     comparisonRequest.setEndDateInclusive(false);
 
     Multimap<String, String> filters = request.getFilters();
-    List<String> dimensionsToGroupBy =
-        Utils.getDimensionsToGroupBy(queryCache, collection, filters);
+    List<String> dimensionsToGroupBy = Utils.getDimensionsToGroupBy(collection, filters);
 
     List<MetricExpression> metricExpressions = request.getMetricExpressions();
     comparisonRequest.setCollectionName(collection);
@@ -86,13 +82,6 @@ public class HeatMapViewHandler implements ViewHandler<HeatMapViewRequest, HeatM
     // query 1 for everything from baseline start to baseline end
     // query for everything from current start to current end
 
-    try {
-      collectionConfig =
-          CACHE_REGISTRY_INSTANCE.getCollectionConfigCache().get(request.getCollection());
-    } catch (InvalidCacheLoadException e) {
-      LOGGER.debug("No collection configs for collection {}", request.getCollection());
-    }
-
     List<String> expressionNames = new ArrayList<>();
     Map<String, String> metricExpressions = new HashMap<>();
     Set<String> metricOrExpressionNames = new HashSet<>();
@@ -110,6 +99,13 @@ public class HeatMapViewHandler implements ViewHandler<HeatMapViewRequest, HeatM
 
     TimeOnTimeComparisonRequest comparisonRequest = generateTimeOnTimeComparisonRequest(request);
     List<String> groupByDimensions = comparisonRequest.getGroupByDimensions();
+    List<String> groupByDimensionsFiltered = new ArrayList<>();
+    // remove group by dimensions which have topk as well
+    for (String groupByDimension : groupByDimensions) {
+      if (!groupByDimensions.contains(groupByDimension + TOPK)) {
+        groupByDimensionsFiltered.add(groupByDimension);
+      }
+    }
     final TimeOnTimeComparisonHandler handler = new TimeOnTimeComparisonHandler(queryCache);
 
     // we are tracking per dimension, to validate that its the same for each dimension
@@ -121,17 +117,17 @@ public class HeatMapViewHandler implements ViewHandler<HeatMapViewRequest, HeatM
       Map<String, Double> currentTotalMap = new HashMap<>();
       baselineTotalPerMetricAndDimension.put(metricOrExpressionName, baselineTotalMap);
       currentTotalPerMetricAndDimension.put(metricOrExpressionName, currentTotalMap);
-      for (String dimension : groupByDimensions) {
+      for (String dimension : groupByDimensionsFiltered) {
         baselineTotalMap.put(dimension, 0d);
         currentTotalMap.put(dimension, 0d);
       }
     }
 
     List<Future<TimeOnTimeComparisonResponse>> timeOnTimeComparisonResponsesFutures =
-        getTimeOnTimeComparisonResponses(groupByDimensions, comparisonRequest, handler);
+        getTimeOnTimeComparisonResponses(groupByDimensionsFiltered, comparisonRequest, handler);
 
-    for (int groupByDimensionId = 0; groupByDimensionId < groupByDimensions.size(); groupByDimensionId++) {
-      String groupByDimension = groupByDimensions.get(groupByDimensionId);
+    for (int groupByDimensionId = 0; groupByDimensionId < groupByDimensionsFiltered.size(); groupByDimensionId++) {
+      String groupByDimension = groupByDimensionsFiltered.get(groupByDimensionId);
 
       TimeOnTimeComparisonResponse response =
           timeOnTimeComparisonResponsesFutures.get(groupByDimensionId).get();
@@ -165,8 +161,10 @@ public class HeatMapViewHandler implements ViewHandler<HeatMapViewRequest, HeatM
             heatMapBuilder = new HeatMap.Builder(groupByDimension);
             data.put(dataKey, heatMapBuilder);
           }
-          if (collectionConfig != null && collectionConfig.getCellSizeExpression() != null
-              && collectionConfig.getCellSizeExpression().get(metricName) != null) {
+          MetricDataset metricDataset = new MetricDataset(metricName, comparisonRequest.getCollectionName());
+          MetricConfigDTO metricConfig = CACHE_REGISTRY.getMetricConfigCache().get(metricDataset);
+          if (StringUtils.isNotBlank(metricConfig.getCellSizeExpression())) {
+
             String metricExpression = metricExpressions.get(metricName);
 
             String[] tokens = metricExpression.split(RATIO_SEPARATOR);
@@ -186,8 +184,7 @@ public class HeatMapViewHandler implements ViewHandler<HeatMapViewRequest, HeatM
             Map<String, Double> context = new HashMap<>();
             context.put(numerator, numeratorCurrent);
             context.put(denominator, denominatorCurrent);
-            String cellSizeExpression =
-                collectionConfig.getCellSizeExpression().get(metricName).getExpression();
+            String cellSizeExpression = metricConfig.getCellSizeExpression();
             Double cellSize = MetricExpression.evaluateExpression(cellSizeExpression, context);
 
             heatMapBuilder.addCell(dimensionValue, metric.getBaselineValue(),
@@ -272,7 +269,7 @@ public class HeatMapViewHandler implements ViewHandler<HeatMapViewRequest, HeatM
 
     HeatMapViewResponse heatMapViewResponse = new HeatMapViewResponse();
     heatMapViewResponse.setMetrics(expressionNames);
-    heatMapViewResponse.setDimensions(groupByDimensions);
+    heatMapViewResponse.setDimensions(groupByDimensionsFiltered);
     heatMapViewResponse.setData(heatMapViewResponseData);
     heatMapViewResponse.setMetricExpression(metricExpressions);
     heatMapViewResponse.setSummary(summary);

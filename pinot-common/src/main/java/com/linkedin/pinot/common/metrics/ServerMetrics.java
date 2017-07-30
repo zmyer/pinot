@@ -33,7 +33,16 @@ public class ServerMetrics extends AbstractMetrics<ServerQueryPhase, ServerMeter
     return ServerMeter.values();
   }
 
+  @Override
+  protected ServerGauge[] getGauges() {
+    return ServerGauge.values();
+  }
+
   public ServerMetrics(MetricsRegistry metricsRegistry) {
     super("pinot.server.", metricsRegistry, ServerMetrics.class);
+  }
+
+  public ServerMetrics(MetricsRegistry metricsRegistry, boolean global) {
+    super("pinot.server.", metricsRegistry, ServerMetrics.class, global);
   }
 }

@@ -16,7 +16,6 @@
 package com.linkedin.pinot.core.operator.blocks;
 
 import org.roaringbitmap.buffer.MutableRoaringBitmap;
-
 import com.linkedin.pinot.common.data.FieldSpec;
 import com.linkedin.pinot.common.data.FieldSpec.DataType;
 import com.linkedin.pinot.core.common.Block;
@@ -27,21 +26,23 @@ import com.linkedin.pinot.core.common.BlockMetadata;
 import com.linkedin.pinot.core.common.BlockValSet;
 import com.linkedin.pinot.core.common.Predicate;
 import com.linkedin.pinot.core.io.readerwriter.impl.FixedByteSingleColumnSingleValueReaderWriter;
+import com.linkedin.pinot.core.operator.docvalsets.RealtimeFixedWidthRawValueSet;
 import com.linkedin.pinot.core.operator.docvalsets.RealtimeSingleValueSet;
-import com.linkedin.pinot.core.realtime.impl.dictionary.MutableDictionaryReader;
+import com.linkedin.pinot.core.realtime.impl.dictionary.MutableDictionary;
+import com.linkedin.pinot.core.segment.index.readers.Dictionary;
 
 
 public class RealtimeSingleValueBlock implements Block {
 
   private final MutableRoaringBitmap filteredBitmap;
   final FieldSpec spec;
-  private final MutableDictionaryReader dictionary;
+  private final MutableDictionary dictionary;
   final int docIdSearchableOffset;
   final FixedByteSingleColumnSingleValueReaderWriter reader;
   private Predicate p;
 
-  public RealtimeSingleValueBlock(MutableRoaringBitmap filteredBitmap, FieldSpec spec,
-      MutableDictionaryReader dictionary, int offset, FixedByteSingleColumnSingleValueReaderWriter indexReader) {
+  public RealtimeSingleValueBlock(MutableRoaringBitmap filteredBitmap, FieldSpec spec, MutableDictionary dictionary,
+      int offset, FixedByteSingleColumnSingleValueReaderWriter indexReader) {
     this.spec = spec;
     this.dictionary = dictionary;
     this.filteredBitmap = filteredBitmap;
@@ -71,7 +72,14 @@ public class RealtimeSingleValueBlock implements Block {
 
   @Override
   public BlockValSet getBlockValueSet() {
+    if (dictionary == null) {
+      return new RealtimeFixedWidthRawValueSet(reader, docIdSearchableOffset + 1, spec.getDataType(), spec.getName());
+    }
     return new RealtimeSingleValueSet(reader, docIdSearchableOffset + 1, spec.getDataType());
+  }
+
+  public FixedByteSingleColumnSingleValueReaderWriter getReader() {
+    return reader;
   }
 
   @Override
@@ -114,7 +122,7 @@ public class RealtimeSingleValueBlock implements Block {
 
       @Override
       public boolean hasDictionary() {
-        return true;
+        return dictionary != null;
       }
 
       @Override
@@ -138,7 +146,7 @@ public class RealtimeSingleValueBlock implements Block {
       }
 
       @Override
-      public com.linkedin.pinot.core.segment.index.readers.Dictionary getDictionary() {
+      public Dictionary getDictionary() {
         return dictionary;
       }
 

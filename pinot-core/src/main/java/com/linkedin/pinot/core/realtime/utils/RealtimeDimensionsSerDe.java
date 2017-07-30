@@ -21,20 +21,19 @@ import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
-
 import com.linkedin.pinot.common.data.Schema;
 import com.linkedin.pinot.core.data.GenericRow;
-import com.linkedin.pinot.core.realtime.impl.dictionary.MutableDictionaryReader;
+import com.linkedin.pinot.core.realtime.impl.dictionary.MutableDictionary;
 
 
 public class RealtimeDimensionsSerDe {
 
   private final List<String> dimensionsList;
   private final Schema dataSchema;
-  private final Map<String, MutableDictionaryReader> dictionaryMap;
+  private final Map<String, MutableDictionary> dictionaryMap;
 
   public RealtimeDimensionsSerDe(List<String> dimensionName, Schema schema,
-      Map<String, MutableDictionaryReader> dictionary) {
+      Map<String, MutableDictionary> dictionary) {
     this.dimensionsList = dimensionName;
     this.dataSchema = schema;
     this.dictionaryMap = dictionary;
@@ -49,15 +48,16 @@ public class RealtimeDimensionsSerDe {
       columnOffsets.add(pointer);
 
       if (dataSchema.getFieldSpecFor(dataSchema.getDimensionNames().get(i)).isSingleValueField()) {
-        rowConvertedToDictionaryId.add(dictionaryMap.get(dataSchema.getDimensionNames().get(i)).indexOf(
-            row.getValue(dataSchema.getDimensionNames().get(i))));
+        rowConvertedToDictionaryId.add(dictionaryMap.get(dataSchema.getDimensionNames().get(i))
+            .indexOf(row.getValue(dataSchema.getDimensionNames().get(i))));
         pointer += 1;
       } else {
         Object[] multivalues = (Object[]) row.getValue(dataSchema.getDimensionNames().get(i));
         if (multivalues != null && multivalues.length > 0) {
           Arrays.sort(multivalues);
           for (Object multivalue : multivalues) {
-            rowConvertedToDictionaryId.add(dictionaryMap.get(dataSchema.getDimensionNames().get(i)).indexOf(multivalue));
+            rowConvertedToDictionaryId.add(
+                dictionaryMap.get(dataSchema.getDimensionNames().get(i)).indexOf(multivalue));
           }
           pointer += multivalues.length;
         } else {

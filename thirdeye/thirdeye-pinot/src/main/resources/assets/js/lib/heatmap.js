@@ -1,17 +1,50 @@
 function getHeatmap(tab) {
 
     var url = "/dashboard/data/heatmap?" + window.location.hash.substring(1);
-    getData(url, tab).done(function (data) {
+    getData(url, tab).done(function (heatMapData) {
 
-        renderD3heatmap(data, tab);
+        var templatePlaceHolder;
+        switch(tab){
+            case "anomalies":
+                templatePlaceHolder = $("#anomaly-details-heatmap-placeholder");
+            break;
+            default: //case heatmap
+                templatePlaceHolder = $("#" + tab + "-display-chart-section")
+        }
+
+        renderD3heatmap(heatMapData, tab, templatePlaceHolder);
 
         heatMapEventListeners(tab);
+        hideLoader(tab);
 
+        var summaryUrl = "/dashboard/summary/autoDimensionOrder?" +
+            "dataset=" + hash.dataset +
+            "&baselineStart=" + hash.baselineStart +
+            "&baselineEnd=" + hash.baselineEnd +
+            "&currentStart=" + hash.currentStart +
+            "&currentEnd=" + hash.currentEnd +
+            "&dimensions=" + hash.dimensions +
+            "&filters=" + hash.filters +
+            "&topDimensions=3" +
+            "&oneSideError=false" +
+            "&summarySize=10" +
+            "&hierarchies=[[\"browser_name\", \"browser_version\"],[\"continent\",\"countryCode\"]]"
+        var metrics = hash.metrics.split(",")
+        for (var index = 0, len = metrics.length; index < len; index++) {
+            getSummaryData(summaryUrl, tab)
+        }
+
+        function getSummaryData(summaryUrl, tab){
+            summaryUrl += "&metric=" + metrics[index];
+            getDataCustomCallback(summaryUrl, tab).done(function (data) {
+                var summaryData = data;
+                renderHeatMapSummary(summaryData);
+            })
+        }
     });
 };
 
-function renderD3heatmap(data, tab) {
-
+function renderD3heatmap(data, tab, templatePlaceHolder) {
     //Error handling when data is falsy (empty, undefined or null)
     if (!data) {
         $("#" + tab + "-chart-area-error").empty()
@@ -25,15 +58,16 @@ function renderD3heatmap(data, tab) {
     }
 
     /* Handelbars template for treemap table */
-    var result_treemap_template = HandleBarsTemplates.template_treemap(data)
-    $("#" + tab + "-display-chart-section").html(result_treemap_template);
+    var templateData = {heatMapData : data}
+    var result_treemap_template = HandleBarsTemplates.template_treemap(templateData)
+    templatePlaceHolder.html(result_treemap_template);
 
     //var invertColorMetrics
     var baseForLtZero = 'rgba(255,0,0,'; //lt zero is default red
     var baseForGtZero = 'rgba(0,0,255,'; //gt zero is default blue
     var invertColorMetrics = window.datasetConfig.invertColorMetrics;
 
-    var numMetrics = data["metrics"].length
+    var numMetrics = data["metrics"].length;
     for (var m = 0; m < numMetrics; m++) {
         var metric = data["metrics"][m];
 
@@ -120,7 +154,6 @@ function renderD3heatmap(data, tab) {
             var placeholder_0 = '#metric_' + metric + '_dim_' + d + '_treemap_0'
             var placeholder_1 = '#metric_' + metric + '_dim_' + d + '_treemap_1'
             var placeholder_2 = '#metric_' + metric + '_dim_' + d + '_treemap_2'
-
 
             var mousemove = function (d) {
 
@@ -251,9 +284,33 @@ function renderD3heatmap(data, tab) {
             drawTreemap(root_0, placeholder_0)
             drawTreemap(root_1, placeholder_1)
             drawTreemap(root_2, placeholder_2)
-
         }
     }
+}
+
+function renderHeatMapSummary(summaryData){
+    var data = {summaryData : summaryData}
+    var result_treemap_summary_template = HandleBarsTemplates.template_treemap_summary(data)
+    if (summaryData.responseRows == 0) {
+        var warning = $('<div></div>', { class: 'uk-alert uk-alert-warning' })
+        warning.append($('<p></p>', { html: 'Data is not complete (e.g., Pinot segment is missing)'
+        + ' in order to explain the difference.'}))
+        $("#difference-summary-" + summaryData.metricName).html(
+            result_treemap_summary_template).append(warning)
+    } else {
+        $("#difference-summary-" + summaryData.metricName).html(result_treemap_summary_template);
+    }
+
+    //Create dataTable instance of summary table
+    $("#heat-map-" + summaryData.metricName +"-difference-summary-table").DataTable({
+        "bSort" : false
+    });
+    $("#heat-map-" + summaryData.metricName +"-gainer-summary-table").DataTable({
+        "order": [[ 7, "desc" ]]
+    });
+    $("#heat-map-" + summaryData.metricName +"-loser-summary-table").DataTable({
+        "order": [[ 7, "desc" ]]
+    });
 }
 
 function heatMapEventListeners(tab) {
@@ -314,4 +371,5 @@ function heatMapEventListeners(tab) {
             window.location.hash = encodeHashParameters(hash);
         }
     })
+
 }

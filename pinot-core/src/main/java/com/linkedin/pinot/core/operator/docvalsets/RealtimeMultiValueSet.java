@@ -16,14 +16,15 @@
 package com.linkedin.pinot.core.operator.docvalsets;
 
 import com.linkedin.pinot.common.data.FieldSpec.DataType;
+import com.linkedin.pinot.core.common.BaseBlockValSet;
 import com.linkedin.pinot.core.common.BlockValIterator;
-import com.linkedin.pinot.core.common.BlockValSet;
 import com.linkedin.pinot.core.io.reader.SingleColumnMultiValueReader;
 import com.linkedin.pinot.core.operator.docvaliterators.RealtimeMultiValueIterator;
 
-public final class RealtimeMultiValueSet implements BlockValSet {
+
+public final class RealtimeMultiValueSet extends BaseBlockValSet {
   /**
-   * 
+   *
    */
   private SingleColumnMultiValueReader reader;
   private int length;
@@ -44,10 +45,5 @@ public final class RealtimeMultiValueSet implements BlockValSet {
   @Override
   public DataType getValueType() {
     return dataType;
-  }
-
-  @Override
-  public void readIntValues(int[] inDocIds, int inStartPos, int inDocIdsSize, int[] outDictionaryIds, int outStartPos) {
-    throw new UnsupportedOperationException("Reading batch of multi-values in not implemented for realtime multivalue set");
   }
 }

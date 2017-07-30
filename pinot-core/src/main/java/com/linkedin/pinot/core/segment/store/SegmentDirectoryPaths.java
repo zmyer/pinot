@@ -15,31 +15,108 @@
  */
 package com.linkedin.pinot.core.segment.store;
 
+import com.google.common.base.Preconditions;
 import com.linkedin.pinot.core.indexsegment.generator.SegmentVersion;
+import com.linkedin.pinot.core.segment.creator.impl.V1Constants;
 import java.io.File;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 
 
 public class SegmentDirectoryPaths {
+  private SegmentDirectoryPaths() {
+  }
+
   public static final String V3_SUBDIRECTORY_NAME = "v3";
-  private static final Logger LOGGER = LoggerFactory.getLogger(SegmentDirectoryPaths.class);
 
-
-  public static File segmentDirectoryFor(File segmentIndexDirectory, SegmentVersion version) {
-    switch(version) {
+  @Nonnull
+  public static File segmentDirectoryFor(@Nonnull File indexDir, @Nonnull SegmentVersion segmentVersion) {
+    switch (segmentVersion) {
       case v1:
       case v2:
-        return segmentIndexDirectory;
+        return indexDir;
       case v3:
-        return new File(segmentIndexDirectory, V3_SUBDIRECTORY_NAME);
+        return new File(indexDir, V3_SUBDIRECTORY_NAME);
       default:
-        throw new UnsupportedOperationException("Segment path for version: " + version +
-            " and segmentIndexDirectory: " + segmentIndexDirectory + " can not be determined ");
+        throw new UnsupportedOperationException(
+            "Unsupported segment version: " + segmentVersion + " while trying to get segment directory from: "
+                + indexDir);
     }
   }
 
-  public static boolean isV3Directory(File path) {
+  public static boolean isV3Directory(@Nonnull File path) {
     return path.toString().endsWith(V3_SUBDIRECTORY_NAME);
+  }
+
+  @Nullable
+  public static File findMetadataFile(@Nonnull File indexDir, @Nonnull SegmentVersion segmentVersion) {
+    return findFormatFile(indexDir, V1Constants.MetadataKeys.METADATA_FILE_NAME, segmentVersion);
+  }
+
+  @Nullable
+  public static File findMetadataFile(@Nonnull File indexDir) {
+    return findFormatFile(indexDir, V1Constants.MetadataKeys.METADATA_FILE_NAME);
+  }
+
+  @Nullable
+  public static File findCreationMetaFile(@Nonnull File indexDir, @Nonnull SegmentVersion segmentVersion) {
+    return findFormatFile(indexDir, V1Constants.SEGMENT_CREATION_META, segmentVersion);
+  }
+
+  @Nullable
+  public static File findCreationMetaFile(@Nonnull File indexDir) {
+    return findFormatFile(indexDir, V1Constants.SEGMENT_CREATION_META);
+  }
+
+  @Nullable
+  public static File findStarTreeFile(@Nonnull File indexDir, @Nonnull SegmentVersion segmentVersion) {
+    return findFormatFile(indexDir, V1Constants.STAR_TREE_INDEX_FILE, segmentVersion);
+  }
+
+  @Nullable
+  public static File findStarTreeFile(@Nonnull File indexDir) {
+    return findFormatFile(indexDir, V1Constants.STAR_TREE_INDEX_FILE);
+  }
+
+  /**
+   * Find a file based on the segment version passed in.
+   * <p>Index directory passed in should be top level segment directory.
+   */
+  @Nullable
+  private static File findFormatFile(@Nonnull File indexDir, @Nonnull String fileName,
+      @Nonnull SegmentVersion segmentVersion) {
+    Preconditions.checkArgument(indexDir.isDirectory(), "Path: %s is not a directory", indexDir);
+
+    File segmentDirectory = segmentDirectoryFor(indexDir, segmentVersion);
+    File formatFile = new File(segmentDirectory, fileName);
+    if (formatFile.exists()) {
+      return formatFile;
+    } else {
+      return null;
+    }
+  }
+
+  /**
+   * Find a file in any segment version.
+   * <p>Index directory passed in should be top level segment directory.
+   * <p>If file exists in multiple segment version, return the one in lowest segment version.
+   */
+  // TODO: check if returning file in highest segment version is better
+  @Nullable
+  private static File findFormatFile(@Nonnull File indexDir, @Nonnull String fileName) {
+    Preconditions.checkArgument(indexDir.isDirectory(), "Path: %s is not a directory", indexDir);
+
+    File v1File = new File(indexDir, fileName);
+    if (v1File.exists()) {
+      return v1File;
+    }
+
+    File v3Dir = segmentDirectoryFor(indexDir, SegmentVersion.v3);
+    File v3File = new File(v3Dir, fileName);
+    if (v3File.exists()) {
+      return v3File;
+    }
+
+    return null;
   }
 }

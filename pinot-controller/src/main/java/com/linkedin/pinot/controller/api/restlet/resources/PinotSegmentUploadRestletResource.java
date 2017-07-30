@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2014-2015 LinkedIn Corp. (pinot-core@linkedin.com)
+ * Copyright (C) 2014-2016 LinkedIn Corp. (pinot-core@linkedin.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,10 +17,10 @@ package com.linkedin.pinot.controller.api.restlet.resources;
 
 import com.alibaba.fastjson.JSONObject;
 import com.fasterxml.jackson.core.JsonProcessingException;
-import com.linkedin.pinot.common.config.OfflineTableConfig;
+import com.google.common.base.Preconditions;
+import com.linkedin.pinot.common.config.TableConfig;
 import com.linkedin.pinot.common.config.TableNameBuilder;
 import com.linkedin.pinot.common.metadata.ZKMetadataProvider;
-import com.linkedin.pinot.common.metadata.segment.OfflineSegmentZKMetadata;
 import com.linkedin.pinot.common.metrics.ControllerMeter;
 import com.linkedin.pinot.common.restlet.swagger.HttpVerb;
 import com.linkedin.pinot.common.restlet.swagger.Parameter;
@@ -37,9 +37,11 @@ import com.linkedin.pinot.common.utils.FileUploadUtils;
 import com.linkedin.pinot.common.utils.FileUploadUtils.FileUploadType;
 import com.linkedin.pinot.common.utils.StringUtil;
 import com.linkedin.pinot.common.utils.TarGzCompressionUtils;
+import com.linkedin.pinot.common.utils.helix.HelixHelper;
 import com.linkedin.pinot.common.utils.time.TimeUtils;
 import com.linkedin.pinot.controller.ControllerConf;
 import com.linkedin.pinot.controller.api.ControllerRestApplication;
+import com.linkedin.pinot.controller.helix.core.PinotHelixSegmentOnlineOfflineStateModelGenerator;
 import com.linkedin.pinot.controller.helix.core.PinotResourceManagerResponse;
 import com.linkedin.pinot.controller.helix.core.realtime.SegmentCompletionManager;
 import com.linkedin.pinot.controller.validation.StorageQuotaChecker;
@@ -50,15 +52,16 @@ import java.io.UnsupportedEncodingException;
 import java.net.InetAddress;
 import java.net.URLDecoder;
 import java.util.Date;
-import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import javax.annotation.Nonnull;
 import org.apache.commons.configuration.ConfigurationException;
 import org.apache.commons.fileupload.FileItem;
 import org.apache.commons.fileupload.disk.DiskFileItemFactory;
 import org.apache.commons.io.FileUtils;
-import org.apache.helix.ZNRecord;
-import org.apache.helix.store.zk.ZkHelixPropertyStore;
+import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang.Validate;
+import org.apache.helix.model.IdealState;
 import org.joda.time.Interval;
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -105,7 +108,6 @@ public class PinotSegmentUploadRestletResource extends BasePinotControllerRestle
 
     vip = _controllerConf.generateVipUrl();
     segmentCompletionManager = SegmentCompletionManager.getInstance();
-    LOGGER.info("controller download url base is : " + vip);
   }
 
   protected SegmentCompletionManager getSegmentCompletionManager() {
@@ -118,13 +120,13 @@ public class PinotSegmentUploadRestletResource extends BasePinotControllerRestle
     try {
       final String tableName = (String) getRequest().getAttributes().get("tableName");
       final String segmentName = (String) getRequest().getAttributes().get("segmentName");
-      final String active = getReference().getQueryAsForm().getValues("active");
+      final String tableType = getReference().getQueryAsForm().getValues("type");
 
       if ((tableName == null) && (segmentName == null)) {
         return getAllSegments();
 
       } else if ((tableName != null) && (segmentName == null)) {
-        return getSegmentsForTable(tableName, !"false".equalsIgnoreCase(active));
+        return getSegmentsForTable(tableName, tableType);
       }
 
       presentation = getSegmentFile(tableName, segmentName);
@@ -177,43 +179,69 @@ public class PinotSegmentUploadRestletResource extends BasePinotControllerRestle
   })
   @Responses({
       @Response(statusCode = "200", description = "A list of all segments for the specified table"),
-      @Response(statusCode = "404", description = "The segment file or table does not exist")
+      @Response(statusCode = "404", description = "The segment file or table does not exist"),
+      @Response(statusCode = "400", description = "Bad client tableType parameter")
   })
   private Representation getSegmentsForTable(
       @Parameter(name = "tableName", in = "path", description = "The name of the table for which to list segments", required = true)
       String tableName,
-      @Parameter(name = "active", in = "query", description = "true = show active segments (in Helix), false = all segments (on filesystem)", required = false)
-      boolean activeOnly
-      ) {
+      @Parameter(name = "type", in = "query", description = "Type of table {offline|realtime}", required = false)
+      String type
+      ) throws Exception {
     Representation presentation;
-    final JSONArray ret = new JSONArray();
+    JSONArray ret = new JSONArray();
+    final String realtime = "REALTIME";
+    final String offline = "OFFLINE";
 
-    if (activeOnly) {
-      String offlineTableName = TableNameBuilder.OFFLINE_TABLE_NAME_BUILDER.forTable(tableName);
-      List<String> segmentList = _pinotHelixResourceManager.getAllSegmentsForResource(offlineTableName);
-      ZkHelixPropertyStore<ZNRecord> propertyStore = _pinotHelixResourceManager.getPropertyStore();
-
-      for (String segmentName : segmentList) {
-        OfflineSegmentZKMetadata offlineSegmentZKMetadata =
-            ZKMetadataProvider.getOfflineSegmentZKMetadata(propertyStore, tableName, segmentName);
-        ret.put(offlineSegmentZKMetadata.getDownloadUrl());
-      }
+    if (type == null) {
+      ret.put(formatSegments(tableName, CommonConstants.Helix.TableType.valueOf(offline)));
+      ret.put(formatSegments(tableName, CommonConstants.Helix.TableType.valueOf(realtime)));
     } else {
-      File tableDir = new File(baseDataDir, tableName);
-
-      if (tableDir.exists()) {
-        for (final File file : tableDir.listFiles()) {
-	  final String url = _controllerConf.generateVipUrl() + "/segments/" + tableName + "/" + file.getName();
-          ret.put(url);
-        }
-      } else {
-        LOGGER.error("Error: Table {} not found.", tableName);
-        setStatus(Status.CLIENT_ERROR_NOT_FOUND);
+      if (!isValidTableType(type)) {
+        setStatus(Status.CLIENT_ERROR_BAD_REQUEST);
+        return new StringRepresentation("Table type " + type + " is not valid! Please use offline or realtime.");
       }
+      ret.put(formatSegments(tableName, CommonConstants.Helix.TableType.valueOf(type.toUpperCase())));
     }
 
     presentation = new StringRepresentation(ret.toString());
     return presentation;
+  }
+
+  private org.json.JSONObject formatSegments(String tableName, CommonConstants.Helix.TableType tableType) throws Exception {
+    org.json.JSONObject obj = new org.json.JSONObject();
+    obj.put(tableType.toString(), getSegments(tableName, tableType.toString()));
+    return obj;
+  }
+  private JSONArray getSegments(String tableName, String tableType) {
+
+    final JSONArray ret = new JSONArray();
+
+    String realtimeTableName = TableNameBuilder.REALTIME.tableNameWithType(tableName);
+    String offlineTableName = TableNameBuilder.OFFLINE.tableNameWithType(tableName);
+
+    String tableNameWithType;
+    if (CommonConstants.Helix.TableType.valueOf(tableType).toString().equals("REALTIME")) {
+      tableNameWithType = realtimeTableName;
+    } else {
+      tableNameWithType = offlineTableName;
+    }
+
+    List<String> segmentList = _pinotHelixResourceManager.getSegmentsFor(tableNameWithType);
+    IdealState idealState =
+        HelixHelper.getTableIdealState(_pinotHelixResourceManager.getHelixZkManager(), tableNameWithType);
+
+    for (String segmentName : segmentList) {
+      Map<String, String> map = idealState.getInstanceStateMap(segmentName);
+      if (map == null) {
+        continue;
+      }
+      if (!map.containsValue(PinotHelixSegmentOnlineOfflineStateModelGenerator.OFFLINE_STATE)) {
+        ret.put(segmentName);
+      }
+    }
+
+    return ret;
   }
 
   @HttpVerb("get")
@@ -246,77 +274,74 @@ public class PinotSegmentUploadRestletResource extends BasePinotControllerRestle
   @Override
   @Post
   public Representation post(Representation entity) {
-    Representation rep = null;
-    File tmpSegmentDir = null;
-    File dataFile = null;
+    String tempSegmentName = "tmp-" + System.nanoTime();
+    File tempTarredSegmentFile = new File(tempDir, tempSegmentName);
+    File tempSegmentDir = new File(tempUntarredPath, tempSegmentName);
+
     try {
       // 0/ Get upload type, if it's uri, then download it, otherwise, get the tar from the request.
       Series headers = (Series) getRequestAttributes().get(RESTLET_HTTP_HEADERS);
       String uploadTypeStr = headers.getFirstValue(FileUploadUtils.UPLOAD_TYPE);
-      FileUploadType uploadType = null;
+      FileUploadType uploadType;
       try {
-        uploadType = (uploadTypeStr == null) ? FileUploadType.getDefaultUploadType() : FileUploadType.valueOf(uploadTypeStr);
+        uploadType =
+            (uploadTypeStr == null) ? FileUploadType.getDefaultUploadType() : FileUploadType.valueOf(uploadTypeStr);
       } catch (Exception e) {
         uploadType = FileUploadType.getDefaultUploadType();
       }
+
       String downloadURI = null;
       boolean found = false;
       switch (uploadType) {
         case URI:
         case JSON:
-          // Download segment from the given Uri
+          // Get download URI
           try {
             downloadURI = getDownloadUri(uploadType, headers, entity);
           } catch (Exception e) {
             String errorMsg =
-                String.format("Failed to get download Uri for upload file type: %s, with error %s",
-                    uploadType, e.getMessage());
+                String.format("Failed to get download Uri for upload file type: %s, with error %s", uploadType,
+                    e.getMessage());
             LOGGER.warn(errorMsg);
             JSONObject errorMsgInJson = getErrorMsgInJson(errorMsg);
             ControllerRestApplication.getControllerMetrics()
                 .addMeteredGlobalValue(ControllerMeter.CONTROLLER_SEGMENT_UPLOAD_ERROR, 1L);
             setStatus(Status.CLIENT_ERROR_BAD_REQUEST);
-            return new StringRepresentation(errorMsgInJson.toJSONString(),
-                MediaType.APPLICATION_JSON);
+            return new StringRepresentation(errorMsgInJson.toJSONString(), MediaType.APPLICATION_JSON);
           }
 
-          SegmentFetcher segmentFetcher = null;
-          // Get segmentFetcher based on uri parsed from download uri
+          // Get segment fetcher based on the download URI
+          SegmentFetcher segmentFetcher;
           try {
             segmentFetcher = SegmentFetcherFactory.getSegmentFetcherBasedOnURI(downloadURI);
           } catch (Exception e) {
-            String errorMsg =
-                String.format("Failed to get SegmentFetcher from download Uri: %s", downloadURI);
+            String errorMsg = String.format("Failed to get SegmentFetcher from download Uri: %s", downloadURI);
             LOGGER.warn(errorMsg);
             JSONObject errorMsgInJson = getErrorMsgInJson(errorMsg);
             ControllerRestApplication.getControllerMetrics()
                 .addMeteredGlobalValue(ControllerMeter.CONTROLLER_SEGMENT_UPLOAD_ERROR, 1L);
             setStatus(Status.SERVER_ERROR_INTERNAL);
-            return new StringRepresentation(errorMsgInJson.toJSONString(),
-                MediaType.APPLICATION_JSON);
+            return new StringRepresentation(errorMsgInJson.toJSONString(), MediaType.APPLICATION_JSON);
           }
-          // Download segment tar to local.
-          dataFile = new File(tempDir, "tmp-" + System.nanoTime());
+
+          // Download segment tar to local
           try {
-            segmentFetcher.fetchSegmentToLocal(downloadURI, dataFile);
+            segmentFetcher.fetchSegmentToLocal(downloadURI, tempTarredSegmentFile);
           } catch (Exception e) {
-            String errorMsg =
-                String.format("Failed to fetch segment tar from download Uri: %s to %s",
-                    downloadURI, dataFile.toString());
+            String errorMsg = String.format("Failed to fetch segment tar from download Uri: %s", downloadURI);
             LOGGER.warn(errorMsg);
             JSONObject errorMsgInJson = getErrorMsgInJson(errorMsg);
             ControllerRestApplication.getControllerMetrics()
                 .addMeteredGlobalValue(ControllerMeter.CONTROLLER_SEGMENT_UPLOAD_ERROR, 1L);
             setStatus(Status.SERVER_ERROR_INTERNAL);
-            return new StringRepresentation(errorMsgInJson.toJSONString(),
-                MediaType.APPLICATION_JSON);
+            return new StringRepresentation(errorMsgInJson.toJSONString(), MediaType.APPLICATION_JSON);
           }
-          if (dataFile.exists() && dataFile.length() > 0) {
+          if (tempTarredSegmentFile.length() > 0) {
             found = true;
           }
           break;
+
         case TAR:
-        default:
           // 1/ Create a factory for disk-based file items
           final DiskFileItemFactory factory = new DiskFileItemFactory();
 
@@ -330,68 +355,67 @@ public class PinotSegmentUploadRestletResource extends BasePinotControllerRestle
           // list of FileItems
           items = upload.parseRequest(getRequest());
 
-          for (final Iterator<FileItem> it = items.iterator(); it.hasNext() && !found;) {
-            final FileItem fi = it.next();
-            if (fi.getFieldName() != null) {
-              found = true;
-              dataFile = new File(tempDir, fi.getFieldName());
-              fi.write(dataFile);
+          for (FileItem fileItem : items) {
+            String fieldName = fileItem.getFieldName();
+            if (!found) {
+              if (fieldName != null) {
+                fileItem.write(tempTarredSegmentFile);
+                if (tempTarredSegmentFile.length() > 0) {
+                  found = true;
+                }
+              } else {
+                LOGGER.warn("Null field name");
+              }
+            } else {
+              LOGGER.warn("Got extra file item while pushing segments: {}", fieldName);
             }
+
+            // Remove the temp file
+            // When the file is copied to instead of renamed to the new file, the temp file might be left in the dir
+            fileItem.delete();
           }
+          break;
+
+        default:
+          throw new UnsupportedOperationException("Unsupported upload type: " + uploadType);
       }
-      // Once handled, the content of the uploaded file is sent
-      // back to the client.
+
       if (found) {
-        // Create a new representation based on disk file.
-        // The content is arbitrarily sent as plain text.
-        rep = new StringRepresentation(dataFile + " sucessfully uploaded", MediaType.TEXT_PLAIN);
-        tmpSegmentDir =
-            new File(tempUntarredPath, dataFile.getName() + "-" + _controllerConf.getControllerHost() + "_"
-                + _controllerConf.getControllerPort() + "-" + System.currentTimeMillis());
-        LOGGER.info("Untar segment to temp dir: " + tmpSegmentDir);
-        if (tmpSegmentDir.exists()) {
-          FileUtils.deleteDirectory(tmpSegmentDir);
-        }
-        if (!tmpSegmentDir.exists()) {
-          tmpSegmentDir.mkdirs();
-        }
+        // Found the data file
+
         // While there is TarGzCompressionUtils.unTarOneFile, we use unTar here to unpack all files
         // in the segment in order to ensure the segment is not corrupted
-        TarGzCompressionUtils.unTar(dataFile, tmpSegmentDir);
-        File segmentFile = tmpSegmentDir.listFiles()[0];
-        String clientIpAddress = getClientInfo().getAddress();
-        String clientAddress = InetAddress.getByName(clientIpAddress).getHostName();
-        LOGGER.info("Processing upload request for segment '{}' from client '{}'", segmentFile.getName(), clientAddress);
-        return uploadSegment(segmentFile, dataFile, downloadURI);
+        TarGzCompressionUtils.unTar(tempTarredSegmentFile, tempSegmentDir);
+        File[] files = tempSegmentDir.listFiles();
+        Preconditions.checkState(files != null && files.length == 1);
+        File indexDir = files[0];
+
+        SegmentMetadata segmentMetadata = new SegmentMetadataImpl(indexDir);
+        String clientAddress = InetAddress.getByName(getClientInfo().getAddress()).getHostName();
+        LOGGER.info("Processing upload request for segment '{}' from client '{}'", segmentMetadata.getName(),
+            clientAddress);
+
+        return uploadSegment(indexDir, segmentMetadata, tempTarredSegmentFile, downloadURI);
       } else {
         // Some problem occurs, sent back a simple line of text.
         String errorMsg = "No file was uploaded";
         LOGGER.warn(errorMsg);
-        JSONObject errorMsgInJson = getErrorMsgInJson(errorMsg );
-        rep = new StringRepresentation(errorMsgInJson.toJSONString(), MediaType.APPLICATION_JSON);
-        ControllerRestApplication.getControllerMetrics().addMeteredGlobalValue(ControllerMeter.CONTROLLER_SEGMENT_UPLOAD_ERROR, 1L);
+        JSONObject errorMsgInJson = getErrorMsgInJson(errorMsg);
+        ControllerRestApplication.getControllerMetrics()
+            .addMeteredGlobalValue(ControllerMeter.CONTROLLER_SEGMENT_UPLOAD_ERROR, 1L);
         setStatus(Status.SERVER_ERROR_INTERNAL);
+        return new StringRepresentation(errorMsgInJson.toJSONString(), MediaType.APPLICATION_JSON);
       }
     } catch (final Exception e) {
-      rep = exceptionToStringRepresentation(e);
       LOGGER.error("Caught exception in file upload", e);
-      ControllerRestApplication.getControllerMetrics().addMeteredGlobalValue(ControllerMeter.CONTROLLER_SEGMENT_UPLOAD_ERROR, 1L);
+      ControllerRestApplication.getControllerMetrics()
+          .addMeteredGlobalValue(ControllerMeter.CONTROLLER_SEGMENT_UPLOAD_ERROR, 1L);
       setStatus(Status.SERVER_ERROR_INTERNAL);
+      return exceptionToStringRepresentation(e);
     } finally {
-      if ((tmpSegmentDir != null) && tmpSegmentDir.exists()) {
-        try {
-          FileUtils.deleteDirectory(tmpSegmentDir);
-        } catch (final IOException e) {
-          LOGGER.error("Caught exception in file upload", e);
-          ControllerRestApplication.getControllerMetrics().addMeteredGlobalValue(ControllerMeter.CONTROLLER_SEGMENT_UPLOAD_ERROR, 1L);
-          setStatus(Status.SERVER_ERROR_INTERNAL);
-        }
-      }
-      if ((dataFile != null) && dataFile.exists()) {
-        FileUtils.deleteQuietly(dataFile);
-      }
+      FileUtils.deleteQuietly(tempTarredSegmentFile);
+      FileUtils.deleteQuietly(tempSegmentDir);
     }
-    return rep;
   }
 
   private String getDownloadUri(FileUploadType uploadType, Series headers, Representation entity) throws Exception {
@@ -422,54 +446,49 @@ public class PinotSegmentUploadRestletResource extends BasePinotControllerRestle
       @Response(statusCode = "403", description = "Forbidden operation typically because it exceeds configured quota"),
       @Response(statusCode = "500", description = "There was an error when uploading the segment")
   })
-  private Representation uploadSegment(File indexDir, File dataFile, String downloadUrl)
-      throws ConfigurationException, IOException, JSONException {
-    final SegmentMetadata metadata = new SegmentMetadataImpl(indexDir);
-    final File tableDir = new File(baseDataDir, metadata.getTableName());
-    String tableName = metadata.getTableName();
-    File segmentFile = new File(tableDir, dataFile.getName());
-    OfflineTableConfig offlineTableConfig = (OfflineTableConfig) ZKMetadataProvider
-        .getOfflineTableConfig(_pinotHelixResourceManager.getPropertyStore(), tableName);
+  private Representation uploadSegment(File indexDir, SegmentMetadata segmentMetadata, File tempTarredSegmentFile,
+      String downloadUrl) throws IOException, JSONException {
+    String tableName = segmentMetadata.getTableName();
+    String segmentName = segmentMetadata.getName();
+    TableConfig offlineTableConfig =
+        ZKMetadataProvider.getOfflineTableConfig(_pinotHelixResourceManager.getPropertyStore(), tableName);
 
     if (offlineTableConfig == null) {
-      LOGGER.info("Missing configuration for table: {} in helix", metadata.getTableName());
+      LOGGER.info("Missing configuration for table: {} in helix", tableName);
       setStatus(Status.CLIENT_ERROR_NOT_FOUND);
-      StringRepresentation repr = new StringRepresentation("{\"error\" : \"Missing table: "  +  tableName + "\"}");
-      repr.setMediaType(MediaType.APPLICATION_JSON);
-      return repr;
+      return new StringRepresentation("{\"error\" : \"Missing table: " + tableName + "\"}", MediaType.APPLICATION_JSON);
     }
-    StorageQuotaChecker.QuotaCheckerResponse quotaResponse = checkStorageQuota(indexDir, metadata, offlineTableConfig);
+
+    StorageQuotaChecker.QuotaCheckerResponse quotaResponse =
+        checkStorageQuota(indexDir, segmentMetadata, offlineTableConfig);
     if (!quotaResponse.isSegmentWithinQuota) {
       // this is not an "error" hence we don't increment segment upload errors
-      LOGGER.info("Rejecting segment upload for table: {}, segment: {}, reason: {}",
-          metadata.getTableName(), metadata.getName(), quotaResponse.reason);
+      LOGGER.info("Rejecting segment upload for table: {}, segment: {}, reason: {}", tableName, segmentName,
+          quotaResponse.reason);
       setStatus(Status.CLIENT_ERROR_FORBIDDEN);
-      StringRepresentation repr = new StringRepresentation("{\"error\" : \"" + quotaResponse.reason + "\"}");
-      repr.setMediaType(MediaType.APPLICATION_JSON);
-      return repr;
+      return new StringRepresentation("{\"error\" : \"" + quotaResponse.reason + "\"}", MediaType.APPLICATION_JSON);
     }
 
     PinotResourceManagerResponse response;
-    if (!isSegmentTimeValid(metadata)) {
+    if (!isSegmentTimeValid(segmentMetadata)) {
       response = new PinotResourceManagerResponse("Invalid segment start/end time", false);
     } else {
+      // Move tarred segment file to data directory when there is no external download URL
       if (downloadUrl == null) {
-        // We only move segment file to data directory when Pinot Controller will
-        // serve the data downloading from Pinot Servers.
-        if (segmentFile.exists()) {
-          FileUtils.deleteQuietly(segmentFile);
-        }
-        FileUtils.moveFile(dataFile, segmentFile);
-        downloadUrl = ControllerConf.constructDownloadUrl(tableName, dataFile.getName(), vip);
+        File tarredSegmentFile = new File(new File(baseDataDir, tableName), segmentName);
+        FileUtils.deleteQuietly(tarredSegmentFile);
+        FileUtils.moveFile(tempTarredSegmentFile, tarredSegmentFile);
+        downloadUrl = ControllerConf.constructDownloadUrl(tableName, segmentName, vip);
       }
       // TODO: this will read table configuration again from ZK. We should optimize that
-      response = _pinotHelixResourceManager.addSegment(metadata, downloadUrl);
+      response = _pinotHelixResourceManager.addSegment(segmentMetadata, downloadUrl);
     }
 
     if (response.isSuccessful()) {
       setStatus(Status.SUCCESS_OK);
     } else {
-      ControllerRestApplication.getControllerMetrics().addMeteredGlobalValue(ControllerMeter.CONTROLLER_SEGMENT_UPLOAD_ERROR, 1L);
+      ControllerRestApplication.getControllerMetrics()
+          .addMeteredGlobalValue(ControllerMeter.CONTROLLER_SEGMENT_UPLOAD_ERROR, 1L);
       setStatus(Status.SERVER_ERROR_INTERNAL);
     }
 
@@ -537,10 +556,18 @@ public class PinotSegmentUploadRestletResource extends BasePinotControllerRestle
     Representation rep;
     try {
       final String tableName = (String) getRequest().getAttributes().get("tableName");
-      final String segmentName = (String) getRequest().getAttributes().get("segmentName");
+      String segmentName =(String) getRequest().getAttributes().get("segmentName");
+      if (segmentName != null) {
+        segmentName = URLDecoder.decode(segmentName, "UTF-8");
+      }
+      final String tableType = getReference().getQueryAsForm().getValues(TABLE_TYPE);
 
       LOGGER.info("Getting segment deletion request, tableName: " + tableName + " segmentName: " + segmentName);
-      rep = deleteOneSegment(tableName, segmentName);
+      if (segmentName != null) {
+        rep = deleteOneSegment(tableName, segmentName, tableType);
+      } else {
+        rep = deleteAllSegments(tableName, tableType);
+      }
     } catch (final Exception e) {
       rep = exceptionToStringRepresentation(e);
       LOGGER.error("Caught exception while processing delete request", e);
@@ -555,13 +582,17 @@ public class PinotSegmentUploadRestletResource extends BasePinotControllerRestle
   @Tags({"segment", "table"})
   @Paths({ "/segments/{tableName}/{segmentName}", "/segments/{tableName}/{segmentName}/" })
   private Representation deleteOneSegment(
-      @Parameter(name = "tableName", in = "path", description = "The name of the table in which the segment resides",
+      @Parameter(name = "tableName", in = "path", description = "The table name in which the segment resides",
           required = true) String tableName,
       @Parameter(name = "segmentName", in = "path", description = "The name of the segment to delete",
-          required = true) String segmentName)
+          required = true) String segmentName,
+      @Parameter(name = "type", in = "query", description = "Type of table {offline|realtime}",
+          required = true) String tableType)
       throws JsonProcessingException, JSONException {
 
-    return new PinotSegmentRestletResource().toggleSegmentState(tableName, segmentName, "drop", null);
+    Validate.isTrue(!StringUtils.containsIgnoreCase(tableName, "_OFFLINE") && !StringUtils.containsIgnoreCase(tableName, "_REALTIME"));
+    Validate.notNull(tableType, "tableType can't be null");
+    return new PinotSegmentRestletResource().toggleSegmentState(tableName, segmentName, "drop", tableType);
   }
 
   @HttpVerb("delete")
@@ -569,11 +600,15 @@ public class PinotSegmentUploadRestletResource extends BasePinotControllerRestle
   @Tags({"segment", "table"})
   @Paths({ "/segments/{tableName}", "/segments/{tableName}/" })
   private Representation deleteAllSegments(
-      @Parameter(name = "tableName", in = "path", description = "The name of the table in which the segment resides",
-          required = true) String tableName)
+      @Parameter(name = "tableName", in = "path", description = "The table name in which the segment resides",
+          required = true) String tableName,
+      @Parameter(name = "type", in = "query", description = "Type of table {offline|realtime}",
+      required = true) String tableType)
       throws JsonProcessingException, JSONException {
 
-    return new PinotSegmentRestletResource().toggleSegmentState(tableName, null, "drop", null);
+    Validate.isTrue(!StringUtils.containsIgnoreCase(tableName, "_OFFLINE") && !StringUtils.containsIgnoreCase(tableName, "_REALTIME"), "Invaild table name");
+    Validate.notNull(tableType, "tableType can't be null");
+    return new PinotSegmentRestletResource().toggleSegmentState(tableName, null, StateType.DROP.toString(), tableType);
   }
 
   /**
@@ -582,13 +617,12 @@ public class PinotSegmentUploadRestletResource extends BasePinotControllerRestle
    *                    segmentFile must exist on disk and must be a directory
    * @param metadata segment metadata. This should not be null
    */
-  private StorageQuotaChecker.QuotaCheckerResponse checkStorageQuota(@Nonnull File segmentFile, @Nonnull SegmentMetadata metadata,
-      @Nonnull OfflineTableConfig offlineTableConfig) {
-    TableSizeReader tableSizeReader = new TableSizeReader(executor, connectionManager, _pinotHelixResourceManager);
+  private StorageQuotaChecker.QuotaCheckerResponse checkStorageQuota(@Nonnull File segmentFile,
+      @Nonnull SegmentMetadata metadata, @Nonnull TableConfig offlineTableConfig) {
+    TableSizeReader tableSizeReader = new TableSizeReader(_executor, _connectionManager, _pinotHelixResourceManager);
     StorageQuotaChecker quotaChecker = new StorageQuotaChecker(offlineTableConfig, tableSizeReader);
-    String offlineTableName = TableNameBuilder.OFFLINE_TABLE_NAME_BUILDER.forTable(metadata.getTableName());
-    return quotaChecker.isSegmentStorageWithinQuota(segmentFile, offlineTableName,
-        metadata.getName(), _controllerConf.getServerAdminRequestTimeoutSeconds() * 1000);
+    String offlineTableName = TableNameBuilder.OFFLINE.tableNameWithType(metadata.getTableName());
+    return quotaChecker.isSegmentStorageWithinQuota(segmentFile, offlineTableName, metadata.getName(),
+        _controllerConf.getServerAdminRequestTimeoutSeconds() * 1000);
   }
-
 }

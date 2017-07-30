@@ -1,20 +1,16 @@
 package com.linkedin.thirdeye.anomaly.task;
 
 import com.linkedin.thirdeye.anomaly.ThirdEyeAnomalyConfiguration;
-import com.linkedin.thirdeye.datalayer.bao.JobManager;
-import com.linkedin.thirdeye.datalayer.bao.MergedAnomalyResultManager;
-import com.linkedin.thirdeye.datalayer.bao.RawAnomalyResultManager;
-import com.linkedin.thirdeye.datalayer.bao.TaskManager;
+import com.linkedin.thirdeye.anomaly.classification.classifier.AnomalyClassifierFactory;
+import com.linkedin.thirdeye.detector.email.filter.AlertFilterFactory;
 import com.linkedin.thirdeye.detector.function.AnomalyFunctionFactory;
 
 public class TaskContext {
 
-  private JobManager anomalyJobDAO;
-  private TaskManager anomalyTaskDAO;
-  private RawAnomalyResultManager resultDAO;
-  private MergedAnomalyResultManager mergedResultDAO;
-  private AnomalyFunctionFactory anomalyFunctionFactory;
   private ThirdEyeAnomalyConfiguration thirdEyeAnomalyConfiguration;
+  private AnomalyFunctionFactory anomalyFunctionFactory;
+  private AlertFilterFactory alertFilterFactory;
+  private AnomalyClassifierFactory anomalyClassifierFactory;
 
   public ThirdEyeAnomalyConfiguration getThirdEyeAnomalyConfiguration() {
     return thirdEyeAnomalyConfiguration;
@@ -25,30 +21,6 @@ public class TaskContext {
     this.thirdEyeAnomalyConfiguration = thirdEyeAnomalyConfiguration;
   }
 
-  public JobManager getAnomalyJobDAO() {
-    return anomalyJobDAO;
-  }
-
-  public void setAnomalyJobDAO(JobManager anomalyJobDAO) {
-    this.anomalyJobDAO = anomalyJobDAO;
-  }
-
-  public TaskManager getAnomalyTaskDAO() {
-    return anomalyTaskDAO;
-  }
-
-  public void setAnomalyTaskDAO(TaskManager anomalyTaskDAO) {
-    this.anomalyTaskDAO = anomalyTaskDAO;
-  }
-
-  public RawAnomalyResultManager getResultDAO() {
-    return resultDAO;
-  }
-
-  public void setResultDAO(RawAnomalyResultManager anomalyResultDAO) {
-    this.resultDAO = anomalyResultDAO;
-  }
-
   public AnomalyFunctionFactory getAnomalyFunctionFactory() {
     return anomalyFunctionFactory;
   }
@@ -57,11 +29,17 @@ public class TaskContext {
     this.anomalyFunctionFactory = anomalyFunctionFactory;
   }
 
-  public MergedAnomalyResultManager getMergedResultDAO() {
-    return mergedResultDAO;
+  public AlertFilterFactory getAlertFilterFactory(){ return  alertFilterFactory; }
+
+  public void setAlertFilterFactory(AlertFilterFactory alertFilterFactory){
+    this.alertFilterFactory = alertFilterFactory;
   }
 
-  public void setMergedResultDAO(MergedAnomalyResultManager mergedResultDAO) {
-    this.mergedResultDAO = mergedResultDAO;
+  public AnomalyClassifierFactory getAnomalyClassifierFactory() {
+    return anomalyClassifierFactory;
+  }
+
+  public void setAnomalyClassifierFactory(AnomalyClassifierFactory anomalyClassifierFactory) {
+    this.anomalyClassifierFactory = anomalyClassifierFactory;
   }
 }

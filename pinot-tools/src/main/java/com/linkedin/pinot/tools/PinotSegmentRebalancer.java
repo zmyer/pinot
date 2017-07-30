@@ -15,53 +15,40 @@
  */
 package com.linkedin.pinot.tools;
 
-import java.io.StringWriter;
+import com.google.common.collect.Lists;
+import com.linkedin.pinot.common.config.TableConfig;
+import com.linkedin.pinot.common.config.TableNameBuilder;
+import com.linkedin.pinot.common.metadata.ZKMetadataProvider;
+import com.linkedin.pinot.common.utils.CommonConstants.Helix.TableType;
+import com.linkedin.pinot.common.utils.EqualityUtils;
+import com.linkedin.pinot.common.utils.helix.HelixHelper;
+import com.linkedin.pinot.common.utils.retry.RetryPolicies;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.TreeMap;
-import org.apache.commons.math.stat.descriptive.DescriptiveStatistics;
-import org.apache.helix.PropertyPathConfig;
-import org.apache.helix.PropertyType;
+import javax.annotation.Nullable;
 import org.apache.helix.ZNRecord;
-import org.apache.helix.controller.strategy.AutoRebalanceStrategy;
-import org.apache.helix.manager.zk.ZKHelixAdmin;
-import org.apache.helix.manager.zk.ZNRecordSerializer;
+import org.apache.helix.controller.rebalancer.strategy.AutoRebalanceStrategy;
+import org.apache.helix.controller.stages.ClusterDataCache;
 import org.apache.helix.model.ExternalView;
 import org.apache.helix.model.IdealState;
-import org.apache.helix.store.zk.ZkHelixPropertyStore;
 import org.apache.zookeeper.data.Stat;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.common.collect.Lists;
-import com.linkedin.pinot.common.config.AbstractTableConfig;
-import com.linkedin.pinot.common.config.TableNameBuilder;
-import com.linkedin.pinot.common.utils.CommonConstants.Helix.TableType;
-import com.linkedin.pinot.common.utils.EqualityUtils;
 
 
-public class PinotSegmentRebalancer {
+public class PinotSegmentRebalancer extends PinotZKChanger {
   private static final Logger LOGGER = LoggerFactory.getLogger(PinotSegmentRebalancer.class);
   static final String rebalanceTableCmd = "rebalanceTable";
   static final String rebalanceTenantCmd = "rebalanceTenant";
 
-  private ZKHelixAdmin helixAdmin;
-  private String clusterName;
-  private ZkHelixPropertyStore<ZNRecord> propertyStore;
-  private ObjectMapper objectMapper;
   private boolean dryRun = true;
 
   public PinotSegmentRebalancer(String zkAddress, String clusterName, boolean dryRun) {
-    this.clusterName = clusterName;
-    helixAdmin = new ZKHelixAdmin(zkAddress);
-    ZNRecordSerializer serializer = new ZNRecordSerializer();
-    String path = PropertyPathConfig.getPath(PropertyType.PROPERTYSTORE, clusterName);
-    propertyStore = new ZkHelixPropertyStore<>(zkAddress, serializer, path);
-    objectMapper = new ObjectMapper();
+    super(zkAddress, clusterName);
     this.dryRun = dryRun;
   }
 
@@ -101,7 +88,13 @@ public class PinotSegmentRebalancer {
     String rawTenantName = tenantName.replaceAll("_OFFLINE", "").replace("_REALTIME", "");
     int nRebalances = 0;
     for (ZNRecord znRecord : tableConfigs) {
-      AbstractTableConfig tableConfig = AbstractTableConfig.fromZnRecord(znRecord);
+      TableConfig tableConfig;
+      try {
+        tableConfig = TableConfig.fromZnRecord(znRecord);
+      } catch (Exception e) {
+        LOGGER.warn("Failed to parse table configuration for ZnRecord id: {}. Skipping", znRecord.getId());
+        continue;
+      }
       if (tableConfig.getTenantConfig().getServer().equals(rawTenantName)) {
         LOGGER.info(tableConfig.getTableName() + ":" + tableConfig.getTenantConfig().getServer());
         nRebalances++;
@@ -122,7 +115,7 @@ public class PinotSegmentRebalancer {
     String tableConfigPath = "/CONFIGS/TABLE/" + tableName;
     Stat stat = new Stat();
     ZNRecord znRecord = propertyStore.get(tableConfigPath, stat, 0);
-    AbstractTableConfig tableConfig = AbstractTableConfig.fromZnRecord(znRecord);
+    TableConfig tableConfig = TableConfig.fromZnRecord(znRecord);
     String tenantName = tableConfig.getTenantConfig().getServer().replaceAll(TableType.OFFLINE.toString(), "")
         .replace(TableType.OFFLINE.toString(), "");
     rebalanceTable(tableName, tenantName);
@@ -145,8 +138,21 @@ public class PinotSegmentRebalancer {
     IdealState currentIdealState = helixAdmin.getResourceIdealState(clusterName, tableName);
     List<String> partitions = Lists.newArrayList(currentIdealState.getPartitionSet());
     LinkedHashMap<String, Integer> states = new LinkedHashMap<>();
+    int numReplicasInIdealState = Integer.parseInt(currentIdealState.getReplicas());
+    final TableConfig offlineTableConfig = ZKMetadataProvider.getOfflineTableConfig(propertyStore, tableName);
+    final int numReplicasInTableConfig = Integer.parseInt(offlineTableConfig.getValidationConfig().getReplication());
+
+    final int targetNumReplicas = numReplicasInTableConfig;
+    if (numReplicasInTableConfig < numReplicasInIdealState) {
+      // AutoRebalanceStrategy,computePartitionAssignment works correctly if we increase the number of partitions,
+      // but not if we decrease it. We need to use the PinotNumReplicaChanger to reduce the number of replicas.
+      LOGGER.info("You first need to reduce the number of replicas from {} to {} for table {}. Use the ChangeNumReplicas command",
+          numReplicasInIdealState, numReplicasInTableConfig, tableName);
+      return;
+    }
+
     states.put("OFFLINE", 0);
-    states.put("ONLINE", Integer.parseInt(currentIdealState.getReplicas()));
+    states.put("ONLINE", targetNumReplicas);
     Map<String, Map<String, String>> mapFields = currentIdealState.getRecord().getMapFields();
     Set<String> currentHosts = new HashSet<>();
     for (String segment : mapFields.keySet()) {
@@ -154,14 +160,17 @@ public class PinotSegmentRebalancer {
     }
     AutoRebalanceStrategy rebalanceStrategy = new AutoRebalanceStrategy(tableName, partitions, states);
 
-    TableNameBuilder builder = new TableNameBuilder(tableType);
-    List<String> instancesInClusterWithTag = helixAdmin.getInstancesInClusterWithTag(clusterName, builder.forTable(tenantName));
-    LOGGER.info("Current: Nodes:" + currentHosts);
-    LOGGER.info("New Nodes:" + instancesInClusterWithTag);
+    String serverTenant = TableNameBuilder.forType(tableType).tableNameWithType(tenantName);
+    List<String> instancesInClusterWithTag = helixAdmin.getInstancesInClusterWithTag(clusterName, serverTenant);
+    List<String> enabledInstancesWithTag =
+        HelixHelper.getEnabledInstancesWithTag(helixAdmin, clusterName, serverTenant);
+    LOGGER.info("Current nodes: {}", currentHosts);
+    LOGGER.info("New nodes: {}", instancesInClusterWithTag);
+    LOGGER.info("Enabled nodes: {}", enabledInstancesWithTag);
     Map<String, Map<String, String>> currentMapping = currentIdealState.getRecord().getMapFields();
     ZNRecord newZnRecord = rebalanceStrategy
-        .computePartitionAssignment(instancesInClusterWithTag, currentMapping, instancesInClusterWithTag);
-    Map<String, Map<String, String>> newMapping = newZnRecord.getMapFields();
+        .computePartitionAssignment(instancesInClusterWithTag, enabledInstancesWithTag, currentMapping, new ClusterDataCache());
+    final Map<String, Map<String, String>> newMapping = newZnRecord.getMapFields();
     LOGGER.info("Current segment Assignment:");
     printSegmentAssignment(currentMapping);
     LOGGER.info("Final segment Assignment:");
@@ -170,49 +179,26 @@ public class PinotSegmentRebalancer {
       if (EqualityUtils.isEqual(newMapping, currentMapping)) {
         LOGGER.info("Skipping rebalancing for table:" + tableName + " since its already balanced");
       } else {
-        IdealState updatedIdealState = new IdealState(currentIdealState.getRecord());
-        updatedIdealState.getRecord().setMapFields(newMapping);
-        LOGGER.info("Updating the idealstate for table:" + tableName);
-        helixAdmin.setResourceIdealState(clusterName, tableName, updatedIdealState);
-        int diff = Integer.MAX_VALUE;
-        Thread.sleep(3000);
-        do {
-          diff = isStable(tableName);
-          if (diff == 0) {
-            break;
-          } else {
-            LOGGER.info(
-                "Waiting for externalView to match idealstate for table:" + tableName + " Num segments difference:" + diff);
-            Thread.sleep(30000);
-          }
-        } while (diff > 0);
+        HelixHelper.updateIdealState(helixManager, tableName,
+            new com.google.common.base.Function<IdealState, IdealState>() {
+              @Nullable
+              @Override
+              public IdealState apply(@Nullable IdealState idealState) {
+                for (String segmentId : newMapping.keySet()) {
+                  Map<String, String> instanceStateMap = newMapping.get(segmentId);
+
+                  idealState.getInstanceStateMap(segmentId).clear();
+                  for (String instanceId : instanceStateMap.keySet()) {
+                    idealState.setPartitionState(segmentId, instanceId, instanceStateMap.get(instanceId));
+                  }
+                }
+                return idealState;
+              }
+            }, RetryPolicies.exponentialBackoffRetryPolicy(5, 500L, 2.0f));
+        waitForStable(tableName);
         LOGGER.info("Successfully rebalanced table:" + tableName);
       }
     }
-  }
-
-  private void printSegmentAssignment(Map<String, Map<String, String>> mapping) throws Exception {
-    StringWriter sw = new StringWriter();
-    objectMapper.writerWithDefaultPrettyPrinter().writeValue(sw, mapping);
-    LOGGER.info(sw.toString());
-    Map<String, List<String>> serverToSegmentMapping = new TreeMap<>();
-    for (String segment : mapping.keySet()) {
-      Map<String, String> serverToStateMap = mapping.get(segment);
-      for (String server : serverToStateMap.keySet()) {
-        if (!serverToSegmentMapping.containsKey(server)) {
-          serverToSegmentMapping.put(server, new ArrayList<String>());
-        }
-        serverToSegmentMapping.get(server).add(segment);
-      }
-    }
-    DescriptiveStatistics stats = new DescriptiveStatistics();
-    for (String server : serverToSegmentMapping.keySet()) {
-      List<String> list = serverToSegmentMapping.get(server);
-      LOGGER.info("server " + server + " has " + list.size() + " segments");
-      stats.addValue(list.size());
-    }
-    LOGGER.info("Segment Distrbution stat");
-    LOGGER.info(stats.toString());
   }
 
   private static void usage() {

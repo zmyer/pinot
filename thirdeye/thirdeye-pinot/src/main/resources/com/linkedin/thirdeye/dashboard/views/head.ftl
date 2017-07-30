@@ -1,7 +1,6 @@
 <head>
     <title>ThirdEye Dashboard</title>
     <link rel="stylesheet" href="../../../assets/css/reset.css"/>
-    <!--<link rel="stylesheet" href="../../../assets/css/uikit/uikit.css"/>-->
     <link rel="stylesheet" href="../../../assets/css/uikit/uikit.almost-flat.min.css"/>
     <link rel="stylesheet" href="../../../assets/css/uikit/uikit.docs.min.css"/>
     <link rel="stylesheet" href="../../../assets/css/uikit/docs.css"/>
@@ -17,22 +16,14 @@
     <link rel="shortcut icon" href="/assets/img/chakra-s.png">
 
 
-    <!-- JQuery Google API -->
-    <script src="https://ajax.googleapis.com/ajax/libs/jquery/2.1.1/jquery.min.js"></script>
-
-    <!-- Fallback in case Google API was not available for the users browser -->
-    <script>
-        if (typeof jQuery === 'undefined') {
-            document.write(unescape('%3Cscript%20src%3D%22lib/jquery-1.10.2.min.js%22%3E%3C/script%3E'));
-        }
-    </script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/handlebars.js/4.0.5/handlebars.min.js"></script>
-	<script src="https://d3js.org/d3.v3.min.js" charset="utf-8"  defer></script>
+  <script src="../../../assets/lib/jquery.min.js"></script>
+  <script src="../../../assets/lib/handlebars.min.js"></script>
+	<script src="../../../assets/js/d3/d3.v3.min.js" charset="utf-8"  defer></script>
 	<script src="../../../assets/js/d3/nvtooltip.js"  defer></script>
 	<script src="../../../assets/js/d3/d3legend.js"  defer></script>
 	<script src="../../../assets/js/d3/d3line.js"  defer></script>
 	<script src="../../../assets/js/d3/d3linewithlegend.js"  defer></script>
-    <script src="../../../assets/js/c3/c3.js"  defer></script>
+  <script src="../../../assets/js/c3/c3.js"  defer></script>
 
     <!--Compiled JSTZ.min.js, Moment.min.js, DataTables 1.10.12, jquery.dataTables.columnFilter.min.js, moment-timezone-with-data-2010-2020.min.js into vendorplugins.compiled.js-->
    <script src="../../../assets/js/vendor/vendorplugins.compiled.js" defer></script>
@@ -46,8 +37,10 @@
     <script src="../../../assets/js/lib/tabular.js" defer></script>
     <script src="../../../assets/js/lib/contributors.js" defer></script>
     <script src="../../../assets/js/lib/heatmap.js" defer></script>
+
     <script src="../../../assets/js/lib/timeseries.js" defer></script>
     <script src="../../../assets/js/lib/anomalies.js" defer></script>
+    <script src="../../../assets/js/lib/anomaly-details.js" defer></script>
     <script src="../../../assets/js/lib/self-service.js" defer></script>
     <script src="../../../assets/js/lib/self-service-email.js" defer></script>
     <script src="../../../assets/js/lib/custom-dashboard.js" defer></script>
@@ -59,10 +52,5 @@
     <script src="../../../assets/js/lib/dashboard-form-submit.js" defer></script>
     <script src="../../../assets/js/lib/dashboard-chart-area.js" defer></script>
     <script src="../../../assets/js/dashboard.js" defer></script>
-    <script src="../../../assets/js/lib/self-service-email.js" defer></script>
-    <script src="../../../assets/js/lib/experiments.js" defer></script>
     <!-- Place new script files controlling the dahsboard above dashboard.js -->
-    <!-- JSON Editor comes here-->
-  <link rel="stylesheet" href="../../../assets/jsonedit/jsoneditor.min.css"/>
-  <script src="../../../assets/jsonedit/jsoneditor.min.js" defer></script>
 </head>

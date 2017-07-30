@@ -15,38 +15,6 @@
  */
 package com.linkedin.pinot.core.segment.creator.impl;
 
-import com.google.common.collect.HashBiMap;
-import com.linkedin.pinot.common.data.FieldSpec;
-import com.linkedin.pinot.common.data.MetricFieldSpec;
-import com.linkedin.pinot.common.data.Schema;
-import com.linkedin.pinot.common.data.StarTreeIndexSpec;
-import com.linkedin.pinot.common.utils.SegmentNameBuilder;
-import com.linkedin.pinot.core.data.GenericRow;
-import com.linkedin.pinot.core.data.extractors.FieldExtractorFactory;
-import com.linkedin.pinot.core.data.extractors.PlainFieldExtractor;
-import com.linkedin.pinot.core.data.readers.RecordReader;
-import com.linkedin.pinot.core.data.readers.RecordReaderFactory;
-import com.linkedin.pinot.core.indexsegment.generator.SegmentGeneratorConfig;
-import com.linkedin.pinot.core.segment.creator.AbstractColumnStatisticsCollector;
-import com.linkedin.pinot.core.segment.creator.ColumnIndexCreationInfo;
-import com.linkedin.pinot.core.segment.creator.ColumnStatistics;
-import com.linkedin.pinot.core.segment.creator.ForwardIndexType;
-import com.linkedin.pinot.core.segment.creator.InvertedIndexType;
-import com.linkedin.pinot.core.segment.creator.SegmentCreator;
-import com.linkedin.pinot.core.segment.creator.SegmentIndexCreationDriver;
-import com.linkedin.pinot.core.segment.creator.SegmentIndexCreationInfo;
-import com.linkedin.pinot.core.segment.creator.SegmentPreIndexStatsCollector;
-import com.linkedin.pinot.core.segment.creator.impl.stats.SegmentPreIndexStatsCollectorImpl;
-import com.linkedin.pinot.core.startree.OffHeapStarTreeBuilder;
-import com.linkedin.pinot.core.startree.StarTree;
-import com.linkedin.pinot.core.startree.StarTreeBuilder;
-import com.linkedin.pinot.core.startree.StarTreeBuilderConfig;
-import com.linkedin.pinot.core.startree.StarTreeIndexNode;
-import com.linkedin.pinot.core.startree.StarTreeIndexNodeInterf;
-import com.linkedin.pinot.core.startree.StarTreeSerDe;
-import com.linkedin.pinot.core.startree.hll.HllConfig;
-import com.linkedin.pinot.core.startree.hll.HllUtil;
-import com.linkedin.pinot.core.util.CrcUtils;
 import java.io.DataOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
@@ -60,9 +28,48 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
 import org.apache.commons.io.FileUtils;
-import org.apache.commons.lang.mutable.MutableLong;
+import org.joda.time.DateTime;
+import org.joda.time.format.DateTimeFormat;
+import org.joda.time.format.DateTimeFormatter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import com.google.common.collect.HashBiMap;
+import com.linkedin.pinot.common.data.FieldSpec;
+import com.linkedin.pinot.common.data.MetricFieldSpec;
+import com.linkedin.pinot.common.data.Schema;
+import com.linkedin.pinot.common.data.StarTreeIndexSpec;
+import com.linkedin.pinot.core.data.GenericRow;
+import com.linkedin.pinot.core.data.extractors.FieldExtractorFactory;
+import com.linkedin.pinot.core.data.extractors.PlainFieldExtractor;
+import com.linkedin.pinot.core.data.readers.RecordReader;
+import com.linkedin.pinot.core.data.readers.RecordReaderFactory;
+import com.linkedin.pinot.core.indexsegment.generator.SegmentGeneratorConfig;
+import com.linkedin.pinot.core.indexsegment.generator.SegmentVersion;
+import com.linkedin.pinot.core.segment.creator.ColumnIndexCreationInfo;
+import com.linkedin.pinot.core.segment.creator.ColumnStatistics;
+import com.linkedin.pinot.core.segment.creator.ForwardIndexType;
+import com.linkedin.pinot.core.segment.creator.InvertedIndexType;
+import com.linkedin.pinot.core.segment.creator.RecordReaderSegmentCreationDataSource;
+import com.linkedin.pinot.core.segment.creator.SegmentCreationDataSource;
+import com.linkedin.pinot.core.segment.creator.SegmentCreator;
+import com.linkedin.pinot.core.segment.creator.SegmentIndexCreationDriver;
+import com.linkedin.pinot.core.segment.creator.SegmentIndexCreationInfo;
+import com.linkedin.pinot.core.segment.creator.SegmentPreIndexStatsContainer;
+import com.linkedin.pinot.core.segment.creator.StatsCollectorConfig;
+import com.linkedin.pinot.core.segment.creator.impl.stats.SegmentPreIndexStatsCollectorImpl;
+import com.linkedin.pinot.core.segment.index.converter.SegmentFormatConverter;
+import com.linkedin.pinot.core.segment.index.converter.SegmentFormatConverterFactory;
+import com.linkedin.pinot.core.startree.OffHeapStarTreeBuilder;
+import com.linkedin.pinot.core.startree.StarTree;
+import com.linkedin.pinot.core.startree.StarTreeBuilder;
+import com.linkedin.pinot.core.startree.StarTreeBuilderConfig;
+import com.linkedin.pinot.core.startree.StarTreeIndexNode;
+import com.linkedin.pinot.core.startree.StarTreeIndexNodeInterf;
+import com.linkedin.pinot.core.startree.StarTreeSerDe;
+import com.linkedin.pinot.core.startree.hll.HllConfig;
+import com.linkedin.pinot.core.startree.hll.HllUtil;
+import com.linkedin.pinot.core.util.CrcUtils;
+
 
 /**
  * Implementation of an index segment creator.
@@ -72,59 +79,70 @@ public class SegmentIndexCreationDriverImpl implements SegmentIndexCreationDrive
 
   private static final Logger LOGGER = LoggerFactory.getLogger(SegmentIndexCreationDriverImpl.class);
 
-  SegmentGeneratorConfig config;
-  RecordReader recordReader;
-  SegmentPreIndexStatsCollector statsCollector;
-  Map<String, ColumnIndexCreationInfo> indexCreationInfoMap;
-  SegmentCreator indexCreator;
-  SegmentIndexCreationInfo segmentIndexCreationInfo;
-  Schema dataSchema;
-  PlainFieldExtractor extractor;
-  int totalDocs = 0;
-  int totalRawDocs = 0;
-  int totalAggDocs = 0;
-  File tempIndexDir;
-  String segmentName;
-  long totalRecordReadTime = 0;
-  long totalIndexTime = 0;
-  long totalStatsCollectorTime = 0;
-  boolean createStarTree = false;
-  boolean enableHllIndex = false;
+  private SegmentGeneratorConfig config;
+  private RecordReader recordReader;
+  private SegmentPreIndexStatsContainer segmentStats;
+  private Map<String, ColumnIndexCreationInfo> indexCreationInfoMap;
+  private SegmentCreator indexCreator;
+  private SegmentIndexCreationInfo segmentIndexCreationInfo;
+  private Schema dataSchema;
+  private PlainFieldExtractor extractor;
+  private int totalDocs = 0;
+  private int totalRawDocs = 0;
+  private int totalAggDocs = 0;
+  private File tempIndexDir;
+  private String segmentName;
+  private long totalRecordReadTime = 0;
+  private long totalIndexTime = 0;
+  private long totalStatsCollectorTime = 0;
+  private boolean createStarTree = false;
+  // flag indicates if the this segment generator code
+  // will create the HLL index for the given columns.
+  // This will be false if HLL column is provided to us
+  private boolean createHllIndex = false;
 
   private File starTreeTempDir;
 
   @Override
   public void init(SegmentGeneratorConfig config) throws Exception {
-    init(config, RecordReaderFactory.get(config));
+    init(config, new RecordReaderSegmentCreationDataSource(RecordReaderFactory.get(config)));
   }
 
-  public void init(SegmentGeneratorConfig config, RecordReader reader) throws Exception {
+  public void init(SegmentGeneratorConfig config, SegmentCreationDataSource dataSource) throws Exception {
     this.config = config;
     this.createStarTree = config.isEnableStarTreeIndex();
-    // Initialize the record reader
-    recordReader = reader;
-    recordReader.init();
+    recordReader = dataSource.getRecordReader();
     dataSchema = recordReader.getSchema();
 
     if (config.getHllConfig() != null) {
-      if (!createStarTree) {
-        throw new IllegalArgumentException("Derived HLL fields generation will not work if StarTree is not enabled.");
-      } else {
-        enableHllIndex = true;
-      }
+      HllConfig hllConfig = config.getHllConfig();
+      // create hll index is true only if we're provided with columns to
+      // generate HLL fields
+      if (hllConfig.getColumnsToDeriveHllFields() != null && !hllConfig.getColumnsToDeriveHllFields().isEmpty()) {
+        if (!createStarTree) {
+          throw new IllegalArgumentException("Derived HLL fields generation will not work if StarTree is not enabled.");
+        } else {
+          createHllIndex = true;
+        }
+      } // else columnsToDeriveHllFields is null...don't do anything in this case
+      // segment seal() will write the log2m value to the metadata
     }
 
     addDerivedFieldsInSchema();
 
-    extractor = (PlainFieldExtractor) FieldExtractorFactory.getPlainFieldExtractor(dataSchema);
+    extractor = FieldExtractorFactory.getPlainFieldExtractor(dataSchema);
 
     // Initialize stats collection
-    statsCollector = new SegmentPreIndexStatsCollectorImpl(recordReader.getSchema());
-    statsCollector.init();
+    if (!createStarTree) { // For star tree, the stats are gathered in buildStarTree()
+      segmentStats = dataSource.gatherStats(new StatsCollectorConfig(dataSchema, config.getSegmentPartitionConfig()));
+      totalDocs = segmentStats.getTotalDocCount();
+      totalRawDocs = segmentStats.getRawDocCount();
+      totalAggDocs = segmentStats.getAggregatedDocCount();
+    }
 
     // Initialize index creation
     segmentIndexCreationInfo = new SegmentIndexCreationInfo();
-    indexCreationInfoMap = new HashMap<String, ColumnIndexCreationInfo>();
+    indexCreationInfoMap = new HashMap<>();
 
     // Check if has star tree
     indexCreator = new SegmentColumnarIndexCreator();
@@ -134,6 +152,7 @@ public class SegmentIndexCreationDriverImpl implements SegmentIndexCreationDrive
     if (!indexDir.exists()) {
       indexDir.mkdirs();
     }
+
     // Create a temporary directory used in segment creation
     tempIndexDir = new File(indexDir, com.linkedin.pinot.common.utils.FileUtils.getRandomFileName());
     starTreeTempDir = new File(indexDir, com.linkedin.pinot.common.utils.FileUtils.getRandomFileName());
@@ -141,8 +160,12 @@ public class SegmentIndexCreationDriverImpl implements SegmentIndexCreationDrive
     LOGGER.debug("starTreeTempDir:{}", starTreeTempDir);
   }
 
+  public void init(SegmentGeneratorConfig config, RecordReader reader) throws Exception {
+    init(config, new RecordReaderSegmentCreationDataSource(reader));
+  }
+
   private void addDerivedFieldsInSchema() {
-    if (enableHllIndex) {
+    if (createHllIndex) {
       Collection<String> columnNames = dataSchema.getColumnNames();
       HllConfig hllConfig = config.getHllConfig();
       for (String derivedFieldName : hllConfig.getDerivedHllFieldToOriginMap().keySet()) {
@@ -158,10 +181,9 @@ public class SegmentIndexCreationDriverImpl implements SegmentIndexCreationDrive
     }
   }
 
-  private void populateDefaultDerivedColumnValues(GenericRow row)
-      throws IOException {
+  private void populateDefaultDerivedColumnValues(GenericRow row) throws IOException {
     //add default hll value in each row
-    if (enableHllIndex) {
+    if (createHllIndex) {
       HllConfig hllConfig = config.getHllConfig();
       for (Entry<String, String> entry : hllConfig.getDerivedHllFieldToOriginMap().entrySet()) {
         String derivedFieldName = entry.getKey();
@@ -181,7 +203,13 @@ public class SegmentIndexCreationDriverImpl implements SegmentIndexCreationDrive
     }
   }
 
-  public void buildStarTree() throws Exception {
+  private void buildStarTree() throws Exception {
+    // Create stats collector
+    StatsCollectorConfig statsCollectorConfig = new StatsCollectorConfig(dataSchema, config.getSegmentPartitionConfig());
+    SegmentPreIndexStatsCollectorImpl statsCollector = new SegmentPreIndexStatsCollectorImpl(statsCollectorConfig);
+    statsCollector.init();
+    segmentStats = statsCollector;
+
     long start = System.currentTimeMillis();
     //construct star tree builder config
     StarTreeIndexSpec starTreeIndexSpec = config.getStarTreeIndexSpec();
@@ -192,7 +220,7 @@ public class SegmentIndexCreationDriverImpl implements SegmentIndexCreationDrive
     }
     List<String> dimensionsSplitOrder = starTreeIndexSpec.getDimensionsSplitOrder();
     if (dimensionsSplitOrder != null && !dimensionsSplitOrder.isEmpty()) {
-      String timeColumnName = config.getTimeColumnName();
+      final String timeColumnName = config.getTimeColumnName();
       if (timeColumnName != null) {
         dimensionsSplitOrder.remove(timeColumnName);
       }
@@ -202,10 +230,12 @@ public class SegmentIndexCreationDriverImpl implements SegmentIndexCreationDrive
     starTreeBuilderConfig.setSchema(dataSchema);
     starTreeBuilderConfig.setDimensionsSplitOrder(dimensionsSplitOrder);
     starTreeBuilderConfig.setMaxLeafRecords(starTreeIndexSpec.getMaxLeafRecords());
-    starTreeBuilderConfig.setSkipStarNodeCreationForDimensions(starTreeIndexSpec.getSkipStarNodeCreationForDimensions());
+    starTreeBuilderConfig.setSkipStarNodeCreationForDimensions(
+        starTreeIndexSpec.getSkipStarNodeCreationForDimensions());
     Set<String> skipMaterializationForDimensions = starTreeIndexSpec.getskipMaterializationForDimensions();
     starTreeBuilderConfig.setSkipMaterializationForDimensions(skipMaterializationForDimensions);
-    starTreeBuilderConfig.setSkipMaterializationCardinalityThreshold(starTreeIndexSpec.getskipMaterializationCardinalityThreshold());
+    starTreeBuilderConfig.setSkipMaterializationCardinalityThreshold(
+        starTreeIndexSpec.getskipMaterializationCardinalityThreshold());
     starTreeBuilderConfig.setOutDir(starTreeTempDir);
 
     boolean enableOffHeapFormat = starTreeIndexSpec.isEnableOffHeapFormat();
@@ -218,13 +248,15 @@ public class SegmentIndexCreationDriverImpl implements SegmentIndexCreationDrive
     recordReader.rewind();
     LOGGER.info("Start append raw data to star tree builder!");
     totalDocs = 0;
+    GenericRow readRow = new GenericRow();
+    GenericRow transformedRow = new GenericRow();
     while (recordReader.hasNext()) {
       //PlainFieldExtractor conducts necessary type conversions
-      GenericRow row = readNextRowSanitized();
+      transformedRow = readNextRowSanitized(readRow, transformedRow);
       //must be called after previous step since type conversion for derived values is unnecessary
-      populateDefaultDerivedColumnValues(row);
-      starTreeBuilder.append(row);
-      statsCollector.collectRow(row);
+      populateDefaultDerivedColumnValues(transformedRow);
+      starTreeBuilder.append(transformedRow);
+      statsCollector.collectRow(transformedRow);
       totalRawDocs++;
       totalDocs++;
     }
@@ -244,6 +276,7 @@ public class SegmentIndexCreationDriverImpl implements SegmentIndexCreationDrive
       totalAggDocs++;
       totalDocs++;
     }
+    statsCollector.build();
     buildIndexCreationInfo();
     LOGGER.info("Collected stats for {} raw documents, {} aggregated documents", totalRawDocs, totalAggDocs);
     long statCollectionFinishTime = System.currentTimeMillis();
@@ -279,7 +312,8 @@ public class SegmentIndexCreationDriverImpl implements SegmentIndexCreationDrive
         end - statCollectionFinishTime);
   }
 
-  private void serializeTree(StarTreeBuilder starTreeBuilder, boolean enableOffHeapFormat) throws Exception {
+  private void serializeTree(StarTreeBuilder starTreeBuilder, boolean enableOffHeapFormat)
+      throws Exception {
     //star tree was built using its own dictionary, we need to re-map dimension value id
     Map<String, HashBiMap<Object, Integer>> dictionaryMap = starTreeBuilder.getDictionaryMap();
     StarTree tree = starTreeBuilder.getTree();
@@ -327,8 +361,8 @@ public class SegmentIndexCreationDriverImpl implements SegmentIndexCreationDrive
         int childDimValue = child.getDimensionValue();
         int childMappedDimValue = StarTreeIndexNodeInterf.ALL;
         if (childDimValue != StarTreeIndexNodeInterf.ALL) {
-          childMappedDimValue = searchValueInArray(sortedValuesForDim,
-              dictionaryMap.get(childDimName).inverse().get(childDimValue));
+          childMappedDimValue =
+              searchValueInArray(sortedValuesForDim, dictionaryMap.get(childDimName).inverse().get(childDimValue));
         }
         newChildren.put(childMappedDimValue, child);
         updateTree(child, dictionaryMap, dimensionNameToIndexMap);
@@ -337,21 +371,10 @@ public class SegmentIndexCreationDriverImpl implements SegmentIndexCreationDrive
     }
   }
 
-  public void buildRaw() throws Exception {
+  private void buildRaw()
+      throws Exception {
     // Count the number of documents and gather per-column statistics
     LOGGER.debug("Start building StatsCollector!");
-    totalDocs = 0;
-    while (recordReader.hasNext()) {
-      totalDocs++;
-      totalRawDocs++;
-      long start = System.currentTimeMillis();
-      GenericRow row = readNextRowSanitized();
-      long stop = System.currentTimeMillis();
-      statsCollector.collectRow(row);
-      long stop1 = System.currentTimeMillis();
-      totalRecordReadTime += (stop - start);
-      totalStatsCollectorTime += (stop1 - stop);
-    }
     buildIndexCreationInfo();
     LOGGER.info("Finished building StatsCollector!");
     LOGGER.info("Collected stats for {} documents", totalDocs);
@@ -362,11 +385,13 @@ public class SegmentIndexCreationDriverImpl implements SegmentIndexCreationDrive
     // Build the index
     recordReader.rewind();
     LOGGER.info("Start building IndexCreator!");
+    GenericRow readRow = new GenericRow();
+    GenericRow transformedRow = new GenericRow();
     while (recordReader.hasNext()) {
       long start = System.currentTimeMillis();
-      GenericRow row = readNextRowSanitized();
+      transformedRow = readNextRowSanitized(readRow, transformedRow);
       long stop = System.currentTimeMillis();
-      indexCreator.indexRow(row);
+      indexCreator.indexRow(transformedRow);
       long stop1 = System.currentTimeMillis();
       totalRecordReadTime += (stop - start);
       totalIndexTime += (stop1 - stop);
@@ -397,22 +422,11 @@ public class SegmentIndexCreationDriverImpl implements SegmentIndexCreationDrive
     handlePostCreation();
   }
 
-  private void handlePostCreation() throws Exception {
-    // Build the segment name, if necessary
+  private void handlePostCreation()
+      throws Exception {
     final String timeColumn = config.getTimeColumnName();
-
-    if (config.getSegmentName() != null) {
-      segmentName = config.getSegmentName();
-    } else {
-      if (timeColumn != null && timeColumn.length() > 0) {
-        final Object minTimeValue = statsCollector.getColumnProfileFor(timeColumn).getMinValue();
-        final Object maxTimeValue = statsCollector.getColumnProfileFor(timeColumn).getMaxValue();
-        segmentName = SegmentNameBuilder.buildBasic(config.getTableName(), minTimeValue, maxTimeValue,
-            config.getSegmentNamePostfix());
-      } else {
-        segmentName = SegmentNameBuilder.buildBasic(config.getTableName(), config.getSegmentNamePostfix());
-      }
-    }
+    segmentName = config.getSegmentNameGenerator().generateSegmentName(segmentStats.getColumnProfileFor(timeColumn));
+    updateSegmentStartEndTimeIfNecessary(segmentStats.getColumnProfileFor(timeColumn));
 
     // Write the index files to disk
     indexCreator.setSegmentName(segmentName);
@@ -437,22 +451,71 @@ public class SegmentIndexCreationDriverImpl implements SegmentIndexCreationDrive
 
     // Persist creation metadata to disk
     persistCreationMeta(segmentOutputDir, crc);
-    Map<String, MutableLong> nullCountMap = recordReader.getNullCountMap();
-    if (nullCountMap != null) {
-      for (Map.Entry<String, MutableLong> entry : nullCountMap.entrySet()) {
-        AbstractColumnStatisticsCollector columnStatisticsCollector =
-            statsCollector.getColumnProfileFor(entry.getKey());
-        columnStatisticsCollector.setNumInputNullValues(entry.getValue().intValue());
-      }
-    }
 
+    convertFormatIfNeeded(segmentOutputDir);
     LOGGER.info("Driver, record read time : {}", totalRecordReadTime);
     LOGGER.info("Driver, stats collector time : {}", totalStatsCollectorTime);
     LOGGER.info("Driver, indexing time : {}", totalIndexTime);
   }
 
-  public ColumnStatistics getColumnStatisticsCollector(final String columnName) throws Exception {
-    return statsCollector.getColumnProfileFor(columnName);
+  private void updateSegmentStartEndTimeIfNecessary(ColumnStatistics timeColumnStats) {
+    switch (config.getTimeColumnType()) {
+      case EPOCH:
+        break;
+      case SIMPLE_DATE:
+        long startTime = convertStartTimeSDFToMillis(timeColumnStats);
+        config.getCustomProperties().put(V1Constants.MetadataKeys.Segment.SEGMENT_START_TIME, String.valueOf(startTime));
+        long endTime = convertEndTimeSDFToMillis(timeColumnStats);
+        config.getCustomProperties().put(V1Constants.MetadataKeys.Segment.SEGMENT_END_TIME, String.valueOf(endTime));
+        break;
+    }
+  }
+
+  public long convertStartTimeSDFToMillis(ColumnStatistics timeColumnStats) {
+    final String minTimeStr = timeColumnStats.getMinValue().toString();
+    return convertSDFToMillis(minTimeStr);
+  }
+
+  public long convertEndTimeSDFToMillis(ColumnStatistics timeColumnStats) {
+    final String maxTimeStr = timeColumnStats.getMaxValue().toString();
+    return convertSDFToMillis(maxTimeStr);
+  }
+
+  private long convertSDFToMillis(final String colValue) {
+    final String sdfFormatStr = config.getSimpleDateFormat();
+    DateTimeFormatter sdfFormatter = DateTimeFormat.forPattern(sdfFormatStr);
+    DateTime dateTime = DateTime.parse(colValue, sdfFormatter);
+    return dateTime.getMillis();
+  }
+
+  // Explanation of why we are using format converter:
+  // There are 3 options to correctly generate segments to v3 format
+  // 1. Generate v3 directly: This is efficient but v3 index writer needs to know buffer size upfront.
+  // Inverted, star and raw indexes don't have the index size upfront. This is also least flexible approach
+  // if we add more indexes in future.
+  // 2. Hold data in-memory: One way to work around predeclaring sizes in (1) is to allocate "large" buffer (2GB?)
+  // and hold the data in memory and write the buffer at the end. The memory requirement in this case increases linearly
+  // with the number of columns. Variation of that is to mmap data to separate files...which is what we are doing here
+  // 3. Another option is to generate dictionary and fwd indexes in v3 and generate inverted, star and raw indexes in
+  // separate files. Then add those files to v3 index file. This leads to lot of hodgepodge code to
+  // handle multiple segment formats.
+  // Using converter is similar to option (2), plus it's battle-tested code. We will roll out with
+  // this change to keep changes limited. Once we've migrated we can implement approach (1) with option to
+  // copy for indexes for which we don't know sizes upfront.
+  private void convertFormatIfNeeded(File segmentDirectory)
+      throws Exception {
+    SegmentVersion versionToGenerate = config.getSegmentVersion();
+    if (versionToGenerate.equals(SegmentVersion.v1)) {
+      // v1 by default
+      return;
+    }
+    SegmentFormatConverter converter = SegmentFormatConverterFactory.getConverter(SegmentVersion.v1, SegmentVersion.v3);
+    converter.convert(segmentDirectory);
+  }
+
+  public ColumnStatistics getColumnStatisticsCollector(final String columnName)
+      throws Exception {
+    return segmentStats.getColumnProfileFor(columnName);
   }
 
   public void overWriteSegmentName(String segmentName) {
@@ -462,7 +525,8 @@ public class SegmentIndexCreationDriverImpl implements SegmentIndexCreationDrive
   /**
    * Writes segment creation metadata to disk.
    */
-  void persistCreationMeta(File outputDir, long crc) throws IOException {
+  void persistCreationMeta(File outputDir, long crc)
+      throws IOException {
     final File crcFile = new File(outputDir, V1Constants.SEGMENT_CREATION_META);
     final DataOutputStream out = new DataOutputStream(new FileOutputStream(crcFile));
     out.writeLong(crc);
@@ -488,18 +552,21 @@ public class SegmentIndexCreationDriverImpl implements SegmentIndexCreationDrive
    */
   void buildIndexCreationInfo()
       throws Exception {
-    statsCollector.build();
     for (FieldSpec spec : dataSchema.getAllFieldSpecs()) {
       String column = spec.getName();
-      indexCreationInfoMap.put(column, new ColumnIndexCreationInfo(true/*createDictionary*/,
-          statsCollector.getColumnProfileFor(column).getMinValue(),
-          statsCollector.getColumnProfileFor(column).getMaxValue(),
-          statsCollector.getColumnProfileFor(column).getUniqueValuesSet(), ForwardIndexType.FIXED_BIT_COMPRESSED,
-          InvertedIndexType.ROARING_BITMAPS, statsCollector.getColumnProfileFor(column).isSorted(),
-          statsCollector.getColumnProfileFor(column).hasNull(),
-          statsCollector.getColumnProfileFor(column).getTotalNumberOfEntries(),
-          statsCollector.getColumnProfileFor(column).getMaxNumberOfMultiValues(), false/*isAutoGenerated*/,
-          dataSchema.getFieldSpecFor(column).getDefaultNullValue()));
+      indexCreationInfoMap.put(column,
+          new ColumnIndexCreationInfo(true/*createDictionary*/, segmentStats.getColumnProfileFor(column).getMinValue(),
+              segmentStats.getColumnProfileFor(column).getMaxValue(),
+              segmentStats.getColumnProfileFor(column).getUniqueValuesSet(), ForwardIndexType.FIXED_BIT_COMPRESSED,
+              InvertedIndexType.ROARING_BITMAPS, segmentStats.getColumnProfileFor(column).isSorted(),
+              segmentStats.getColumnProfileFor(column).hasNull(),
+              segmentStats.getColumnProfileFor(column).getTotalNumberOfEntries(),
+              segmentStats.getColumnProfileFor(column).getMaxNumberOfMultiValues(),
+              segmentStats.getColumnProfileFor(column).getLengthOfLargestElement(), false/*isAutoGenerated*/,
+              segmentStats.getColumnProfileFor(column).getPartitionFunction(),
+              segmentStats.getColumnProfileFor(column).getNumPartitions(),
+              segmentStats.getColumnProfileFor(column).getPartitionRanges(),
+              dataSchema.getFieldSpecFor(column).getDefaultNullValue()));
     }
     segmentIndexCreationInfo.setTotalDocs(totalDocs);
     segmentIndexCreationInfo.setTotalRawDocs(totalRawDocs);
@@ -511,17 +578,27 @@ public class SegmentIndexCreationDriverImpl implements SegmentIndexCreationDrive
     segmentIndexCreationInfo.setTotalNulls(extractor.getTotalNulls());
   }
 
-  @Override
   /**
    * Returns the name of the segment associated with this index creation driver.
    */
+  @Override
   public String getSegmentName() {
     return segmentName;
   }
 
-  private GenericRow readNextRowSanitized() {
-    GenericRow rowOrig = recordReader.next();
-    return extractor.transform(rowOrig);
+  /**
+   * Returns the path of the output directory
+   */
+  @Override
+  public File getOutputDirectory() {
+    return new File(new File(config.getOutDir()), segmentName);
+  }
+
+  private GenericRow readNextRowSanitized(GenericRow readRow, GenericRow transformedRow) {
+    readRow = GenericRow.createOrReuseRow(readRow);
+    readRow = recordReader.next(readRow);
+    transformedRow = GenericRow.createOrReuseRow(transformedRow);
+    return extractor.transform(readRow, transformedRow);
   }
 
   /**

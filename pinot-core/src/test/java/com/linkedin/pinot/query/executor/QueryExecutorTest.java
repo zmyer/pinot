@@ -16,7 +16,7 @@
 package com.linkedin.pinot.query.executor;
 
 import com.linkedin.pinot.common.metrics.ServerMetrics;
-import com.linkedin.pinot.common.query.QueryRequest;
+import com.linkedin.pinot.common.query.ServerQueryRequest;
 import com.linkedin.pinot.common.request.AggregationInfo;
 import com.linkedin.pinot.common.request.BrokerRequest;
 import com.linkedin.pinot.common.request.FilterQuery;
@@ -41,6 +41,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import org.apache.commons.configuration.PropertiesConfiguration;
 import org.apache.commons.io.FileUtils;
@@ -63,10 +65,13 @@ public class QueryExecutorTest {
 
   private static final Logger LOGGER = LoggerFactory.getLogger(QueryExecutorTest.class);
   public static final String PINOT_PROPERTIES = "pinot.properties";
+  private ServerMetrics serverMetrics;
+  private static final ExecutorService queryRunners = Executors.newFixedThreadPool(20);
 
   @BeforeClass
   public void setup() throws Exception {
-    TableDataManagerProvider.setServerMetrics(new ServerMetrics(new MetricsRegistry()));
+    serverMetrics = new ServerMetrics(new MetricsRegistry());
+    TableDataManagerProvider.setServerMetrics(serverMetrics);
 
     File confDir = new File(QueryExecutorTest.class.getClassLoader().getResource("conf").toURI());
     setupSegmentList(2);
@@ -125,7 +130,7 @@ public class QueryExecutorTest {
       String segmentName = parent.list()[0];
       _indexSegmentList.add(ColumnarSegmentLoader.load(new File(parent, segmentName), ReadMode.mmap));
 
-      System.out.println("built at : " + segmentDir.getAbsolutePath());
+//      System.out.println("built at : " + segmentDir.getAbsolutePath());
     }
   }
 
@@ -142,11 +147,12 @@ public class QueryExecutorTest {
     for (IndexSegment segment : _indexSegmentList) {
       instanceRequest.getSearchSegments().add(segment.getSegmentName());
     }
-    QueryRequest queryRequest = new QueryRequest(instanceRequest);
-    DataTable instanceResponse = _queryExecutor.processQuery(queryRequest);
+    ServerQueryRequest queryRequest = new ServerQueryRequest(instanceRequest, serverMetrics);
+    DataTable instanceResponse = _queryExecutor.processQuery(queryRequest, queryRunners);
     LOGGER.info("InstanceResponse is " + instanceResponse.getLong(0, 0));
     Assert.assertEquals(instanceResponse.getLong(0, 0), 400002L);
-    LOGGER.info("Time used for instanceResponse is " + instanceResponse.getMetadata().get("timeUsedMs"));
+    LOGGER.info(
+        "Time used for instanceResponse is " + instanceResponse.getMetadata().get(DataTable.TIME_USED_MS_METADATA_KEY));
   }
 
   @Test
@@ -161,11 +167,12 @@ public class QueryExecutorTest {
     for (IndexSegment segment : _indexSegmentList) {
       instanceRequest.getSearchSegments().add(segment.getSegmentName());
     }
-    QueryRequest queryRequest = new QueryRequest(instanceRequest);
-    DataTable instanceResponse = _queryExecutor.processQuery(queryRequest);
+    ServerQueryRequest queryRequest = new ServerQueryRequest(instanceRequest, serverMetrics);
+    DataTable instanceResponse = _queryExecutor.processQuery(queryRequest, queryRunners);
     LOGGER.info("InstanceResponse is " + instanceResponse.getDouble(0, 0));
     Assert.assertEquals(instanceResponse.getDouble(0, 0), 40000200000.0);
-    LOGGER.info("Time used for instanceResponse is " + instanceResponse.getMetadata().get("timeUsedMs"));
+    LOGGER.info(
+        "Time used for instanceResponse is " + instanceResponse.getMetadata().get(DataTable.TIME_USED_MS_METADATA_KEY));
   }
 
   @Test
@@ -181,11 +188,12 @@ public class QueryExecutorTest {
     for (IndexSegment segment : _indexSegmentList) {
       instanceRequest.getSearchSegments().add(segment.getSegmentName());
     }
-    QueryRequest queryRequest = new QueryRequest(instanceRequest);
-    DataTable instanceResponse = _queryExecutor.processQuery(queryRequest);
+    ServerQueryRequest queryRequest = new ServerQueryRequest(instanceRequest, serverMetrics);
+    DataTable instanceResponse = _queryExecutor.processQuery(queryRequest, queryRunners);
     LOGGER.info("InstanceResponse is " + instanceResponse.getDouble(0, 0));
     Assert.assertEquals(instanceResponse.getDouble(0, 0), 200000.0);
-    LOGGER.info("Time used for instanceResponse is " + instanceResponse.getMetadata().get("timeUsedMs"));
+    LOGGER.info(
+        "Time used for instanceResponse is " + instanceResponse.getMetadata().get(DataTable.TIME_USED_MS_METADATA_KEY));
   }
 
   @Test
@@ -200,11 +208,12 @@ public class QueryExecutorTest {
     for (IndexSegment segment : _indexSegmentList) {
       instanceRequest.getSearchSegments().add(segment.getSegmentName());
     }
-    QueryRequest queryRequest = new QueryRequest(instanceRequest);
-    DataTable instanceResponse = _queryExecutor.processQuery(queryRequest);
+    ServerQueryRequest queryRequest = new ServerQueryRequest(instanceRequest, serverMetrics);
+    DataTable instanceResponse = _queryExecutor.processQuery(queryRequest, queryRunners);
     LOGGER.info("InstanceResponse is " + instanceResponse.getDouble(0, 0));
     Assert.assertEquals(instanceResponse.getDouble(0, 0), 0.0);
-    LOGGER.info("Time used for instanceResponse is " + instanceResponse.getMetadata().get("timeUsedMs"));
+    LOGGER.info(
+        "Time used for instanceResponse is " + instanceResponse.getMetadata().get(DataTable.TIME_USED_MS_METADATA_KEY));
   }
 
   private BrokerRequest getCountQuery() {

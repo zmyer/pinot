@@ -16,10 +16,10 @@
 package com.linkedin.pinot.core.realtime.impl.kafka;
 
 import java.util.Arrays;
-import java.util.HashMap;
 import java.util.Map;
 
 import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -42,66 +42,58 @@ public class KafkaJSONMessageDecoder implements KafkaMessageDecoder {
   }
 
   @Override
-  public GenericRow decode(byte[] payload) {
+  public GenericRow decode(byte[] payload, GenericRow destination) {
     try {
       String text = new String(payload, "UTF-8");
       JSONObject message = new JSONObject(text);
-      Map<String, Object> rowEntries = new HashMap<String, Object>();
+
       for (FieldSpec dimensionSpec : schema.getDimensionFieldSpecs()) {
-        if (message.has(dimensionSpec.getName())) {
-          Object entry;
-          if (dimensionSpec.isSingleValueField()) {
-            entry = stringToDataType(dimensionSpec, message.getString(dimensionSpec.getName()));
-          } else {
-            JSONArray jsonArray = message.getJSONArray(dimensionSpec.getName());
-            Object[] array = new Object[jsonArray.length()];
-            for (int i = 0; i < array.length; i++) {
-              array[i] = stringToDataType(dimensionSpec, jsonArray.getString(i));
-            }
-            if (array.length == 0) {
-              entry = new Object[] { AvroRecordReader.getDefaultNullValue(dimensionSpec) };
-            } else {
-              entry = array;
-            }
-          }
-          rowEntries.put(dimensionSpec.getName(), entry);
-        } else {
-          Object entry = AvroRecordReader.getDefaultNullValue(dimensionSpec);
-          rowEntries.put(dimensionSpec.getName(), entry);
-        }
+        readFieldValue(destination, message, dimensionSpec);
       }
 
       for (FieldSpec metricSpec : schema.getMetricFieldSpecs()) {
-        if (message.has(metricSpec.getName())) {
-          Object entry = stringToDataType(metricSpec, message.getString(metricSpec.getName()));
-          rowEntries.put(metricSpec.getName(), entry);
-        } else {
-          Object entry = AvroRecordReader.getDefaultNullValue(metricSpec);
-          rowEntries.put(metricSpec.getName(), entry);
-        }
+        readFieldValue(destination, message, metricSpec);
       }
 
       TimeFieldSpec timeSpec = schema.getTimeFieldSpec();
-      if (message.has(timeSpec.getName())) {
-        Object entry = stringToDataType(timeSpec, message.getString(timeSpec.getName()));
-        rowEntries.put(timeSpec.getName(), entry);
-      } else {
-        Object entry = AvroRecordReader.getDefaultNullValue(timeSpec);
-        rowEntries.put(timeSpec.getName(), entry);
-      }
+      readFieldValue(destination, message, timeSpec);
 
-      GenericRow row = new GenericRow();
-      row.init(rowEntries);
-      return row;
+      return destination;
     } catch (Exception e) {
-      LOGGER.error("error decoding , ", e);
+      LOGGER.error("Caught exception while decoding row, discarding row.", e);
+      return null;
     }
-    return null;
+  }
+
+  private void readFieldValue(GenericRow destination, JSONObject message, FieldSpec dimensionSpec)
+      throws JSONException {
+    String columnName = dimensionSpec.getName();
+    if (message.has(columnName) && !message.isNull(columnName)) {
+      Object entry;
+      if (dimensionSpec.isSingleValueField()) {
+        entry = stringToDataType(dimensionSpec, message.getString(columnName));
+      } else {
+        JSONArray jsonArray = message.getJSONArray(columnName);
+        Object[] array = new Object[jsonArray.length()];
+        for (int i = 0; i < array.length; i++) {
+          array[i] = stringToDataType(dimensionSpec, jsonArray.getString(i));
+        }
+        if (array.length == 0) {
+          entry = new Object[] { AvroRecordReader.getDefaultNullValue(dimensionSpec) };
+        } else {
+          entry = array;
+        }
+      }
+      destination.putField(columnName, entry);
+    } else {
+      Object entry = AvroRecordReader.getDefaultNullValue(dimensionSpec);
+      destination.putField(columnName, entry);
+    }
   }
 
   @Override
-  public GenericRow decode(byte[] payload, int offset, int length) {
-    return decode(Arrays.copyOfRange(payload, offset, offset + length));
+  public GenericRow decode(byte[] payload, int offset, int length, GenericRow destination) {
+    return decode(Arrays.copyOfRange(payload, offset, offset + length), destination);
   }
 
   private Object stringToDataType(FieldSpec spec, String inString) {
@@ -109,20 +101,26 @@ public class KafkaJSONMessageDecoder implements KafkaMessageDecoder {
       return AvroRecordReader.getDefaultNullValue(spec);
     }
 
-    switch (spec.getDataType()) {
-      case INT:
-        return new Integer(Integer.parseInt(inString));
-      case LONG:
-        return new Long(Long.parseLong(inString));
-      case FLOAT:
-        return new Float(Float.parseFloat(inString));
-      case DOUBLE:
-        return new Double(Double.parseDouble(inString));
-      case BOOLEAN:
-      case STRING:
-        return inString.toString();
-      default:
-        return null;
+    try {
+      switch (spec.getDataType()) {
+        case INT:
+          return Integer.parseInt(inString);
+        case LONG:
+          return Long.parseLong(inString);
+        case FLOAT:
+          return Float.parseFloat(inString);
+        case DOUBLE:
+          return Double.parseDouble(inString);
+        case BOOLEAN:
+        case STRING:
+          return inString;
+        default:
+          return null;
+      }
+    } catch (NumberFormatException e) {
+      Object nullValue = AvroRecordReader.getDefaultNullValue(spec);
+      LOGGER.warn("Failed to parse {} as a value of type {} for column {}, defaulting to {}", inString, spec.getDataType(), spec.getName(), nullValue, e);
+      return nullValue;
     }
   }
 }

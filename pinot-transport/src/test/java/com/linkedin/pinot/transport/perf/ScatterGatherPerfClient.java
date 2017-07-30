@@ -55,7 +55,6 @@ import com.linkedin.pinot.transport.common.SegmentIdSet;
 import com.linkedin.pinot.transport.config.PerTableRoutingConfig;
 import com.linkedin.pinot.transport.config.RoutingTableConfig;
 import com.linkedin.pinot.transport.metrics.NettyClientMetrics;
-import com.linkedin.pinot.transport.netty.NettyClientConnection;
 import com.linkedin.pinot.transport.netty.PooledNettyClientResourceManager;
 import com.linkedin.pinot.transport.pool.KeyedPool;
 import com.linkedin.pinot.transport.pool.KeyedPoolImpl;
@@ -86,7 +85,7 @@ public class ScatterGatherPerfClient implements Runnable {
   //Routing Config and Pool
   private final RoutingTableConfig _routingConfig;
   private ScatterGatherImpl _scatterGather;
-  private KeyedPool<ServerInstance, NettyClientConnection> _pool;
+  private KeyedPool<PooledNettyClientResourceManager.PooledClientConnection> _pool;
   private ExecutorService _service;
   private EventLoopGroup _eventLoopGroup;
   private Timer _timer;
@@ -163,7 +162,7 @@ public class ScatterGatherPerfClient implements Runnable {
     NettyClientMetrics clientMetrics = new NettyClientMetrics(registry, "client_");
     PooledNettyClientResourceManager rm = new PooledNettyClientResourceManager(_eventLoopGroup, _timer, clientMetrics);
     _pool =
-        new KeyedPoolImpl<ServerInstance, NettyClientConnection>(1, _maxActiveConnections, 300000, 10, rm,
+        new KeyedPoolImpl<PooledNettyClientResourceManager.PooledClientConnection>(1, _maxActiveConnections, 300000, 10, rm,
             _timedExecutor, MoreExecutors.sameThreadExecutor(), registry);
     rm.setPool(_pool);
     _scatterGather = new ScatterGatherImpl(_pool, _service);
@@ -203,7 +202,7 @@ public class ScatterGatherPerfClient implements Runnable {
           sendRequestAndGetResponse(req, scatterGatherStats);
           _endLastResponseTime = System.currentTimeMillis();
         } else {
-          CompositeFuture<ServerInstance, ByteBuf> future = asyncSendRequestAndGetResponse(req, scatterGatherStats);
+          CompositeFuture<ByteBuf> future = asyncSendRequestAndGetResponse(req, scatterGatherStats);
           _queue
               .offer(new QueueEntry(false, i >= _numRequestsToSkipForMeasurement, System.currentTimeMillis(), future));
         }
@@ -316,7 +315,7 @@ public class ScatterGatherPerfClient implements Runnable {
       final ScatterGatherStats scatterGatherStats) throws InterruptedException,
       ExecutionException, IOException, ClassNotFoundException {
     BrokerMetrics brokerMetrics = new BrokerMetrics(new MetricsRegistry());
-    CompositeFuture<ServerInstance, ByteBuf> future = _scatterGather.scatterGather(request, scatterGatherStats,
+    CompositeFuture<ByteBuf> future = _scatterGather.scatterGather(request, scatterGatherStats,
         brokerMetrics);
     ByteBuf b = future.getOne();
     String r = null;
@@ -329,7 +328,7 @@ public class ScatterGatherPerfClient implements Runnable {
     return r;
   }
 
-  private static void releaseByteBuf(CompositeFuture<ServerInstance, ByteBuf> future) throws Exception {
+  private static void releaseByteBuf(CompositeFuture<ByteBuf> future) throws Exception {
     Map<ServerInstance, ByteBuf> bMap = future.get();
     if (null != bMap) {
       for (Entry<ServerInstance, ByteBuf> bEntry : bMap.entrySet()) {
@@ -341,7 +340,7 @@ public class ScatterGatherPerfClient implements Runnable {
     }
   }
 
-  private CompositeFuture<ServerInstance, ByteBuf> asyncSendRequestAndGetResponse(SimpleScatterGatherRequest request,
+  private CompositeFuture<ByteBuf> asyncSendRequestAndGetResponse(SimpleScatterGatherRequest request,
       final ScatterGatherStats scatterGatherStats)
       throws InterruptedException {
     final BrokerMetrics brokerMetrics = new BrokerMetrics(new MetricsRegistry());
@@ -352,9 +351,9 @@ public class ScatterGatherPerfClient implements Runnable {
     private final boolean _last;
     private final boolean _measured;
     private final long _timeSentMs;
-    private final CompositeFuture<ServerInstance, ByteBuf> future;
+    private final CompositeFuture<ByteBuf> future;
 
-    public QueueEntry(boolean last, boolean measured, long timeSentMs, CompositeFuture<ServerInstance, ByteBuf> future) {
+    public QueueEntry(boolean last, boolean measured, long timeSentMs, CompositeFuture<ByteBuf> future) {
       super();
       _last = last;
       _measured = measured;
@@ -370,7 +369,7 @@ public class ScatterGatherPerfClient implements Runnable {
       return _last;
     }
 
-    public CompositeFuture<ServerInstance, ByteBuf> getFuture() {
+    public CompositeFuture<ByteBuf> getFuture() {
       return future;
     }
 

@@ -1,7 +1,7 @@
 function getExistingAnomalyFunctions(dataset) {
     //removing the query until it returns other than 500 error
     if (dataset) {
-        var url = "/dashboard/anomaly-function/view?dataset=" + dataset;
+        var url = "/dashboard/anomaly-function?dataset=" + dataset;
         var tab = "self-service";
         var result_existing_anomaly_functions_template;
 
@@ -60,6 +60,9 @@ function getExistingAnomalyFunctions(dataset) {
         /** Instanciate Datatables on self service view **/
         $("#existing-anomaly-functions-table").DataTable({
             "bAutoWidth": false,
+            "bPaginate":true,
+            "sPaginationType":"full_numbers",
+            "iDisplayLength": 50,
             "columnDefs": [
                 { "targets": 0  },
                 { "targets": 1  },
@@ -361,6 +364,7 @@ function addSelfServiceListeners() {
 
         var functionType = $(target).attr("id");
         $(".function-type-fields").addClass("uk-hidden");
+	$(".dimension-selection-fields").removeClass("uk-hidden");
         $("." + functionType + "-fields").removeClass("uk-hidden");
 
         //Hide autoPopulated UASER_RULE and MIN_MAX_THRESHOLD to populate only the hard coded customized fields
@@ -734,7 +738,7 @@ function addSelfServiceListeners() {
 
             //Submit data
             var urlParams = urlOfAnomalyFn(formData);
-            submitData("/dashboard/anomaly-function/create?" + urlParams).done(function(id){
+            submitData("/dashboard/anomaly-function?" + urlParams).done(function(id){
                //Enable submit btn
                enableButton($("#create-anomaly-function"))
                enableButton($("#create-run-anomaly-function"))
@@ -797,7 +801,7 @@ function addSelfServiceListeners() {
         disableButton($("#confirm-delete-anomaly-function"));
 
         var functionId = $(target).attr("data-function-id");
-        var url = "/dashboard/anomaly-function/delete?id=" + functionId;
+        var url = "/dashboard/anomaly-function?id=" + functionId;
 
 
         deleteData(url, "").done(function () {
@@ -827,7 +831,7 @@ function addSelfServiceListeners() {
         //encode filters
         anomalyFunctionObj.filters = encodeURIComponent(JSON.stringify(anomalyFunctionObj.filters));
 
-        var url = "/dashboard/anomaly-function/update?dataset=" + hash.dataset;
+        var url = "/dashboard/anomaly-function/" + anomalyFunctionObj["id"] + "/?dataset=" + hash.dataset;
         for (key in anomalyFunctionObj){
 
             var value = (anomalyFunctionObj[key] + "" == "null") ? "" : anomalyFunctionObj[key];
@@ -953,7 +957,7 @@ function addSelfServiceListeners() {
 
             var urlParams = urlOfAnomalyFn(formData)
 
-            submitData("/dashboard/anomaly-function/update?" + urlParams).done(function () {
+            updateData("/dashboard/anomaly-function/" + formData.functionId + "?" + urlParams).done(function () {
                 //existingAnomalyFunctionsData[rowId] = {formData}
                 getExistingAnomalyFunctions(formData.dataset);
 

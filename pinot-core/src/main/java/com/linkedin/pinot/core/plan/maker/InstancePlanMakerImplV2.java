@@ -15,23 +15,23 @@
  */
 package com.linkedin.pinot.core.plan.maker;
 
+import com.linkedin.pinot.common.request.AggregationInfo;
 import com.linkedin.pinot.common.request.BrokerRequest;
+import com.linkedin.pinot.common.request.FilterQuery;
 import com.linkedin.pinot.core.data.manager.offline.SegmentDataManager;
 import com.linkedin.pinot.core.indexsegment.IndexSegment;
-import com.linkedin.pinot.core.plan.AggregationGroupByImplementationType;
-import com.linkedin.pinot.core.plan.AggregationGroupByOperatorPlanNode;
 import com.linkedin.pinot.core.plan.AggregationGroupByPlanNode;
-import com.linkedin.pinot.core.plan.AggregationOperatorPlanNode;
 import com.linkedin.pinot.core.plan.AggregationPlanNode;
 import com.linkedin.pinot.core.plan.CombinePlanNode;
 import com.linkedin.pinot.core.plan.GlobalPlanImplV0;
 import com.linkedin.pinot.core.plan.InstanceResponsePlanNode;
+import com.linkedin.pinot.core.plan.MetadataBasedAggregationPlanNode;
 import com.linkedin.pinot.core.plan.Plan;
 import com.linkedin.pinot.core.plan.PlanNode;
 import com.linkedin.pinot.core.plan.SelectionPlanNode;
-import com.linkedin.pinot.core.query.aggregation.groupby.BitHacks;
+import com.linkedin.pinot.core.query.aggregation.function.AggregationFunctionFactory;
 import com.linkedin.pinot.core.query.config.QueryExecutorConfig;
-import com.linkedin.pinot.core.segment.index.readers.Dictionary;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import org.slf4j.Logger;
@@ -39,100 +39,106 @@ import org.slf4j.LoggerFactory;
 
 
 /**
- * Make the huge plan, root is always ResultPlanNode, the child of it is a huge
- * plan node which will take the segment and query, then do everything.
- *
- *
+ * The <code>InstancePlanMakerImplV2</code> class is the default implementation of {@link PlanMaker}.
  */
 public class InstancePlanMakerImplV2 implements PlanMaker {
   private static final Logger LOGGER = LoggerFactory.getLogger(InstancePlanMakerImplV2.class);
-  private static final String ENABLE_NEW_AGGREGATION_GROUP_BY_CFG = "new.aggregation.groupby";
-  private boolean _enableNewAggregationGroupByCfg = false;
+
+  // TODO: Fix the runtime trimming and add back the number of aggregation groups limit.
+  // TODO: Need to revisit the runtime trimming solution. Current solution will remove group keys that should not be removed.
+  // Limit on number of groups, beyond which results are truncated.
+  // private static final String NUM_AGGR_GROUPS_LIMIT = "num.aggr.groups.limit";
+  // private static final int DEFAULT_NUM_AGGR_GROUPS_LIMIT = 100_000;
+  private final int _numAggrGroupsLimit = Integer.MAX_VALUE;
 
   /**
    * Default constructor.
    */
   public InstancePlanMakerImplV2() {
+//    _numAggrGroupsLimit = DEFAULT_NUM_AGGR_GROUPS_LIMIT;
   }
 
   /**
-   * Constructor for usage when client requires to pass queryExecutorConfig to this class.
-   * Sets flag to indicate whether to enable new implementation of AggregationGroupBy operator,
-   * based on the queryExecutorConfig.
+   * Constructor for usage when client requires to pass {@link QueryExecutorConfig} to this class.
+   * <ul>
+   *   <li>Set limit on number of aggregation groups in query result.</li>
+   * </ul>
    *
-   * @param queryExecutorConfig
+   * @param queryExecutorConfig query executor configuration.
    */
   public InstancePlanMakerImplV2(QueryExecutorConfig queryExecutorConfig) {
-    _enableNewAggregationGroupByCfg =
-        queryExecutorConfig.getConfig().getBoolean(ENABLE_NEW_AGGREGATION_GROUP_BY_CFG, true);
-    LOGGER.info("New AggregationGroupBy operator: {}", (_enableNewAggregationGroupByCfg) ? "Enabled" : "Disabled");
+    // TODO: Read the limit on number of aggregation groups in query result from config.
+    // _numAggrGroupsLimit = queryExecutorConfig.getConfig().getInt(NUM_AGGR_GROUPS_LIMIT, DEFAULT_NUM_AGGR_GROUPS_LIMIT);
+    // LOGGER.info("Maximum number of allowed groups for group-by query results: '{}'", _numAggrGroupsLimit);
   }
 
   @Override
   public PlanNode makeInnerSegmentPlan(IndexSegment indexSegment, BrokerRequest brokerRequest) {
-    return makeInnerSegmentPlan(indexSegment, brokerRequest, _enableNewAggregationGroupByCfg);
-  }
-
-  public PlanNode makeInnerSegmentPlan(IndexSegment indexSegment, BrokerRequest brokerRequest,
-      boolean enableNewAggregationGroupBy) {
-    // Aggregation
+    // Aggregation query.
     if (brokerRequest.isSetAggregationsInfo()) {
-      if (!brokerRequest.isSetGroupBy()) {
-        // Only Aggregation
-        if (enableNewAggregationGroupBy) {
-          return new AggregationPlanNode(indexSegment, brokerRequest);
-        } else {
-          return new AggregationOperatorPlanNode(indexSegment, brokerRequest);
-        }
+      if (brokerRequest.isSetGroupBy()) {
+        // Aggregation group-by query.
+        return new AggregationGroupByPlanNode(indexSegment, brokerRequest, _numAggrGroupsLimit);
       } else {
-        // Aggregation GroupBy
-        if (enableNewAggregationGroupBy) {
-          // New implementation of group-by aggregations
-          return new AggregationGroupByPlanNode(indexSegment, brokerRequest);
+          // Aggregation only query.
+        if (isFitForMetadataBasedPlan(brokerRequest)) {
+          return new MetadataBasedAggregationPlanNode(indexSegment, brokerRequest.getAggregationsInfo());
         } else {
-          // Old implementation of group-by aggregations
-          if (isGroupKeyFitForLong(indexSegment, brokerRequest)) {
-            return new AggregationGroupByOperatorPlanNode(indexSegment, brokerRequest,
-                AggregationGroupByImplementationType.Dictionary);
-          } else {
-            return new AggregationGroupByOperatorPlanNode(indexSegment, brokerRequest,
-                AggregationGroupByImplementationType.DictionaryAndTrie);
-          }
+          return new AggregationPlanNode(indexSegment, brokerRequest);
         }
       }
     }
-    // Selection
+
+    // Selection query.
     if (brokerRequest.isSetSelections()) {
       return new SelectionPlanNode(indexSegment, brokerRequest);
     }
-    throw new UnsupportedOperationException("The query contains no aggregation or selection!");
+
+    throw new UnsupportedOperationException("The query contains no aggregation or selection.");
   }
 
   @Override
   public Plan makeInterSegmentPlan(List<SegmentDataManager> segmentDataManagers, BrokerRequest brokerRequest,
       ExecutorService executorService, long timeOutMs) {
-    final InstanceResponsePlanNode rootNode = new InstanceResponsePlanNode();
-
-    final CombinePlanNode combinePlanNode = new CombinePlanNode(brokerRequest, executorService, timeOutMs,
-        _enableNewAggregationGroupByCfg);
-    rootNode.setPlanNode(combinePlanNode);
-
+    // TODO: pass in List<IndexSegment> directly.
+    List<IndexSegment> indexSegments = new ArrayList<>(segmentDataManagers.size());
     for (SegmentDataManager segmentDataManager : segmentDataManagers) {
-      IndexSegment segment = segmentDataManager.getSegment();
-      combinePlanNode.addPlanNode(makeInnerSegmentPlan(segment, brokerRequest, _enableNewAggregationGroupByCfg));
+      indexSegments.add(segmentDataManager.getSegment());
     }
-    return new GlobalPlanImplV0(rootNode);
+    BrokerRequestPreProcessor.preProcess(indexSegments, brokerRequest);
+
+    List<PlanNode> planNodes = new ArrayList<>();
+    for (IndexSegment indexSegment : indexSegments) {
+      planNodes.add(makeInnerSegmentPlan(indexSegment, brokerRequest));
+    }
+    CombinePlanNode combinePlanNode = new CombinePlanNode(planNodes, brokerRequest, executorService, timeOutMs);
+
+    return new GlobalPlanImplV0(new InstanceResponsePlanNode(combinePlanNode));
   }
 
-  private boolean isGroupKeyFitForLong(IndexSegment indexSegment, BrokerRequest brokerRequest) {
-    int totalBitSet = 0;
-    for (final String column : brokerRequest.getGroupBy().getColumns()) {
-      Dictionary dictionary = indexSegment.getDataSource(column).getDictionary();
-      totalBitSet += BitHacks.findLogBase2(dictionary.length()) + 1;
-    }
-    if (totalBitSet > 64) {
+  /**
+   * Helper method to identify if query is fit to be be served purely based on metadata.
+   * Currently only count(*) queries without any filters are supported.
+   *
+   * TODO: Add support for queries other than count(*)
+   *
+   * @param brokerRequest Broker request
+   * @return True if query can be served using metadata, false otherwise.
+   */
+  private boolean isFitForMetadataBasedPlan(BrokerRequest brokerRequest) {
+    FilterQuery filterQuery = brokerRequest.getFilterQuery();
+    if (filterQuery != null) {
       return false;
     }
-    return true;
+
+    List<AggregationInfo> aggregationsInfo = brokerRequest.getAggregationsInfo();
+    if (aggregationsInfo != null && aggregationsInfo.size() == 1 && !brokerRequest.isSetGroupBy()) {
+      if (aggregationsInfo.get(0)
+          .getAggregationType()
+          .equalsIgnoreCase(AggregationFunctionFactory.AggregationFunctionType.COUNT.getName())) {
+        return true;
+      }
+    }
+    return false;
   }
 }

@@ -1,5 +1,8 @@
 package com.linkedin.thirdeye.datalayer.entity;
 
+import com.linkedin.thirdeye.api.DimensionMap;
+
+
 public class MergedAnomalyResultIndex extends AbstractIndexEntity {
 
 
@@ -10,7 +13,7 @@ public class MergedAnomalyResultIndex extends AbstractIndexEntity {
   long endTime;
   String collection;
   String metric;
-  String dimensions;
+  DimensionMap dimensions;
   boolean notified;
 
   public long getAnomalyFeedbackId() {
@@ -37,11 +40,11 @@ public class MergedAnomalyResultIndex extends AbstractIndexEntity {
     this.collection = collection;
   }
 
-  public String getDimensions() {
+  public DimensionMap getDimensions() {
     return dimensions;
   }
 
-  public void setDimensions(String dimensions) {
+  public void setDimensions(DimensionMap dimensions) {
     this.dimensions = dimensions;
   }
 
@@ -83,15 +86,5 @@ public class MergedAnomalyResultIndex extends AbstractIndexEntity {
 
   public void setNotified(boolean notified) {
     this.notified = notified;
-  }
-
-  @Override
-  public String toString() {
-    return "MergedAnomalyResultIndex [functionId=" + functionId + ", anomalyFeedbackId="
-        + anomalyFeedbackId + ", metricId=" + metricId + ", startTime=" + startTime + ", endTime="
-        + endTime + ", collection=" + collection + ", metric=" + metric + ", dimensionValue="
-        + dimensions + ", notified=" + notified + ", baseId=" + baseId + ", id=" + id
-        + ", createTime=" + createTime + ", updateTime=" + updateTime + ", version=" + version
-        + "]";
   }
 }

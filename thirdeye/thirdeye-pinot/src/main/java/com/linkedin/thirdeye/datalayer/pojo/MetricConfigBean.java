@@ -1,13 +1,21 @@
 package com.linkedin.thirdeye.datalayer.pojo;
 
-import java.util.Objects;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import com.google.common.base.MoreObjects;
+import com.linkedin.thirdeye.api.MetricType;
+import com.linkedin.thirdeye.constant.MetricAggFunction;
+
+import java.util.Map;
+import java.util.Objects;
 
 @JsonIgnoreProperties(ignoreUnknown=true)
 public class MetricConfigBean extends AbstractBean {
 
   public static double DEFAULT_THRESHOLD = 0.01;
+  public static String DERIVED_METRIC_ID_PREFIX = "id";
+  public static final String ALIAS_JOINER = "::";
+  public static final String URL_TEMPLATE_START_TIME = "startTime";
+  public static final String URL_TEMPLATE_END_TIME = "endTime";
+  public static final MetricAggFunction DEFAULT_AGG_FUNCTION = MetricAggFunction.SUM;
 
   private String name;
 
@@ -15,15 +23,27 @@ public class MetricConfigBean extends AbstractBean {
 
   private String alias;
 
+  private MetricType datatype;
+
   private boolean derived = false;
 
   private String derivedMetricExpression;
+
+  private MetricAggFunction defaultAggFunction = DEFAULT_AGG_FUNCTION;
 
   private Double rollupThreshold = DEFAULT_THRESHOLD;
 
   private boolean inverseMetric = false;
 
   private String cellSizeExpression;
+
+  private boolean active = true;
+
+  private Map<String, String> extSourceLinkInfo;
+
+  private Map<String, String> extSourceLinkTimeGranularity;
+
+  private Map<String, String> metricProperties = null;
 
 
   public String getName() {
@@ -50,6 +70,14 @@ public class MetricConfigBean extends AbstractBean {
     this.alias = alias;
   }
 
+  public MetricType getDatatype() {
+    return datatype;
+  }
+
+  public void setDatatype(MetricType datatype) {
+    this.datatype = datatype;
+  }
+
   public boolean isDerived() {
     return derived;
   }
@@ -64,6 +92,14 @@ public class MetricConfigBean extends AbstractBean {
 
   public void setDerivedMetricExpression(String derivedMetricExpression) {
     this.derivedMetricExpression = derivedMetricExpression;
+  }
+
+  public MetricAggFunction getDefaultAggFunction() {
+    return defaultAggFunction;
+  }
+
+  public void setDefaultAggFunction(MetricAggFunction defaultAggFunction) {
+    this.defaultAggFunction = defaultAggFunction;
   }
 
   public Double getRollupThreshold() {
@@ -90,6 +126,38 @@ public class MetricConfigBean extends AbstractBean {
     this.cellSizeExpression = cellSizeExpression;
   }
 
+  public boolean isActive() {
+    return active;
+  }
+
+  public void setActive(boolean active) {
+    this.active = active;
+  }
+
+  public Map<String, String> getExtSourceLinkInfo() {
+    return extSourceLinkInfo;
+  }
+
+  public void setExtSourceLinkInfo(Map<String, String> extSourceLinkInfo) {
+    this.extSourceLinkInfo = extSourceLinkInfo;
+  }
+
+  public Map<String, String> getExtSourceLinkTimeGranularity() {
+    return extSourceLinkTimeGranularity;
+  }
+
+  public void setExtSourceLinkTimeGranularity(Map<String, String> extSourceLinkTimeGranularity) {
+    this.extSourceLinkTimeGranularity = extSourceLinkTimeGranularity;
+  }
+
+  public Map<String, String> getMetricProperties() {
+    return metricProperties;
+  }
+
+  public void setMetricProperties(Map<String, String> metricProperties) {
+    this.metricProperties = metricProperties;
+  }
+
   @Override
   public boolean equals(Object o) {
     if (!(o instanceof MetricConfigBean)) {
@@ -102,21 +170,18 @@ public class MetricConfigBean extends AbstractBean {
         && Objects.equals(alias, mc.getAlias())
         && Objects.equals(derived, mc.isDerived())
         && Objects.equals(derivedMetricExpression, mc.getDerivedMetricExpression())
+        && Objects.equals(defaultAggFunction, mc.getDefaultAggFunction())
         && Objects.equals(rollupThreshold, mc.getRollupThreshold())
         && Objects.equals(inverseMetric, mc.isInverseMetric())
-        && Objects.equals(cellSizeExpression, mc.getCellSizeExpression());
+        && Objects.equals(cellSizeExpression, mc.getCellSizeExpression())
+        && Objects.equals(active, mc.isActive())
+        && Objects.equals(extSourceLinkInfo, mc.getExtSourceLinkInfo())
+        && Objects.equals(metricProperties, mc.getMetricProperties());
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(getId(), dataset, alias, derived, derivedMetricExpression, rollupThreshold, inverseMetric,
-        cellSizeExpression);
-  }
-
-  @Override
-  public String toString() {
-    return MoreObjects.toStringHelper(this).add("id", getId()).add("dataset", dataset)
-        .add("alias", alias).add("derived", derived).add("derivedMetricExpression", derivedMetricExpression)
-        .add("rollupThreshold", rollupThreshold).add("cellSizeExpression", cellSizeExpression).toString();
+    return Objects.hash(getId(), dataset, alias, derived, derivedMetricExpression, defaultAggFunction, rollupThreshold,
+        inverseMetric, cellSizeExpression, active, extSourceLinkInfo, metricProperties);
   }
 }

@@ -15,17 +15,26 @@
  */
 package com.linkedin.pinot.common.metadata;
 
-import java.util.concurrent.TimeUnit;
-
-import org.apache.helix.ZNRecord;
-import org.testng.Assert;
-import org.testng.annotations.Test;
-
+import com.linkedin.pinot.common.metadata.segment.ColumnPartitionMetadata;
 import com.linkedin.pinot.common.metadata.segment.OfflineSegmentZKMetadata;
+import com.linkedin.pinot.common.metadata.segment.PartitionToReplicaGroupMappingZKMetadata;
 import com.linkedin.pinot.common.metadata.segment.RealtimeSegmentZKMetadata;
+import com.linkedin.pinot.common.metadata.segment.SegmentPartitionMetadata;
+import com.linkedin.pinot.common.metadata.segment.SegmentZKMetadata;
 import com.linkedin.pinot.common.utils.CommonConstants;
 import com.linkedin.pinot.common.utils.CommonConstants.Segment.Realtime.Status;
 import com.linkedin.pinot.common.utils.CommonConstants.Segment.SegmentType;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.TimeUnit;
+import org.apache.commons.lang.math.IntRange;
+import org.apache.helix.ZNRecord;
+import org.testng.Assert;
+import org.testng.annotations.Test;
 
 
 public class SegmentZKMetadataTest {
@@ -63,6 +72,54 @@ public class SegmentZKMetadataTest {
     Assert.assertTrue(offlineSegmentMetadata.equals(new OfflineSegmentZKMetadata(offlineSegmentMetadata.toZNRecord())));
   }
 
+  @Test
+  public void segmentPartitionMetadataTest()
+      throws IOException {
+
+    // Test for partition metadata serialization/de-serialization.
+    String expectedMetadataString =
+        "{\"columnPartitionMap\":{"
+            + "\"column1\":{\"functionName\":\"func1\",\"numPartitions\":7,\"partitionRanges\":\"[5 5],[7 7]\"},"
+            + "\"column2\":{\"functionName\":\"func2\",\"numPartitions\":11,\"partitionRanges\":\"[11 11],[13 13]\"}}}";
+
+    Assert.assertEquals(SegmentPartitionMetadata.fromJsonString(expectedMetadataString).toJsonString(),
+        expectedMetadataString);
+
+    Map<String, ColumnPartitionMetadata> columnPartitionMetadataMap = new HashMap<>();
+    columnPartitionMetadataMap.put("column", new ColumnPartitionMetadata("foo", 7, Collections.singletonList(new IntRange(11))));
+    SegmentPartitionMetadata expectedPartitionMetadata = new SegmentPartitionMetadata(columnPartitionMetadataMap);
+
+    // Test partition metadata in OfflineSegmentZkMetadata
+    ZNRecord znRecord = getTestOfflineSegmentZNRecord();
+    znRecord.setSimpleField(CommonConstants.Segment.PARTITION_METADATA, expectedPartitionMetadata.toJsonString());
+    SegmentZKMetadata expectedSegmentMetadata = new OfflineSegmentZKMetadata(znRecord);
+    SegmentPartitionMetadata actualPartitionMetadata = expectedSegmentMetadata.getPartitionMetadata();
+    Assert.assertEquals(actualPartitionMetadata, expectedPartitionMetadata);
+    Assert.assertEquals(expectedSegmentMetadata, new OfflineSegmentZKMetadata(expectedSegmentMetadata.toZNRecord()));
+
+    // Test partition metadata in RealtimeSegmentZkMetadata
+    znRecord = getTestDoneRealtimeSegmentZNRecord();
+    znRecord.setSimpleField(CommonConstants.Segment.PARTITION_METADATA, expectedPartitionMetadata.toJsonString());
+    expectedSegmentMetadata = new RealtimeSegmentZKMetadata(znRecord);
+
+    actualPartitionMetadata = expectedSegmentMetadata.getPartitionMetadata();
+    Assert.assertEquals(actualPartitionMetadata, expectedPartitionMetadata);
+    Assert.assertEquals(expectedSegmentMetadata, new RealtimeSegmentZKMetadata(expectedSegmentMetadata.toZNRecord()));
+  }
+
+  @Test
+  public void partitionToReplicaGroupMappingZKMetadataTest() {
+    // Test the partition mapping table.
+    ZNRecord partitionMappingZNRecord = getTestPartitionToReplicaGroupMappingZNRecord();
+    PartitionToReplicaGroupMappingZKMetadata partitionMappingMetadata = getTestPartitionToReplicaGroupMappingZKMetadata();
+
+    Assert.assertTrue(MetadataUtils.comparisonZNRecords(partitionMappingZNRecord, partitionMappingMetadata.toZNRecord()));
+    Assert.assertTrue(partitionMappingMetadata.equals(new PartitionToReplicaGroupMappingZKMetadata(partitionMappingZNRecord)));
+    Assert.assertTrue(MetadataUtils.comparisonZNRecords(partitionMappingZNRecord,
+        new PartitionToReplicaGroupMappingZKMetadata(partitionMappingZNRecord).toZNRecord()));
+    Assert.assertTrue(partitionMappingMetadata.equals(new PartitionToReplicaGroupMappingZKMetadata(partitionMappingMetadata.toZNRecord())));
+  }
+
   private ZNRecord getTestDoneRealtimeSegmentZNRecord() {
     String segmentName = "testTable_R_1000_2000_groupId0_part0";
     ZNRecord record = new ZNRecord(segmentName);
@@ -77,6 +134,7 @@ public class SegmentZKMetadataTest {
     record.setLongField(CommonConstants.Segment.TOTAL_DOCS, 10000);
     record.setLongField(CommonConstants.Segment.CRC, 1234);
     record.setLongField(CommonConstants.Segment.CREATION_TIME, 3000);
+    record.setIntField(CommonConstants.Segment.FLUSH_THRESHOLD_SIZE, 1234);
     return record;
   }
 
@@ -93,6 +151,7 @@ public class SegmentZKMetadataTest {
     realtimeSegmentMetadata.setTotalRawDocs(10000);
     realtimeSegmentMetadata.setCrc(1234);
     realtimeSegmentMetadata.setCreationTime(3000);
+    realtimeSegmentMetadata.setSizeThresholdToFlushSegment(1234);
     return realtimeSegmentMetadata;
   }
 
@@ -110,6 +169,7 @@ public class SegmentZKMetadataTest {
     record.setLongField(CommonConstants.Segment.TOTAL_DOCS, -1);
     record.setLongField(CommonConstants.Segment.CRC, -1);
     record.setLongField(CommonConstants.Segment.CREATION_TIME, 1000);
+    record.setIntField(CommonConstants.Segment.FLUSH_THRESHOLD_SIZE, 1234);
     return record;
   }
 
@@ -126,6 +186,7 @@ public class SegmentZKMetadataTest {
     realtimeSegmentMetadata.setTotalRawDocs(-1);
     realtimeSegmentMetadata.setCrc(-1);
     realtimeSegmentMetadata.setCreationTime(1000);
+    realtimeSegmentMetadata.setSizeThresholdToFlushSegment(1234);
     return realtimeSegmentMetadata;
   }
 
@@ -164,5 +225,45 @@ public class SegmentZKMetadataTest {
     offlineSegmentMetadata.setPushTime(4000);
     offlineSegmentMetadata.setRefreshTime(8000);
     return offlineSegmentMetadata;
+  }
+
+  private PartitionToReplicaGroupMappingZKMetadata getTestPartitionToReplicaGroupMappingZKMetadata() {
+    String tableName = "testTable";
+    PartitionToReplicaGroupMappingZKMetadata partitionToReplicaGroupMapping = new PartitionToReplicaGroupMappingZKMetadata();
+    partitionToReplicaGroupMapping.setTableName(tableName);
+    partitionToReplicaGroupMapping.addInstanceToReplicaGroup(0, 0, "instance1");
+    partitionToReplicaGroupMapping.addInstanceToReplicaGroup(0, 0, "instance2");
+    partitionToReplicaGroupMapping.addInstanceToReplicaGroup(0, 1, "instance3");
+    partitionToReplicaGroupMapping.addInstanceToReplicaGroup(0, 1, "instance4");
+    partitionToReplicaGroupMapping.addInstanceToReplicaGroup(1, 0, "instance1");
+    partitionToReplicaGroupMapping.addInstanceToReplicaGroup(1, 0, "instance2");
+    partitionToReplicaGroupMapping.addInstanceToReplicaGroup(1, 1, "instance3");
+    partitionToReplicaGroupMapping.addInstanceToReplicaGroup(1, 1, "instance4");
+
+    return partitionToReplicaGroupMapping;
+  }
+
+  private ZNRecord getTestPartitionToReplicaGroupMappingZNRecord() {
+    String tableName = "testTable";
+    ZNRecord record = new ZNRecord(tableName);
+
+    List<String> replicaGroupOne = new ArrayList<>();
+    replicaGroupOne.add("instance1");
+    replicaGroupOne.add("instance2");
+
+    List<String> replicaGroupTwo = new ArrayList<>();
+    replicaGroupTwo.add("instance3");
+    replicaGroupTwo.add("instance4");
+
+    record.setListField(generateKeyForPartitionMappingTable(0, 0), replicaGroupOne);
+    record.setListField(generateKeyForPartitionMappingTable(0, 1), replicaGroupTwo);
+    record.setListField(generateKeyForPartitionMappingTable(1, 0), replicaGroupOne);
+    record.setListField(generateKeyForPartitionMappingTable(1, 1), replicaGroupTwo);
+
+    return record;
+  }
+
+  private String generateKeyForPartitionMappingTable(int partition, int replicaGroup) {
+    return partition + "_" + replicaGroup;
   }
 }

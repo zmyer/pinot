@@ -16,29 +16,27 @@
 package com.linkedin.pinot.broker.broker;
 
 import com.linkedin.pinot.broker.broker.helix.LiveInstancesChangeListenerImpl;
+import com.linkedin.pinot.broker.pruner.SegmentZKMetadataPrunerService;
+import com.linkedin.pinot.broker.requesthandler.BrokerRequestHandler;
+import com.linkedin.pinot.broker.routing.CfgBasedRouting;
+import com.linkedin.pinot.broker.routing.HelixExternalViewBasedRouting;
+import com.linkedin.pinot.broker.routing.RoutingTable;
+import com.linkedin.pinot.broker.routing.TimeBoundaryService;
 import com.linkedin.pinot.broker.servlet.PinotBrokerHealthCheckServlet;
 import com.linkedin.pinot.broker.servlet.PinotBrokerRoutingTableDebugServlet;
 import com.linkedin.pinot.broker.servlet.PinotBrokerServletContextChangeListener;
+import com.linkedin.pinot.broker.servlet.PinotBrokerTimeBoundaryDebugServlet;
 import com.linkedin.pinot.broker.servlet.PinotClientRequestServlet;
 import com.linkedin.pinot.common.Utils;
 import com.linkedin.pinot.common.metrics.BrokerMetrics;
 import com.linkedin.pinot.common.metrics.MetricsHelper;
 import com.linkedin.pinot.common.query.ReduceServiceRegistry;
 import com.linkedin.pinot.common.response.BrokerResponseFactory;
-import com.linkedin.pinot.common.response.ServerInstance;
-import com.linkedin.pinot.common.utils.DataTableSerDeRegistry;
 import com.linkedin.pinot.core.query.reduce.BrokerReduceService;
-import com.linkedin.pinot.core.util.DataTableCustomSerDe;
-import com.linkedin.pinot.requestHandler.BrokerRequestHandler;
-import com.linkedin.pinot.routing.CfgBasedRouting;
-import com.linkedin.pinot.routing.HelixExternalViewBasedRouting;
-import com.linkedin.pinot.routing.RoutingTable;
-import com.linkedin.pinot.routing.TimeBoundaryService;
 import com.linkedin.pinot.transport.conf.TransportClientConf;
 import com.linkedin.pinot.transport.conf.TransportClientConf.RoutingMode;
 import com.linkedin.pinot.transport.config.ConnectionPoolConfig;
 import com.linkedin.pinot.transport.metrics.NettyClientMetrics;
-import com.linkedin.pinot.transport.netty.NettyClientConnection;
 import com.linkedin.pinot.transport.netty.PooledNettyClientResourceManager;
 import com.linkedin.pinot.transport.pool.KeyedPool;
 import com.linkedin.pinot.transport.pool.KeyedPoolImpl;
@@ -65,10 +63,14 @@ public class BrokerServerBuilder {
   private static final String METRICS_CONFIG_PREFIX = "pinot.broker.metrics";
   private static final long DEFAULT_BROKER_DELAY_SHUTDOWN_TIME_MS = 10 * 1000L;
   private static final String BROKER_DELAY_SHUTDOWN_TIME_CONFIG = "pinot.broker.delayShutdownTimeMs";
+  private static final String PINOT_BROKER_TABLE_LEVEL_METRICS = "pinot.broker.enableTableLevelMetrics";
+  private static final String PINOT_BROKER_TABLE_LEVEL_METRICS_LIST = "pinot.broker.tablelevel.metrics.whitelist";
+  private static final String BROKER_SEGMENT_PRUNERS = "pinot.broker.segment.pruners";
+  private static final String[] DEFAULT_BROKER_SEGMENT_PRUNERS = {};
 
   private static final Logger LOGGER = LoggerFactory.getLogger(BrokerServerBuilder.class);
   // Connection Pool Related
-  private KeyedPool<ServerInstance, NettyClientConnection> _connPool;
+  private KeyedPool<PooledNettyClientResourceManager.PooledClientConnection> _connPool;
   private ScheduledThreadPoolExecutor _poolTimeoutExecutor;
   private ExecutorService _requestSenderPool;
 
@@ -125,7 +127,7 @@ public class BrokerServerBuilder {
     _registry = new MetricsRegistry();
     MetricsHelper.initializeMetrics(_config.subset(METRICS_CONFIG_PREFIX));
     MetricsHelper.registerMetricsRegistry(_registry);
-    _brokerMetrics = new BrokerMetrics(_registry);
+    _brokerMetrics = new BrokerMetrics(_registry, !emitTableLevelMetrics());
     _brokerMetrics.initializeGlobalMeters();
     _state.set(State.INIT);
     _eventLoopGroup = new NioEventLoopGroup();
@@ -140,13 +142,12 @@ public class BrokerServerBuilder {
     _resourceManager = new PooledNettyClientResourceManager(_eventLoopGroup, new HashedWheelTimer(), clientMetrics);
     _poolTimeoutExecutor = new ScheduledThreadPoolExecutor(50);
     // _requestSenderPool = MoreExecutors.sameThreadExecutor();
-    final ConnectionPoolConfig cfg = conf.getConnPool();
 
     _requestSenderPool = Executors.newCachedThreadPool();
 
-    ConnectionPoolConfig connPoolCfg = conf.getConnPool();
+    final ConnectionPoolConfig connPoolCfg = conf.getConnPool();
 
-    _connPool = new KeyedPoolImpl<ServerInstance, NettyClientConnection>(connPoolCfg.getMinConnectionsPerServer(),
+    _connPool = new KeyedPoolImpl<PooledNettyClientResourceManager.PooledClientConnection>(connPoolCfg.getMinConnectionsPerServer(),
         connPoolCfg.getMaxConnectionsPerServer(), connPoolCfg.getIdleTimeoutMs(), connPoolCfg.getMaxBacklogPerServer(),
         _resourceManager, _poolTimeoutExecutor, _requestSenderPool, _registry);
     // MoreExecutors.sameThreadExecutor(), _registry);
@@ -164,15 +165,17 @@ public class BrokerServerBuilder {
     // Setup ScatterGather
     _scatterGather = new ScatterGatherImpl(_connPool, _requestSenderPool);
 
+    // Setup the broker pruner service
+    String[] prunerNames = _config.getStringArray(BROKER_SEGMENT_PRUNERS);
+    if (prunerNames == null) {
+      prunerNames = DEFAULT_BROKER_SEGMENT_PRUNERS;
+    }
+    SegmentZKMetadataPrunerService _brokerPrunerService = new SegmentZKMetadataPrunerService(prunerNames);
+
     // Setup Broker Request Handler
-
-
     ReduceServiceRegistry reduceServiceRegistry = buildReduceServiceRegistry();
     _requestHandler = new BrokerRequestHandler(_routingTable, _timeBoundaryService, _scatterGather,
-        reduceServiceRegistry, _brokerMetrics, _config);
-
-    // Register SerDe for data-table.
-    DataTableSerDeRegistry.getInstance().register(new DataTableCustomSerDe(_brokerMetrics));
+        reduceServiceRegistry, _brokerPrunerService, _brokerMetrics, _config);
 
     LOGGER.info("Network initialized !!");
   }
@@ -201,6 +204,7 @@ public class BrokerServerBuilder {
     context.addServlet(PinotClientRequestServlet.class, "/query");
     context.addServlet(PinotBrokerHealthCheckServlet.class, "/health");
     context.addServlet(PinotBrokerRoutingTableDebugServlet.class, "/debug/routingTable/*");
+    context.addServlet(PinotBrokerTimeBoundaryDebugServlet.class, "/debug/timeBoundary/*");
 
     if (clientConfig.enableConsole()) {
       context.setResourceBase(clientConfig.getConsoleWebappPath());
@@ -208,7 +212,7 @@ public class BrokerServerBuilder {
       context.setResourceBase("");
     }
 
-    context.addEventListener(new PinotBrokerServletContextChangeListener(_requestHandler, _brokerMetrics));
+    context.addEventListener(new PinotBrokerServletContextChangeListener(_requestHandler, _brokerMetrics, _timeBoundaryService));
     context.setAttribute(BrokerServerBuilder.class.toString(), this);
     _server.setHandler(context);
   }
@@ -270,5 +274,9 @@ public class BrokerServerBuilder {
 
   public BrokerRequestHandler getBrokerRequestHandler() {
     return _requestHandler;
+  }
+
+  private boolean emitTableLevelMetrics() {
+    return _config.getBoolean(PINOT_BROKER_TABLE_LEVEL_METRICS, true);
   }
 }

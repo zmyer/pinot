@@ -1,7 +1,10 @@
 package com.linkedin.thirdeye.datalayer.bao.jdbc;
 
+import com.google.inject.Singleton;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import org.apache.commons.collections.CollectionUtils;
 
@@ -10,26 +13,29 @@ import com.linkedin.thirdeye.datalayer.dto.MetricConfigDTO;
 import com.linkedin.thirdeye.datalayer.pojo.MetricConfigBean;
 import com.linkedin.thirdeye.datalayer.util.Predicate;
 
+@Singleton
 public class MetricConfigManagerImpl extends AbstractManagerImpl<MetricConfigDTO>
     implements MetricConfigManager {
+
+  private static final String FIND_BY_NAME_OR_ALIAS_LIKE = " WHERE active = :active and (alias like :name or name like :name)";
 
   public MetricConfigManagerImpl() {
     super(MetricConfigDTO.class, MetricConfigBean.class);
   }
 
-
   @Override
   public List<MetricConfigDTO> findByDataset(String dataset) {
     Predicate predicate = Predicate.EQ("dataset", dataset);
-    List<MetricConfigBean> list = genericPojoDao.get(predicate, MetricConfigBean.class);
-    List<MetricConfigDTO> result = new ArrayList<>();
-    for (MetricConfigBean abstractBean : list) {
-      MetricConfigDTO dto = MODEL_MAPPER.map(abstractBean, MetricConfigDTO.class);
-      result.add(dto);
-    }
-    return result;
+    return findByPredicate(predicate);
   }
 
+  @Override
+  public List<MetricConfigDTO> findActiveByDataset(String dataset) {
+    Predicate datasetPredicate = Predicate.EQ("dataset", dataset);
+    Predicate activePredicate = Predicate.EQ("active", true);
+    Predicate predicate = Predicate.AND(datasetPredicate, activePredicate);
+    return findByPredicate(predicate);
+  }
 
   @Override
   public MetricConfigDTO findByMetricAndDataset(String metricName, String dataset) {
@@ -44,6 +50,10 @@ public class MetricConfigManagerImpl extends AbstractManagerImpl<MetricConfigDTO
     return result;
   }
 
+  public List<MetricConfigDTO> findByMetricName(String metricName) {
+    Predicate metricNamePredicate = Predicate.EQ("name", metricName);
+    return findByPredicate(metricNamePredicate);
+  }
 
   @Override
   public MetricConfigDTO findByAliasAndDataset(String alias, String dataset) {
@@ -58,4 +68,17 @@ public class MetricConfigManagerImpl extends AbstractManagerImpl<MetricConfigDTO
     return result;
   }
 
+  @Override
+  public List<MetricConfigDTO> findWhereNameOrAliasLikeAndActive(String name) {
+    Map<String, Object> parameterMap = new HashMap<>();
+    parameterMap.put("name", name);
+    parameterMap.put("active", true);
+    List<MetricConfigBean> list =
+        genericPojoDao.executeParameterizedSQL(FIND_BY_NAME_OR_ALIAS_LIKE, parameterMap, MetricConfigBean.class);
+    List<MetricConfigDTO> result = new ArrayList<>();
+    for (MetricConfigBean bean : list) {
+      result.add(MODEL_MAPPER.map(bean, MetricConfigDTO.class));
+    }
+    return result;
+  }
 }

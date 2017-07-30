@@ -23,11 +23,14 @@ import com.linkedin.pinot.common.segment.ReadMode;
 import com.linkedin.pinot.core.data.GenericRow;
 import com.linkedin.pinot.core.indexsegment.IndexSegment;
 import com.linkedin.pinot.core.indexsegment.generator.SegmentGeneratorConfig;
+import com.linkedin.pinot.core.operator.BaseOperator;
 import com.linkedin.pinot.core.segment.creator.impl.SegmentIndexCreationDriverImpl;
 import com.linkedin.pinot.core.segment.index.loader.Loaders;
 import com.linkedin.pinot.util.TestDataRecordReader;
 import java.io.File;
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.Map;
 import java.util.Random;
 import org.apache.commons.io.FileUtils;
 import org.testng.Assert;
@@ -45,6 +48,10 @@ public class DataFetcherTest {
   private static final String LONG_METRIC_NAME = "long_metric";
   private static final String FLOAT_METRIC_NAME = "float_metric";
   private static final String DOUBLE_METRIC_NAME = "double_metric";
+  private static final String NO_DICT_INT_METRIC_NAME = "no_dict_int_metric";
+  private static final String NO_DICT_LONG_METRIC_NAME = "no_dict_long_metric";
+  private static final String NO_DICT_FLOAT_METRIC_NAME = "no_dict_float_metric";
+  private static final String NO_DICT_DOUBLE_METRIC_NAME = "no_dict_double_metric";
   private static final int MAX_STEP_LENGTH = 5;
 
   private final long _randomSeed = System.currentTimeMillis();
@@ -58,7 +65,8 @@ public class DataFetcherTest {
   private DataFetcher _dataFetcher;
 
   @BeforeClass
-  private void setup() throws Exception {
+  private void setup()
+      throws Exception {
     GenericRow[] segmentData = new GenericRow[NUM_ROWS];
 
     // Generate random dimension and metric values.
@@ -76,6 +84,10 @@ public class DataFetcherTest {
       map.put(LONG_METRIC_NAME, _longMetricValues[i]);
       map.put(FLOAT_METRIC_NAME, _floatMetricValues[i]);
       map.put(DOUBLE_METRIC_NAME, _doubleMetricValues[i]);
+      map.put(NO_DICT_INT_METRIC_NAME, _intMetricValues[i]);
+      map.put(NO_DICT_LONG_METRIC_NAME, _longMetricValues[i]);
+      map.put(NO_DICT_FLOAT_METRIC_NAME, _floatMetricValues[i]);
+      map.put(NO_DICT_DOUBLE_METRIC_NAME, _doubleMetricValues[i]);
       GenericRow genericRow = new GenericRow();
       genericRow.init(map);
       segmentData[i] = genericRow;
@@ -89,10 +101,18 @@ public class DataFetcherTest {
     schema.addField(new MetricFieldSpec(FLOAT_METRIC_NAME, FieldSpec.DataType.FLOAT));
     schema.addField(new MetricFieldSpec(DOUBLE_METRIC_NAME, FieldSpec.DataType.DOUBLE));
 
+    schema.addField(new MetricFieldSpec(NO_DICT_INT_METRIC_NAME, FieldSpec.DataType.INT));
+    schema.addField(new MetricFieldSpec(NO_DICT_LONG_METRIC_NAME, FieldSpec.DataType.LONG));
+    schema.addField(new MetricFieldSpec(NO_DICT_FLOAT_METRIC_NAME, FieldSpec.DataType.FLOAT));
+    schema.addField(new MetricFieldSpec(NO_DICT_DOUBLE_METRIC_NAME, FieldSpec.DataType.DOUBLE));
+
     SegmentGeneratorConfig config = new SegmentGeneratorConfig(schema);
     FileUtils.deleteQuietly(new File(INDEX_DIR_PATH));
     config.setOutDir(INDEX_DIR_PATH);
     config.setSegmentName(SEGMENT_NAME);
+    config.setRawIndexCreationColumns(
+        Arrays.asList(NO_DICT_INT_METRIC_NAME, NO_DICT_LONG_METRIC_NAME, NO_DICT_FLOAT_METRIC_NAME,
+            NO_DICT_DOUBLE_METRIC_NAME));
 
     SegmentIndexCreationDriverImpl driver = new SegmentIndexCreationDriverImpl();
     driver.init(config, new TestDataRecordReader(schema, segmentData));
@@ -100,80 +120,92 @@ public class DataFetcherTest {
 
     IndexSegment indexSegment = Loaders.IndexSegment.load(new File(INDEX_DIR_PATH, SEGMENT_NAME), ReadMode.heap);
 
+    Map<String, BaseOperator> dataSourceMap = new HashMap<>();
+    for (String column : indexSegment.getColumnNames()) {
+      dataSourceMap.put(column, indexSegment.getDataSource(column));
+    }
     // Get a data fetcher for the index segment.
-    _dataFetcher = new DataFetcher(indexSegment);
+    _dataFetcher = new DataFetcher(dataSourceMap);
   }
 
   @Test
   public void testFetchSingleIntValues() {
+    testFetchSingleIntValues(INT_METRIC_NAME);
+    testFetchSingleIntValues(NO_DICT_INT_METRIC_NAME);
+  }
+
+  @Test
+  public void testFetchSingleLongValues() {
+    testFetchSingleLongValues(LONG_METRIC_NAME);
+    testFetchSingleLongValues(NO_DICT_LONG_METRIC_NAME);
+  }
+
+  @Test
+  public void testFetchSingleFloatValues() {
+    testFetchSingleFloatValues(FLOAT_METRIC_NAME);
+    testFetchSingleFloatValues(NO_DICT_FLOAT_METRIC_NAME);
+  }
+
+  @Test
+  public void testFetchSingleDoubleValues() {
+    testFetchSingleDoubleValues(DOUBLE_METRIC_NAME);
+    testFetchSingleDoubleValues(NO_DICT_DOUBLE_METRIC_NAME);
+  }
+
+  public void testFetchSingleIntValues(String column) {
     int[] docIds = new int[NUM_ROWS];
     int length = 0;
     for (int i = _random.nextInt(MAX_STEP_LENGTH); i < NUM_ROWS; i += _random.nextInt(MAX_STEP_LENGTH) + 1) {
       docIds[length++] = i;
     }
 
-    int[] dictIds = new int[length];
     int[] intValues = new int[length];
-
-    _dataFetcher.fetchSingleDictIds(INT_METRIC_NAME, docIds, 0, length, dictIds, 0);
-    _dataFetcher.fetchSingleIntValues(INT_METRIC_NAME, dictIds, 0, length, intValues, 0);
+    _dataFetcher.fetchIntValues(column, docIds, 0, length, intValues, 0);
 
     for (int i = 0; i < length; i++) {
       Assert.assertEquals(intValues[i], _intMetricValues[docIds[i]], _errorMessage);
     }
   }
 
-  @Test
-  public void testFetchSingleLongValues() {
+  public void testFetchSingleLongValues(String column) {
     int[] docIds = new int[NUM_ROWS];
     int length = 0;
     for (int i = _random.nextInt(MAX_STEP_LENGTH); i < NUM_ROWS; i += _random.nextInt(MAX_STEP_LENGTH) + 1) {
       docIds[length++] = i;
     }
 
-    int[] dictIds = new int[length];
     long[] longValues = new long[length];
-
-    _dataFetcher.fetchSingleDictIds(LONG_METRIC_NAME, docIds, 0, length, dictIds, 0);
-    _dataFetcher.fetchSingleLongValues(LONG_METRIC_NAME, dictIds, 0, length, longValues, 0);
+    _dataFetcher.fetchLongValues(column, docIds, 0, length, longValues, 0);
 
     for (int i = 0; i < length; i++) {
       Assert.assertEquals(longValues[i], _longMetricValues[docIds[i]], _errorMessage);
     }
   }
 
-  @Test
-  public void testFetchSingleFloatValues() {
+  public void testFetchSingleFloatValues(String column) {
     int[] docIds = new int[NUM_ROWS];
     int length = 0;
     for (int i = _random.nextInt(MAX_STEP_LENGTH); i < NUM_ROWS; i += _random.nextInt(MAX_STEP_LENGTH) + 1) {
       docIds[length++] = i;
     }
 
-    int[] dictIds = new int[length];
     float[] floatValues = new float[length];
-
-    _dataFetcher.fetchSingleDictIds(FLOAT_METRIC_NAME, docIds, 0, length, dictIds, 0);
-    _dataFetcher.fetchSingleFloatValues(FLOAT_METRIC_NAME, dictIds, 0, length, floatValues, 0);
+    _dataFetcher.fetchFloatValues(column, docIds, 0, length, floatValues, 0);
 
     for (int i = 0; i < length; i++) {
       Assert.assertEquals(floatValues[i], _floatMetricValues[docIds[i]], _errorMessage);
     }
   }
 
-  @Test
-  public void testFetchSingleDoubleValues() {
+  public void testFetchSingleDoubleValues(String column) {
     int[] docIds = new int[NUM_ROWS];
     int length = 0;
     for (int i = _random.nextInt(MAX_STEP_LENGTH); i < NUM_ROWS; i += _random.nextInt(MAX_STEP_LENGTH) + 1) {
       docIds[length++] = i;
     }
 
-    int[] dictIds = new int[length];
     double[] doubleValues = new double[length];
-
-    _dataFetcher.fetchSingleDictIds(DOUBLE_METRIC_NAME, docIds, 0, length, dictIds, 0);
-    _dataFetcher.fetchSingleDoubleValues(DOUBLE_METRIC_NAME, dictIds, 0, length, doubleValues, 0);
+    _dataFetcher.fetchDoubleValues(column, docIds, 0, length, doubleValues, 0);
 
     for (int i = 0; i < length; i++) {
       Assert.assertEquals(doubleValues[i], _doubleMetricValues[docIds[i]], _errorMessage);
@@ -188,33 +220,11 @@ public class DataFetcherTest {
       docIds[length++] = i;
     }
 
-    int[] dictIds = new int[length];
     String[] stringValues = new String[length];
-
-    _dataFetcher.fetchSingleDictIds(DIMENSION_NAME, docIds, 0, length, dictIds, 0);
-    _dataFetcher.fetchSingleStringValues(DIMENSION_NAME, dictIds, 0, length, stringValues, 0);
+    _dataFetcher.fetchStringValues(DIMENSION_NAME, docIds, 0, length, stringValues, 0);
 
     for (int i = 0; i < length; i++) {
       Assert.assertEquals(stringValues[i], _dimensionValues[docIds[i]], _errorMessage);
-    }
-  }
-
-  @Test
-  public void testFetchSingleHashCodes() {
-    int[] docIds = new int[NUM_ROWS];
-    int length = 0;
-    for (int i = _random.nextInt(MAX_STEP_LENGTH); i < NUM_ROWS; i += _random.nextInt(MAX_STEP_LENGTH) + 1) {
-      docIds[length++] = i;
-    }
-
-    int[] dictIds = new int[length];
-    double[] hashCodes = new double[length];
-
-    _dataFetcher.fetchSingleDictIds(DIMENSION_NAME, docIds, 0, length, dictIds, 0);
-    _dataFetcher.fetchSingleHashCodes(DIMENSION_NAME, dictIds, 0, length, hashCodes, 0);
-
-    for (int i = 0; i < length; i++) {
-      Assert.assertEquals((int) hashCodes[i], _dimensionValues[docIds[i]].hashCode(), _errorMessage);
     }
   }
 

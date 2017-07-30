@@ -25,7 +25,7 @@ enum FilterOperator {
   EQUALITY,
   NOT,
   RANGE,
-  REGEX,
+  REGEXP_LIKE,
   NOT_IN,
   IN
 }
@@ -85,6 +85,7 @@ struct AggregationInfo {
 struct GroupBy {
   1: optional list<string> columns;
   2: optional i64 topN;
+  3: optional list<string> expressions;
 }
 
 /**
@@ -126,6 +127,7 @@ struct BrokerRequest {
  11: optional bool enableTrace;
  12: optional string responseFormat;
  13: optional map<string, string> debugOptions;
+ 14: optional map<string, string> queryOptions;
 }
 
 /**

@@ -15,7 +15,8 @@
  */
 package com.linkedin.pinot.server.integration;
 
-import com.linkedin.pinot.common.query.QueryRequest;
+import com.linkedin.pinot.common.metrics.ServerMetrics;
+import com.linkedin.pinot.common.query.ServerQueryRequest;
 import com.linkedin.pinot.core.query.scheduler.QueryScheduler;
 import com.yammer.metrics.core.MetricsRegistry;
 import java.io.File;
@@ -58,33 +59,34 @@ public class InstanceServerStarter {
 
     LOGGER.info("Trying to build QueryExecutor");
     final QueryExecutor queryExecutor = serverBuilder.buildQueryExecutor(instanceDataManager);
-
-    System.out.println(getCountQuery().toString());
-    sendQueryToQueryExecutor(getCountQuery(), queryExecutor);
-    sendQueryToQueryExecutor(getSumQuery(), queryExecutor);
-    sendQueryToQueryExecutor(getMaxQuery(), queryExecutor);
-    sendQueryToQueryExecutor(getMinQuery(), queryExecutor);
-
-    LOGGER.info("Trying to build RequestHandlerFactory");
     QueryScheduler queryScheduler = serverBuilder.buildQueryScheduler(queryExecutor);
     RequestHandlerFactory simpleRequestHandlerFactory = serverBuilder.buildRequestHandlerFactory(queryScheduler);
     LOGGER.info("Trying to build NettyServer");
 
     System.out.println(getMaxQuery());
     String queryJson = "";
+    System.out.println(getCountQuery().toString());
+    sendQueryToQueryExecutor(getCountQuery(), queryExecutor, queryScheduler, serverBuilder.getServerMetrics());
+    sendQueryToQueryExecutor(getSumQuery(), queryExecutor,  queryScheduler, serverBuilder.getServerMetrics());
+    sendQueryToQueryExecutor(getMaxQuery(), queryExecutor,  queryScheduler, serverBuilder.getServerMetrics());
+    sendQueryToQueryExecutor(getMinQuery(), queryExecutor,  queryScheduler, serverBuilder.getServerMetrics());
+
+    LOGGER.info("Trying to build RequestHandlerFactory");
+
   }
 
-  private static void sendQueryToQueryExecutor(BrokerRequest brokerRequest, QueryExecutor queryExecutor) {
+  private static void sendQueryToQueryExecutor(BrokerRequest brokerRequest, QueryExecutor queryExecutor,
+      QueryScheduler queryScheduler, ServerMetrics metrics) {
 
     QuerySource querySource = new QuerySource();
     querySource.setTableName("midas");
     brokerRequest.setQuerySource(querySource);
     InstanceRequest instanceRequest = new InstanceRequest(0, brokerRequest);
     try {
-      QueryRequest queryRequest = new QueryRequest(instanceRequest);
-      DataTable instanceResponse = queryExecutor.processQuery(queryRequest);
+      ServerQueryRequest queryRequest = new ServerQueryRequest(instanceRequest, metrics);
+      DataTable instanceResponse = queryExecutor.processQuery(queryRequest, queryScheduler.getWorkerExecutorService());
       System.out.println(instanceResponse.toString());
-      System.out.println("Query Time Used : " + instanceResponse.getMetadata().get("timeUsedMs"));
+      System.out.println("Query Time Used : " + instanceResponse.getMetadata().get(DataTable.TIME_USED_MS_METADATA_KEY));
     } catch (Exception e) {
       e.printStackTrace();
     }

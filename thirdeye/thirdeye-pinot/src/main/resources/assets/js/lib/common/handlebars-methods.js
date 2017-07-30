@@ -83,15 +83,22 @@ $(document).ready(function () {
         }
     });
 
-
-    //Helper for anomaly function form, here we can set the desired display of any function property
-    Handlebars.registerHelper('displayAnomalyResultDimensionValue', function (value) {
-
-        var displayValue = value.replace(/[,*\s]/g, "");
-        if(displayValue.length == 0){
-            displayValue = "ALL";
+    Handlebars.registerHelper('displayAnomalyResultExploreDimensions', function (dimensionMap) {
+        var dimensionString = "";
+        var separator = "";
+        var mapSize = 0;
+        for (var dimensionName in dimensionMap) {
+            if (dimensionMap.hasOwnProperty(dimensionName)) {
+                dimensionString += separator + dimensionName + ":" + dimensionMap[dimensionName];
+                separator = "; ";
+                ++mapSize;
+            }
         }
-        return displayValue
+        if (mapSize == 0) {
+            return "ALL";
+        } else {
+            return dimensionString;
+        }
     });
 
 
@@ -232,7 +239,6 @@ $(document).ready(function () {
         return moment(millis).tz(tz).format(displayDateFormat);
     });
 
-
     //Takes 2 timestamps and returns a date range where the end date is hours only, month & day & hours, or full date based on the equality of the 2 dates
     Handlebars.registerHelper('displayDateRange', function (start, end) {
 
@@ -241,37 +247,37 @@ $(document).ready(function () {
         }
 
         //Options
-       // var showTimeZone = options.hash.hasOwnProperty("showTimeZone") ? (options.hash.showTimeZone == false ? false : true) : true;
+        // var showTimeZone = options.hash.hasOwnProperty("showTimeZone") ? (options.hash.showTimeZone == false ? false : true) : true;
 
         var tz = getTimeZone();
         var startMillis = parseInt(start);
         var endMillis = parseInt(end);
         var startDate = moment(startMillis).tz(tz).format('YYYY/MM/DD');
-        var endDate =  moment( endMillis).tz(tz).format('YYYY/MM/DD');
+        var endDate = moment(endMillis).tz(tz).format('YYYY/MM/DD');
         var startMonth = moment(startMillis).tz(tz).format('YYYY/MM');
-        var endMonth =  moment( endMillis).tz(tz).format('YYYY/MM');
-        var startYear =  moment(startMillis).tz(tz).format('YYYY');
-        var endYear =  moment( endMillis).tz(tz).format('YYYY');
+        var endMonth = moment(endMillis).tz(tz).format('YYYY/MM');
+        var startYear = moment(startMillis).tz(tz).format('YYYY');
+        var endYear = moment(endMillis).tz(tz).format('YYYY');
 
-        var startDateFormat = 'MM/DD h a';
+        var startDateFormat = 'MM/DD h:m a';
         var endDateFormat;
-        if(startYear == endYear){
-            if(startMonth == endMonth){
-                  if(startDate == endDate){
-                      endDateFormat = 'h a'
-                  }else{
-                      endDateFormat = 'MM/DD h a'
-                  }
-            }else{
-                endDateFormat = 'MM/DD h a'
+        if (startYear == endYear) {
+            if (startMonth == endMonth) {
+                if (startDate == endDate) {
+                    endDateFormat = 'h:m a'
+                } else {
+                    endDateFormat = 'MM/DD h:m a'
+                }
+            } else {
+                endDateFormat = 'MM/DD h:m a'
             }
-        }else{
-            startDateFormat = 'YY/MM/DD h a'
-            endDateFormat = 'YY/MM/DD h a'
-
+        } else {
+            startDateFormat = 'YY/MM/DD h:m a'
+            endDateFormat = 'YY/MM/DD h:m a'
         }
 
-        return moment(startMillis).tz(tz).format(startDateFormat) + " - " + moment(endMillis).tz(tz).format(endDateFormat)
+        return moment(startMillis).tz(tz).format(startDateFormat) + " - " + moment(endMillis).tz(
+                tz).format(endDateFormat)
     });
 
     //takes utc timestamp (milliseconds ie. 1462626000000), returns date and time in users tz in a format in sync with the hash aggregate granularity
@@ -415,11 +421,17 @@ $(document).ready(function () {
     var source_treemap_template = $("#treemap-template").html();
     HandleBarsTemplates.template_treemap = Handlebars.compile(source_treemap_template);
 
+    var source_treemap_summary_template = $("#heatmap-summary-template").html();
+    HandleBarsTemplates.template_treemap_summary = Handlebars.compile(source_treemap_summary_template);
+
     var source_metric_time_series_section = $("#metric-time-series-section-template").html();
     HandleBarsTemplates.template_metric_time_series_section = Handlebars.compile(source_metric_time_series_section);
 
     var source_time_series_template = $("#time-series-template").html();
     HandleBarsTemplates.template_time_series = Handlebars.compile(source_time_series_template);
+
+    var source_anomaly_details_template = $("#anomaly-details-template").html();
+    HandleBarsTemplates.template_anomaly_details = Handlebars.compile(source_anomaly_details_template);
 
     var source_anomalies_template = $("#anomalies-template").html();
     HandleBarsTemplates.template_anomalies = Handlebars.compile(source_anomalies_template);

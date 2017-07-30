@@ -1,17 +1,21 @@
 package com.linkedin.thirdeye.anomaly.job;
 
 import com.linkedin.thirdeye.datalayer.bao.AnomalyFunctionManager;
+import com.linkedin.thirdeye.datalayer.bao.DatasetConfigManager;
 import com.linkedin.thirdeye.datalayer.bao.EmailConfigurationManager;
 import com.linkedin.thirdeye.datalayer.bao.JobManager;
+import com.linkedin.thirdeye.datalayer.bao.MetricConfigManager;
 import com.linkedin.thirdeye.datalayer.bao.TaskManager;
-import com.linkedin.thirdeye.detector.function.AnomalyFunctionFactory;
 
 public abstract class JobContext {
 
-  private JobManager anomalyJobDAO;
-  private TaskManager anomalyTaskDAO;
+  // Todo : remove DAOs from here as we can inject these wherever needed.
+  private JobManager jobDAO;
+  private TaskManager taskDAO;
   private AnomalyFunctionManager anomalyFunctionDAO;
   private EmailConfigurationManager emailConfigurationDAO;
+  private DatasetConfigManager datasetConfigDAO;
+  private MetricConfigManager metricConfigDAO;
 
   private String jobName;
   private long jobExecutionId;
@@ -25,20 +29,20 @@ public abstract class JobContext {
     this.jobExecutionId = jobExecutionId;
   }
 
-  public JobManager getAnomalyJobDAO() {
-    return anomalyJobDAO;
+  public JobManager getJobDAO() {
+    return jobDAO;
   }
 
-  public void setAnomalyJobDAO(JobManager anomalyJobDAO) {
-    this.anomalyJobDAO = anomalyJobDAO;
+  public void setJobDAO(JobManager jobDAO) {
+    this.jobDAO = jobDAO;
   }
 
-  public TaskManager getAnomalyTaskDAO() {
-    return anomalyTaskDAO;
+  public TaskManager getTaskDAO() {
+    return taskDAO;
   }
 
-  public void setAnomalyTaskDAO(TaskManager anomalyTaskDAO) {
-    this.anomalyTaskDAO = anomalyTaskDAO;
+  public void setTaskDAO(TaskManager taskDAO) {
+    this.taskDAO = taskDAO;
   }
 
   public AnomalyFunctionManager getAnomalyFunctionDAO() {
@@ -64,5 +68,23 @@ public abstract class JobContext {
   public void setEmailConfigurationDAO(EmailConfigurationManager emailConfigurationDAO) {
     this.emailConfigurationDAO = emailConfigurationDAO;
   }
+
+  public DatasetConfigManager getDatasetConfigDAO() {
+    return datasetConfigDAO;
+  }
+
+  public void setDatasetConfigDAO(DatasetConfigManager datasetConfigDAO) {
+    this.datasetConfigDAO = datasetConfigDAO;
+  }
+
+  public MetricConfigManager getMetricConfigDAO() {
+    return metricConfigDAO;
+  }
+
+  public void setMetricConfigDAO(MetricConfigManager metricConfigDAO) {
+    this.metricConfigDAO = metricConfigDAO;
+  }
+
+
 
 }

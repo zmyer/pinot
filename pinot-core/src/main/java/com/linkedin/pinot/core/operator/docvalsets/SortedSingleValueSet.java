@@ -16,14 +16,15 @@
 package com.linkedin.pinot.core.operator.docvalsets;
 
 import com.linkedin.pinot.common.data.FieldSpec.DataType;
+import com.linkedin.pinot.core.common.BaseBlockValSet;
 import com.linkedin.pinot.core.common.BlockValIterator;
-import com.linkedin.pinot.core.common.BlockValSet;
 import com.linkedin.pinot.core.io.reader.impl.SortedForwardIndexReader;
 import com.linkedin.pinot.core.io.reader.impl.SortedValueReaderContext;
 import com.linkedin.pinot.core.operator.docvaliterators.SortedSingleValueIterator;
 
-public final class SortedSingleValueSet implements BlockValSet {
- 
+
+public final class SortedSingleValueSet extends BaseBlockValSet {
+
   private SortedForwardIndexReader sVReader;
 
   public SortedSingleValueSet(SortedForwardIndexReader sVReader) {
@@ -42,7 +43,8 @@ public final class SortedSingleValueSet implements BlockValSet {
   }
 
   @Override
-  public void readIntValues(int[] inDocIds, int inStartPos, int inDocIdsSize, int[] outDictionaryIds, int outStartPos) {
+  public void getDictionaryIds(int[] inDocIds, int inStartPos, int inDocIdsSize, int[] outDictionaryIds,
+      int outStartPos) {
     SortedValueReaderContext readerContext = sVReader.createContext();
     int endPos = inStartPos + inDocIdsSize;
     for (int iter = inStartPos; iter < endPos; iter++) {

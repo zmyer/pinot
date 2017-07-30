@@ -15,18 +15,9 @@
  */
 package com.linkedin.pinot.server.starter.helix;
 
-import com.linkedin.pinot.common.utils.SchemaUtils;
-import java.io.File;
-import java.io.IOException;
-import java.util.concurrent.TimeUnit;
-import org.apache.commons.configuration.Configuration;
-import org.apache.commons.io.FileUtils;
-import org.apache.helix.ZNRecord;
-import org.apache.helix.store.zk.ZkHelixPropertyStore;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import com.linkedin.pinot.common.Utils;
-import com.linkedin.pinot.common.config.AbstractTableConfig;
+import com.linkedin.pinot.common.config.TableConfig;
+import com.linkedin.pinot.common.config.TableNameBuilder;
 import com.linkedin.pinot.common.data.DataManager;
 import com.linkedin.pinot.common.data.Schema;
 import com.linkedin.pinot.common.metadata.ZKMetadataProvider;
@@ -36,8 +27,19 @@ import com.linkedin.pinot.common.segment.SegmentMetadataLoader;
 import com.linkedin.pinot.common.segment.fetcher.SegmentFetcherFactory;
 import com.linkedin.pinot.common.utils.CommonConstants;
 import com.linkedin.pinot.common.utils.TarGzCompressionUtils;
-import com.linkedin.pinot.common.utils.helix.PinotHelixPropertyStoreZnRecordProvider;
 import com.linkedin.pinot.core.segment.index.SegmentMetadataImpl;
+import com.linkedin.pinot.core.segment.index.loader.LoaderUtils;
+import com.linkedin.pinot.core.segment.index.loader.V3RemoveIndexException;
+import java.io.File;
+import java.util.concurrent.TimeUnit;
+import javax.annotation.Nonnull;
+import org.apache.commons.configuration.Configuration;
+import org.apache.commons.io.FileUtils;
+import org.apache.helix.ZNRecord;
+import org.apache.helix.store.zk.ZkHelixPropertyStore;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 
 public class SegmentFetcherAndLoader {
   private static final Logger LOGGER = LoggerFactory.getLogger(SegmentFetcherAndLoader.class);
@@ -51,8 +53,7 @@ public class SegmentFetcherAndLoader {
   private final long _segmentLoadMinRetryDelayMs; // Min delay (in msecs) between retries
 
   public SegmentFetcherAndLoader(DataManager dataManager, SegmentMetadataLoader metadataLoader,
-      ZkHelixPropertyStore<ZNRecord> propertyStore, Configuration pinotHelixProperties,
-      String instanceId) {
+      ZkHelixPropertyStore<ZNRecord> propertyStore, Configuration pinotHelixProperties, String instanceId) {
     _propertyStore = propertyStore;
     _dataManager = dataManager;
     _metadataLoader = metadataLoader;
@@ -86,12 +87,7 @@ public class SegmentFetcherAndLoader {
 
     // Try to load table schema from Helix property store.
     // This schema is used for adding default values for newly added columns.
-    Schema schema = null;
-    try {
-      schema = getSchema(tableName);
-    } catch (Exception e) {
-      LOGGER.error("Caught exception while trying to load schema for table: {}", tableName, e);
-    }
+    Schema schema = ZKMetadataProvider.getTableSchema(_propertyStore, tableName);
 
     LOGGER.info("Adding or replacing segment {} for table {}, metadata {}", segmentId, tableName, offlineSegmentZKMetadata);
     try {
@@ -103,30 +99,41 @@ public class SegmentFetcherAndLoader {
 
       if (localSegmentMetadata == null) {
         LOGGER.info("Segment {} of table {} is not loaded in memory, checking disk", segmentId, tableName);
-        final String localSegmentDir = getSegmentLocalDirectory(tableName, segmentId);
-        if (new File(localSegmentDir).exists()) {
+        File indexDir = new File(getSegmentLocalDirectory(tableName, segmentId));
+        // Restart during segment reload might leave segment in inconsistent state (index directory might not exist but
+        // segment backup directory existed), need to first try to recover from reload failure before checking the
+        // existence of the index directory and loading segment metadata from it
+        LoaderUtils.reloadFailureRecovery(indexDir);
+        if (indexDir.exists()) {
           LOGGER.info("Segment {} of table {} found on disk, attempting to load it", segmentId, tableName);
           try {
-            localSegmentMetadata = _metadataLoader.loadIndexSegmentMetadataFromDir(localSegmentDir);
+            localSegmentMetadata = new SegmentMetadataImpl(indexDir);
             LOGGER.info("Found segment {} of table {} with crc {} on disk", segmentId, tableName, localSegmentMetadata.getCrc());
           } catch (Exception e) {
             // The localSegmentDir should help us get the table name,
-            LOGGER.error("Failed to load segment metadata from {}. Deleting it.", localSegmentDir, e);
-            FileUtils.deleteQuietly(new File(localSegmentDir));
+            LOGGER.error("Failed to load segment metadata from {}. Deleting it.", indexDir, e);
+            FileUtils.deleteQuietly(indexDir);
             localSegmentMetadata = null;
           }
           try {
             if (!isNewSegmentMetadata(localSegmentMetadata, segmentMetadataForCheck, segmentId, tableName)) {
               LOGGER.info("Segment metadata same as before, loading {} of table {} (crc {}) from disk", segmentId,
                   tableName, localSegmentMetadata.getCrc());
-              AbstractTableConfig tableConfig = ZKMetadataProvider.getOfflineTableConfig(_propertyStore, tableName);
+              TableConfig tableConfig = ZKMetadataProvider.getOfflineTableConfig(_propertyStore, tableName);
               _dataManager.addSegment(localSegmentMetadata, tableConfig, schema);
               // TODO Update zk metadata with CRC for this instance
               return;
             }
+          } catch (V3RemoveIndexException e) {
+            LOGGER.info(
+                "Unable to remove local index from V3 format segment: {}, table: {}, try to reload it from controller.",
+                segmentId, tableName, e);
+            FileUtils.deleteQuietly(indexDir);
+            localSegmentMetadata = null;
           } catch (Exception e) {
-            LOGGER.error("Failed to load {} of table {} from local, will try to reload it from controller!", segmentId, tableName, e);
-            FileUtils.deleteQuietly(new File(localSegmentDir));
+            LOGGER.error("Failed to load {} of table {} from local, will try to reload it from controller!", segmentId,
+                tableName, e);
+            FileUtils.deleteQuietly(indexDir);
             localSegmentMetadata = null;
           }
         }
@@ -155,7 +162,7 @@ public class SegmentFetcherAndLoader {
         for (retryCount = 0; retryCount < maxRetryCount; ++retryCount) {
           long attemptStartTime = System.currentTimeMillis();
           try {
-            AbstractTableConfig tableConfig = ZKMetadataProvider.getOfflineTableConfig(_propertyStore, tableName);
+            TableConfig tableConfig = ZKMetadataProvider.getOfflineTableConfig(_propertyStore, tableName);
             final String uri = offlineSegmentZKMetadata.getDownloadUrl();
             final String localSegmentDir = downloadSegmentToLocal(uri, tableName, segmentId);
             final SegmentMetadata segmentMetadata =
@@ -192,11 +199,10 @@ public class SegmentFetcherAndLoader {
             }
           }
         }
-        if (_segmentLoadMaxRetryCount <= retryCount) {
-          String msg =
-              "Failed to download segment " + segmentId + " (table " + tableName + " after " + retryCount + " retries";
-          LOGGER.error(msg);
-          throw new RuntimeException(msg);
+        if (retryCount == maxRetryCount) {
+          throw new RuntimeException(
+              "Failed to download and load segment " + segmentId + " (table " + tableName + " after " + retryCount
+                  + " retries");
         }
       } else {
         LOGGER.info("Got already loaded segment {} of table {} crc {} again, will do nothing.", segmentId, tableName, localSegmentMetadata.getCrc());
@@ -205,19 +211,6 @@ public class SegmentFetcherAndLoader {
       LOGGER.error("Cannot load segment : " + segmentId + " for table " + tableName, e);
       Utils.rethrowException(e);
       throw new AssertionError("Should not reach this");
-    }
-  }
-
-  private Schema getSchema(String schemaName)
-      throws IOException {
-    PinotHelixPropertyStoreZnRecordProvider propertyStoreHelper =
-        PinotHelixPropertyStoreZnRecordProvider.forSchema(_propertyStore);
-    ZNRecord record = propertyStoreHelper.get(schemaName);
-    if (record != null) {
-      LOGGER.info("Found schema: {}", schemaName);
-      return SchemaUtils.fromZNRecord(record);
-    } else {
-      return null;
     }
   }
 
@@ -248,7 +241,7 @@ public class SegmentFetcherAndLoader {
       SegmentFetcherFactory.getSegmentFetcherBasedOnURI(uri).fetchSegmentToLocal(uri, tempFile);
       LOGGER.info("Downloaded file from {} to {}; Length of downloaded file: {}; segmentName: {}; table: {}", uri, tempFile,
           tempFile.length(), segmentId, tableName);
-      LOGGER.info("Trying to uncompress segment tar file from {} to {} for table {}", tempFile, tempSegmentFile, tableName);
+      LOGGER.info("Trying to decompress segment tar file from {} to {} for table {}", tempFile, tempSegmentFile, tableName);
 
       TarGzCompressionUtils.unTar(tempFile, tempSegmentFile);
       FileUtils.deleteQuietly(tempFile);
@@ -278,5 +271,41 @@ public class SegmentFetcherAndLoader {
 
   public String getSegmentLocalDirectory(String tableName, String segmentId) {
     return _dataManager.getSegmentDataDirectory() + "/" + tableName + "/" + segmentId;
+  }
+
+  public void reloadAllSegments(@Nonnull String tableNameWithType)
+      throws Exception {
+    for (SegmentMetadata segmentMetadata : _dataManager.getAllSegmentsMetadata(tableNameWithType)) {
+      reloadSegment(tableNameWithType, segmentMetadata);
+    }
+  }
+
+  public void reloadSegment(@Nonnull String tableNameWithType, @Nonnull String segmentName)
+      throws Exception {
+    SegmentMetadata segmentMetadata = _dataManager.getSegmentMetadata(tableNameWithType, segmentName);
+    if (segmentMetadata == null) {
+      LOGGER.warn("Cannot locate segment: {} in table: {]", segmentName, tableNameWithType);
+      return;
+    }
+    reloadSegment(tableNameWithType, segmentMetadata);
+  }
+
+  private void reloadSegment(@Nonnull String tableNameWithType, @Nonnull SegmentMetadata segmentMetadata)
+      throws Exception {
+    String segmentName = segmentMetadata.getName();
+
+    String indexDir = segmentMetadata.getIndexDir();
+    if (indexDir == null) {
+      LOGGER.info("Skip reloading REALTIME consuming segment: {} in table: {}", segmentName, tableNameWithType);
+      return;
+    }
+
+    TableConfig tableConfig = ZKMetadataProvider.getTableConfig(_propertyStore, tableNameWithType);
+    Schema schema = null;
+    // For OFFLINE table, try to get schema for default columns
+    if (TableNameBuilder.OFFLINE.tableHasTypeSuffix(tableNameWithType)) {
+      schema = ZKMetadataProvider.getTableSchema(_propertyStore, tableNameWithType);
+    }
+    _dataManager.reloadSegment(tableNameWithType, segmentMetadata, tableConfig, schema);
   }
 }

@@ -15,122 +15,130 @@
  */
 package com.linkedin.pinot.core.plan;
 
-import com.linkedin.pinot.common.exception.QueryException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import com.linkedin.pinot.common.request.BrokerRequest;
 import com.linkedin.pinot.core.common.Operator;
 import com.linkedin.pinot.core.operator.MCombineGroupByOperator;
 import com.linkedin.pinot.core.operator.MCombineOperator;
-import com.linkedin.pinot.core.util.trace.TraceRunnable;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.TimeUnit;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.linkedin.pinot.core.query.exception.BadQueryRequestException;
+import com.linkedin.pinot.core.util.trace.TraceCallable;
 
 
 /**
- * CombinePlanNode takes care how to create MCombineOperator.
- *
- *
+ * The <code>CombinePlanNode</code> class provides the execution plan for combining results from multiple segments.
  */
 public class CombinePlanNode implements PlanNode {
   private static final Logger LOGGER = LoggerFactory.getLogger(CombinePlanNode.class);
-  private List<PlanNode> _planNodeList = new ArrayList<PlanNode>();
+
+  private static final int NUM_PLAN_NODES_THRESHOLD_FOR_PARALLEL_RUN = 10;
+  private static final int TIME_OUT_IN_MILLISECONDS_FOR_PARALLEL_RUN = 10_000;
+
+  private final List<PlanNode> _planNodes;
   private final BrokerRequest _brokerRequest;
   private final ExecutorService _executorService;
   private final long _timeOutMs;
-  private final boolean _enableNewAggreagationGroupBy;
 
-  public CombinePlanNode(BrokerRequest brokerRequest, ExecutorService executorService, long timeOutMs,
-      boolean enableNewAggreagationGroupBy) {
+  /**
+   * Constructor.
+   *
+   * @param planNodes list of underlying plan nodes.
+   * @param brokerRequest broker request.
+   * @param executorService executor service.
+   * @param timeOutMs time out in milliseconds.
+   */
+  public CombinePlanNode(List<PlanNode> planNodes, BrokerRequest brokerRequest, ExecutorService executorService,
+      long timeOutMs) {
+    _planNodes = planNodes;
     _brokerRequest = brokerRequest;
     _executorService = executorService;
     _timeOutMs = timeOutMs;
-    _enableNewAggreagationGroupBy = enableNewAggreagationGroupBy;
-  }
-
-  public void addPlanNode(PlanNode planNode) {
-    _planNodeList.add(planNode);
-  }
-
-  public List<PlanNode> getPlanNodeList() {
-    return _planNodeList;
   }
 
   @Override
   public Operator run() {
     long start = System.currentTimeMillis();
-    final List<Operator> retOperators = new ArrayList<Operator>(_planNodeList.size());
-    if (_planNodeList.size() < 10) {
-      for (PlanNode planNode : _planNodeList) {
-        retOperators.add(planNode.run());
+
+    int numPlanNodes = _planNodes.size();
+    List<Operator> operators = new ArrayList<>(numPlanNodes);
+
+    if (numPlanNodes < NUM_PLAN_NODES_THRESHOLD_FOR_PARALLEL_RUN) {
+      // Small number of plan nodes, run them sequentially.
+      for (PlanNode planNode : _planNodes) {
+        operators.add(planNode.run());
       }
     } else {
-      final CountDownLatch latch = new CountDownLatch(_planNodeList.size());
-      final ConcurrentLinkedQueue<Operator> queue = new ConcurrentLinkedQueue<Operator>();
-      for (final PlanNode planNode : _planNodeList) {
-        _executorService.execute(new TraceRunnable() {
+      // Large number of plan nodes, run them parallel.
+
+      // Calculate the timeout timestamp.
+      long timeout = start + TIME_OUT_IN_MILLISECONDS_FOR_PARALLEL_RUN;
+
+      // Submit all jobs.
+      List<Future<Operator>> futures = new ArrayList<>(numPlanNodes);
+      for (final PlanNode planNode : _planNodes) {
+        futures.add(_executorService.submit(new TraceCallable<Operator>() {
           @Override
-          public void runJob() {
-            try {
-              Operator operator = planNode.run();
-              queue.add(operator);
-            } catch (Exception e) {
-              LOGGER.error("Getting exception when trying to run a planNode", e);
-            } finally {
-              latch.countDown();
+          public Operator callJob()
+              throws Exception {
+            return planNode.run();
+          }
+        }));
+      }
+
+      // Try to get results from all jobs. Cancel all remaining jobs if caught any exception.
+      int index = 0;
+      try {
+        while (index < numPlanNodes) {
+          Future<Operator> future = futures.get(index);
+          try {
+            operators.add(future.get(timeout - System.currentTimeMillis(), TimeUnit.MILLISECONDS));
+          } catch (Exception e) {
+            // Future object will throw ExecutionException for execution exception, need to check the cause to determine
+            // whether it is caused by bad query
+            Throwable cause = e.getCause();
+            if (cause instanceof BadQueryRequestException) {
+              throw (BadQueryRequestException) cause;
+            } else {
+              throw new RuntimeException("Caught exception while running CombinePlanNode.", e);
             }
           }
-        });
-      }
-      try {
-        latch.await(60, TimeUnit.SECONDS);
-        retOperators.addAll(queue);
-      } catch (InterruptedException e) {
-        LOGGER.error("Interupted exception. Planning each segment took more than 60 seconds: ", e);
-        throw new RuntimeException(QueryException.COMBINE_SEGMENT_PLAN_TIMEOUT_ERROR);
+          index++;
+        }
+      } finally {
+        while (index < numPlanNodes) {
+          futures.get(index).cancel(true);
+          index++;
+        }
       }
     }
-    Operator mCombineOperator = getCombineOperator(retOperators);
-    long end = System.currentTimeMillis();
-    LOGGER.debug("CombinePlanNode.run took: " + (end - start));
-    return mCombineOperator;
-  }
 
-  /**
-   * This method returns the appropriate combine operator as per the requirement:
-   * - If new implementation of aggregation group-by is enabled, and this is a group-by
-   *   query, then returns MCombineGroupByOperator.
-   * - Returns the MCombineOperator, otherwise.
-   *
-   * This is a temporary method until, the new group-by implementation is completely turned ON,
-   * and will be removed after that.
-   *
-   * @param retOperators
-   * @return
-   */
-  private Operator getCombineOperator(List<Operator> retOperators) {
-    if (_enableNewAggreagationGroupBy && _brokerRequest.isSetAggregationsInfo()
-        && _brokerRequest.getGroupBy() != null) {
-      return new MCombineGroupByOperator(retOperators, _executorService, _timeOutMs, _brokerRequest);
+    long end = System.currentTimeMillis();
+    LOGGER.debug("CombinePlanNode.run took: {}ms", end - start);
+
+    // TODO: use the same combine operator for both aggregation and selection query.
+    if (_brokerRequest.isSetAggregationsInfo() && _brokerRequest.getGroupBy() != null) {
+      // Aggregation group-by query.
+      return new MCombineGroupByOperator(operators, _executorService, _timeOutMs, _brokerRequest);
+    } else {
+      // Selection or aggregation only query.
+      return new MCombineOperator(operators, _executorService, _timeOutMs, _brokerRequest);
     }
-    return new MCombineOperator(retOperators, _executorService, _timeOutMs, _brokerRequest);
   }
 
   @Override
   public void showTree(String prefix) {
-    LOGGER.debug(prefix + "Combine Plan Node :");
-    LOGGER.debug(prefix + "Operator: MCombineOperator");
+    LOGGER.debug(prefix + "Instance Level Inter-Segments Combine Plan Node:");
+    LOGGER.debug(prefix + "Operator: MCombineOperator/MCombineGroupByOperator");
     LOGGER.debug(prefix + "Argument 0: BrokerRequest - " + _brokerRequest);
-    LOGGER.debug(prefix + "Argument 1: isParallel - " + ((_executorService == null) ? false : true));
-    int i = 2;
-    for (PlanNode planNode : _planNodeList) {
+    int i = 1;
+    for (PlanNode planNode : _planNodes) {
       LOGGER.debug(prefix + "Argument " + (i++) + ":");
       planNode.showTree(prefix + "    ");
     }
   }
-
 }

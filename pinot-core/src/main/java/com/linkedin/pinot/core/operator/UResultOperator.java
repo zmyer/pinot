@@ -15,9 +15,6 @@
  */
 package com.linkedin.pinot.core.operator;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import com.linkedin.pinot.core.common.Block;
 import com.linkedin.pinot.core.common.BlockId;
 import com.linkedin.pinot.core.common.Operator;
@@ -31,9 +28,7 @@ import com.linkedin.pinot.core.operator.blocks.InstanceResponseBlock;
  *
  */
 public class UResultOperator extends BaseOperator {
-
-  private static final Logger LOGGER = LoggerFactory.getLogger(UResultOperator.class);
-
+  private static final String OPERATOR_NAME = "UResultOperator";
   private final Operator _operator;
 
   public UResultOperator(Operator combinedOperator) {
@@ -48,18 +43,17 @@ public class UResultOperator extends BaseOperator {
 
   @Override
   public Block getNextBlock() {
-    InstanceResponseBlock instanceResponseBlock = new InstanceResponseBlock(_operator.nextBlock());
-    return instanceResponseBlock;
+    return new InstanceResponseBlock(_operator.nextBlock());
   }
 
   @Override
-  public Block getNextBlock(BlockId BlockId) {
+  public Block getNextBlock(BlockId blockId) {
     throw new UnsupportedOperationException();
   }
 
   @Override
   public String getOperatorName() {
-    return "UResultOperator";
+    return OPERATOR_NAME;
   }
 
   @Override
@@ -67,5 +61,4 @@ public class UResultOperator extends BaseOperator {
     _operator.close();
     return true;
   }
-
 }

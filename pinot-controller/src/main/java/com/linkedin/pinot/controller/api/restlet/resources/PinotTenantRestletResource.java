@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2014-2015 LinkedIn Corp. (pinot-core@linkedin.com)
+ * Copyright (C) 2014-2016 LinkedIn Corp. (pinot-core@linkedin.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,11 +15,22 @@
  */
 package com.linkedin.pinot.controller.api.restlet.resources;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.common.io.ByteStreams;
+import com.linkedin.pinot.common.config.Tenant;
+import com.linkedin.pinot.common.metrics.ControllerMeter;
+import com.linkedin.pinot.common.restlet.swagger.Description;
+import com.linkedin.pinot.common.restlet.swagger.HttpVerb;
+import com.linkedin.pinot.common.restlet.swagger.Parameter;
+import com.linkedin.pinot.common.restlet.swagger.Paths;
+import com.linkedin.pinot.common.restlet.swagger.Summary;
+import com.linkedin.pinot.common.restlet.swagger.Tags;
+import com.linkedin.pinot.common.utils.TenantRole;
+import com.linkedin.pinot.controller.api.ControllerRestApplication;
+import com.linkedin.pinot.controller.helix.core.PinotResourceManagerResponse;
+import com.linkedin.pinot.controller.helix.core.PinotResourceManagerResponse.ResponseStatus;
 import java.util.HashSet;
 import java.util.Set;
-
-import com.linkedin.pinot.common.metrics.ControllerMeter;
-import com.linkedin.pinot.controller.api.ControllerRestApplication;
 import org.json.JSONException;
 import org.json.JSONObject;
 import org.restlet.data.MediaType;
@@ -34,40 +45,28 @@ import org.restlet.resource.Put;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.common.io.ByteStreams;
-import com.linkedin.pinot.common.config.Tenant;
-import com.linkedin.pinot.common.utils.TenantRole;
-import com.linkedin.pinot.common.restlet.swagger.Description;
-import com.linkedin.pinot.common.restlet.swagger.HttpVerb;
-import com.linkedin.pinot.common.restlet.swagger.Parameter;
-import com.linkedin.pinot.common.restlet.swagger.Paths;
-import com.linkedin.pinot.common.restlet.swagger.Summary;
-import com.linkedin.pinot.common.restlet.swagger.Tags;
-import com.linkedin.pinot.controller.helix.core.PinotResourceManagerResponse;
-import com.linkedin.pinot.controller.helix.core.PinotResourceManagerResponse.ResponseStatus;
-
 
 /**
- *  Sample curl call to create broker tenant
- *  curl -i -X POST -H 'Content-Type: application/json' -d
- *  '{
- *    "role" : "broker",
- *    "numberOfInstances : "5",
- *    "name" : "brokerOne"
- *    }' http://lva1-pinot-controller-vip-1.corp.linkedin.com:11984/tenants
+ * <ul>
+ *   <li>Sample curl call to create broker tenant</li>
+ *   curl -i -X POST -H 'Content-Type: application/json' -d
+ *   '{
+ *     "role" : "broker",
+ *     "numberOfInstances : "5",
+ *     "name" : "brokerOne"
+ *   }' http://localhost:1234/tenants
  *
- *  Sample curl call to create server tenant
- *  curl -i -X POST -H 'Content-Type: application/json' -d
- *  '{
- *    "role" : "server",
- *    "numberOfInstances : "5",
- *    "name" : "serverOne",
- *    "offlineInstances" : "3",
- *    "realtimeInstances" : "2"
- *    }' http://lva1-pinot-controller-vip-1.corp.linkedin.com:11984/tenants
+ *   <li>Sample curl call to create server tenant</li>
+ *   curl -i -X POST -H 'Content-Type: application/json' -d
+ *   '{
+ *     "role" : "server",
+ *     "numberOfInstances : "5",
+ *     "name" : "serverOne",
+ *     "offlineInstances" : "3",
+ *     "realtimeInstances" : "2"
+ *   }' http://localhost:1234/tenants
+ * </ul>
  */
-
 public class PinotTenantRestletResource extends BasePinotControllerRestletResource {
   private static final Logger LOGGER = LoggerFactory.getLogger(PinotTenantRestletResource.class);
 

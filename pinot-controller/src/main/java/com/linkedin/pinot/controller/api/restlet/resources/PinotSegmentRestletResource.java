@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2014-2015 LinkedIn Corp. (pinot-core@linkedin.com)
+ * Copyright (C) 2014-2016 LinkedIn Corp. (pinot-core@linkedin.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,18 +22,22 @@ import com.linkedin.pinot.common.metadata.ZKMetadataProvider;
 import com.linkedin.pinot.common.metadata.segment.OfflineSegmentZKMetadata;
 import com.linkedin.pinot.common.metadata.segment.RealtimeSegmentZKMetadata;
 import com.linkedin.pinot.common.metrics.ControllerMeter;
-import com.linkedin.pinot.common.restlet.swagger.Response;
-import com.linkedin.pinot.common.restlet.swagger.Responses;
-import com.linkedin.pinot.common.utils.CommonConstants.Helix.TableType;
-import com.linkedin.pinot.controller.api.ControllerRestApplication;
 import com.linkedin.pinot.common.restlet.swagger.HttpVerb;
 import com.linkedin.pinot.common.restlet.swagger.Parameter;
 import com.linkedin.pinot.common.restlet.swagger.Paths;
+import com.linkedin.pinot.common.restlet.swagger.Response;
+import com.linkedin.pinot.common.restlet.swagger.Responses;
 import com.linkedin.pinot.common.restlet.swagger.Summary;
 import com.linkedin.pinot.common.restlet.swagger.Tags;
+import com.linkedin.pinot.common.utils.CommonConstants.Helix.TableType;
+import com.linkedin.pinot.controller.api.ControllerRestApplication;
 import com.linkedin.pinot.controller.helix.core.PinotResourceManagerResponse;
+import java.net.URLDecoder;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import javax.annotation.Nonnull;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.helix.ZNRecord;
 import org.apache.helix.store.zk.ZkHelixPropertyStore;
@@ -41,6 +45,7 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 import org.restlet.data.MediaType;
+import org.restlet.data.Reference;
 import org.restlet.data.Status;
 import org.restlet.representation.Representation;
 import org.restlet.representation.StringRepresentation;
@@ -48,6 +53,7 @@ import org.restlet.representation.Variant;
 import org.restlet.resource.Get;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
 
 public class PinotSegmentRestletResource extends BasePinotControllerRestletResource {
   private static final Logger LOGGER = LoggerFactory.getLogger(PinotSegmentRestletResource.class);
@@ -67,17 +73,38 @@ public class PinotSegmentRestletResource extends BasePinotControllerRestletResou
 
   /**
    * URI Mappings:
-   * - "/tables/{tableName}/segments", "tables/{tableName}/segments/":
-   *   List all segments in the table.
-   *
-   * - "/tables/{tableName}/segments/{segmentName}", "/tables/{tableName}/segments/{segmentName}/":
-   *   List meta-data for the specified segment.
-   *
-   * - "/tables/{tableName}/segments/{segmentName}?state={state}",
-   *    Change the state of the segment to specified {state} (enable|disable|drop)
-   *
-   * - "/tables/{tableName}/segments?state={state}"
-   *    Change the state of all segments of the table to specified {state} (enable|disable|drop)
+   * <ul>
+   *   <li>
+   *     "/tables/{tableName}/segments/{segmentName}":
+   *     "/tables/{tableName}/segments/{segmentName}/metadata":
+   *     Get segment metadata for a given segment
+   *   </li>
+   *   <li>
+   *     "/tables/{tableName}/segments":
+   *     "/tables/{tableName}/segments/metadata":
+   *     List segment metadata for a given table
+   *   </li>
+   *   <li>
+   *      "/tables/{tableName}/segments/crc":
+   *      Get crc information for a given table
+   *   </li>
+   *   <li>
+   *     "/tables/{tableName}/segments/{segmentName}?state={state}":
+   *     Change the state of the segment to specified {state} (enable|disable|drop)
+   *   </li>
+   *   <li>
+   *     "/tables/{tableName}/segments?state={state}":
+   *     Change the state of all segments of the table to specified {state} (enable|disable|drop)
+   *   </li>
+   *   <li>
+   *     "/tables/{tableName}/segments/{segmentName}/reload":
+   *     Reload the segment
+   *   </li>
+   *   <li>
+   *     "/tables/{tableName}/segments/reload":
+   *     Reload all segments of the table
+   *   </li>
+   * </ul>
    *
    * {@inheritDoc}
    * @see org.restlet.resource.ServerResource#get()
@@ -85,41 +112,75 @@ public class PinotSegmentRestletResource extends BasePinotControllerRestletResou
   @Override
   @Get
   public Representation get() {
-    StringRepresentation presentation = null;
+    StringRepresentation representation;
     try {
-      final String tableName = (String) getRequest().getAttributes().get(TABLE_NAME);
-      final String segmentName = (String) getRequest().getAttributes().get(SEGMENT_NAME);
-      final String state = getReference().getQueryAsForm().getValues(STATE);
-      final String tableType = getReference().getQueryAsForm().getValues(TABLE_TYPE);
+      String tableName = (String) getRequest().getAttributes().get(TABLE_NAME);
+      String segmentName = (String) getRequest().getAttributes().get(SEGMENT_NAME);
+      if (segmentName != null) {
+        segmentName = URLDecoder.decode(segmentName, "UTF-8");
+      }
+
+      Reference reference = getReference();
+      String state = reference.getQueryAsForm().getValues(STATE);
+      String tableType = reference.getQueryAsForm().getValues(TABLE_TYPE);
 
       if (tableType != null && !isValidTableType(tableType)) {
-        LOGGER.error(INVALID_TABLE_TYPE_ERROR);
+        LOGGER.info(INVALID_TABLE_TYPE_ERROR);
         setStatus(Status.CLIENT_ERROR_BAD_REQUEST);
         return new StringRepresentation(INVALID_TABLE_TYPE_ERROR);
       }
 
       if (state != null) {
         if (!isValidState(state)) {
-          LOGGER.error(INVALID_STATE_ERROR);
+          LOGGER.info(INVALID_STATE_ERROR);
           setStatus(Status.CLIENT_ERROR_BAD_REQUEST);
           return new StringRepresentation(INVALID_STATE_ERROR);
         } else {
-          return toggleSegmentState(tableName, segmentName, state, tableType);
+          if (segmentName != null) {
+            // '/tables/{tableName}/segments/{segmentName}?state={state}'
+            return toggleOneSegmentState(tableName, segmentName, state, tableType);
+          } else {
+            // '/tables/{tableName}/segments?state={state}'
+            return toggleAllSegmentsState(tableName, state, tableType);
+          }
         }
-      } else if (segmentName != null) {
-        return getSegmentMetadataForTable(tableName, segmentName, tableType);
-      } else {
-        return getAllSegmentsMetadataForTable(tableName, tableType);
       }
 
-    } catch (final Exception e) {
-      presentation = new StringRepresentation(e.getMessage() + "\n" + ExceptionUtils.getStackTrace(e));
-      LOGGER.error("Caught exception while processing get request", e);
-      ControllerRestApplication.getControllerMetrics().addMeteredGlobalValue(ControllerMeter.CONTROLLER_SEGMENT_GET_ERROR, 1L);
-      setStatus(Status.SERVER_ERROR_INTERNAL);
-    }
+      String lastPart = reference.getLastSegment();
+      if (lastPart.equals("reload")) {
+        // RELOAD
 
-    return presentation;
+        if (segmentName != null) {
+          // '/tables/{tableName}/segments/{segmentName}/reload'
+          return reloadSegmentForTable(tableName, segmentName, tableType);
+        } else {
+          // '/tables/{tableName}/segments/reload'
+          return reloadAllSegmentsForTable(tableName, tableType);
+        }
+      } else {
+        // METADATA
+
+        if (segmentName != null) {
+          // '/tables/{tableName}/segments/{segmentName}'
+          // '/tables/{tableName}/segments/{segmentName}/metadata'
+          return getSegmentMetadataForTable(tableName, segmentName, tableType);
+        } else if (lastPart.equals("crc")) {
+          // '/tables/{tableName}/segments/crc'
+          return getAllCrcMetadataForTable(tableName);
+        } else {
+          // '/tables/{tableName}/segments'
+          // '/tables/{tableName}/segments/metadata'
+          return getAllSegmentsMetadataForTable(tableName, tableType);
+        }
+      }
+    } catch (final Exception e) {
+      representation = new StringRepresentation(e.getMessage() + "\n" + ExceptionUtils.getStackTrace(e));
+      LOGGER.error("Caught exception while processing get request", e);
+      ControllerRestApplication.getControllerMetrics()
+          .addMeteredGlobalValue(ControllerMeter.CONTROLLER_SEGMENT_GET_ERROR, 1L);
+      setStatus(Status.SERVER_ERROR_INTERNAL);
+      return representation;
+    }
   }
 
   @HttpVerb("get")
@@ -142,7 +203,7 @@ public class PinotSegmentRestletResource extends BasePinotControllerRestletResou
     JSONArray ret = new JSONArray();
     if ((tableType == null || TableType.REALTIME.name().equalsIgnoreCase(tableType))
         && _pinotHelixResourceManager.hasRealtimeTable(tableName)) {
-      String realtimeTableName = TableNameBuilder.REALTIME_TABLE_NAME_BUILDER.forTable(tableName);
+      String realtimeTableName = TableNameBuilder.REALTIME.tableNameWithType(tableName);
       JSONObject realtime = new JSONObject();
       realtime.put(TABLE_NAME, realtimeTableName);
       realtime.put("segments", new ObjectMapper().writeValueAsString(_pinotHelixResourceManager
@@ -153,7 +214,7 @@ public class PinotSegmentRestletResource extends BasePinotControllerRestletResou
 
     if ((tableType == null || TableType.OFFLINE.name().equalsIgnoreCase(tableType))
         && _pinotHelixResourceManager.hasOfflineTable(tableName)) {
-      String offlineTableName = TableNameBuilder.OFFLINE_TABLE_NAME_BUILDER.forTable(tableName);
+      String offlineTableName = TableNameBuilder.OFFLINE.tableNameWithType(tableName);
       JSONObject offline = new JSONObject();
       offline.put(TABLE_NAME, offlineTableName);
       offline.put("segments", new ObjectMapper().writeValueAsString(_pinotHelixResourceManager
@@ -170,6 +231,49 @@ public class PinotSegmentRestletResource extends BasePinotControllerRestletResou
     }
   }
 
+
+  @HttpVerb("get")
+  @Summary("Lists of crc metadata for a given table")
+  @Tags({"table","segment"})
+  @Paths({"/tables/{tableName}/segments/crc", "/tables/{tableName}/segments/crc/"})
+  @Responses({
+      @Response(statusCode = "200", description = "The list of crc metadata for the table"),
+      @Response(statusCode = "403", description = "Realtime table is not supported"),
+      @Response(statusCode = "404", description = "The table does not exist")
+  })
+  private Representation getAllCrcMetadataForTable(
+      @Parameter(name = "tableName", in = "path", description = "The name of table for which to list crc metadata",
+          required = true) String tableName)
+      throws JSONException, JsonProcessingException {
+    try {
+      PinotResourceManagerResponse response;
+
+      // Realtime table is not supported.
+      if (TableNameBuilder.getTableTypeFromTableName(tableName) == TableType.REALTIME) {
+        setStatus(Status.CLIENT_ERROR_FORBIDDEN);
+        response = new PinotResourceManagerResponse("Realtime table is not supported.", false);
+        return new StringRepresentation(response.toJSON().toString());
+      }
+
+      // Check that the offline table exists.
+      String offlineTableName = TableNameBuilder.OFFLINE.tableNameWithType(tableName);
+      if (!_pinotHelixResourceManager.getAllTables().contains(offlineTableName)) {
+        setStatus(Status.CLIENT_ERROR_NOT_FOUND);
+        response = new PinotResourceManagerResponse("Offline table " + tableName + " does not exist.", false);
+        return new StringRepresentation(response.toJSON().toString());
+      }
+
+      Map<String, String> segmentCrcForTable = _pinotHelixResourceManager.getSegmentsCrcForTable(offlineTableName);
+      ObjectMapper mapper = new ObjectMapper();
+      String result = mapper.writerWithDefaultPrettyPrinter().writeValueAsString(segmentCrcForTable);
+      return new StringRepresentation(result);
+    } catch (Exception e) {
+      LOGGER.warn("Caught exception while fetching crc information for table {}", tableName, e);
+      setStatus(Status.SERVER_ERROR_INTERNAL);
+      return new StringRepresentation("Caught exception while fetching crc information for table " + tableName);
+    }
+  }
+
   /**
    * Toggle state of provided segment between {enable|disable|drop}.
    *
@@ -180,7 +284,7 @@ public class PinotSegmentRestletResource extends BasePinotControllerRestletResou
   @Summary("Enable, disable or drop a segment from a table")
   @Tags({ "segment", "table" })
   @Paths({ "/tables/{tableName}/segments/{segmentName}", "/tables/{tableName}/segments/{segmentName}/" })
-  protected Representation toggleOneSegmentState(
+  private Representation toggleOneSegmentState(
       @Parameter(name = "tableName", in = "path", description = "The name of the table to which segment belongs",
           required = true) String tableName,
       @Parameter(name = "segmentName", in = "path", description = "Segment to enable, disable or drop",
@@ -190,6 +294,22 @@ public class PinotSegmentRestletResource extends BasePinotControllerRestletResou
       @Parameter(name = "type", in = "query", description = "Type of table {offline|realtime}",
           required = false) String tableType)
       throws JsonProcessingException, JSONException {
+    String offlineTableName = TableNameBuilder.OFFLINE.tableNameWithType(tableName);
+    String realtimeTableName = TableNameBuilder.REALTIME.tableNameWithType(tableName);
+    List<String> offlineSegments = _pinotHelixResourceManager.getSegmentsFor(offlineTableName);
+    List<String> realtimeSegments = _pinotHelixResourceManager.getSegmentsFor(realtimeTableName);
+
+    if (tableType == null) {
+      if(offlineSegments.contains(segmentName)) {
+        tableType = "OFFLINE";
+      } else if (realtimeSegments.contains(segmentName)) {
+        tableType = "REALTIME";
+      } else {
+        LOGGER.info("This segment does not exist: " + segmentName);
+        return new StringRepresentation("This segment does not exist: " + segmentName);
+      }
+    }
+
     return toggleSegmentState(tableName, segmentName, state, tableType);
   }
 
@@ -203,7 +323,7 @@ public class PinotSegmentRestletResource extends BasePinotControllerRestletResou
   @Summary("Enable, disable or drop *ALL* segments from a table")
   @Tags({ "segment", "table" })
   @Paths({ "/tables/{tableName}/segments", "/tables/{tableName}/segments/" })
-  protected Representation toggleAllSegmentsState(
+  private Representation toggleAllSegmentsState(
         @Parameter(name = "tableName", in = "path", description = "The name of the table to which segment belongs",
             required = true) String tableName,
         @Parameter(name = "state", in = "query", description = "state to set for segment {enable|disable|drop}",
@@ -229,23 +349,50 @@ public class PinotSegmentRestletResource extends BasePinotControllerRestletResou
       throws JsonProcessingException, JSONException {
 
     JSONArray ret = new JSONArray();
-    String tableNameWithType = null;
-    if ((tableType == null || TableType.OFFLINE.name().equalsIgnoreCase(tableType))
-        && _pinotHelixResourceManager.hasOfflineTable(tableName)) {
-      tableNameWithType = TableNameBuilder.OFFLINE_TABLE_NAME_BUILDER.forTable(tableName);
+    List<String> segmentsToToggle = new ArrayList<>();
+    String offlineTableName = TableNameBuilder.OFFLINE.tableNameWithType(tableName);
+    String realtimeTableName = TableNameBuilder.REALTIME.tableNameWithType(tableName);
+    String tableNameWithType = "";
+    List<String> realtimeSegments = _pinotHelixResourceManager.getSegmentsFor(realtimeTableName);
+    List<String> offlineSegments = _pinotHelixResourceManager.getSegmentsFor(offlineTableName);
 
+    if (tableType == null) {
+      PinotResourceManagerResponse responseRealtime = toggleSegmentsForTable(realtimeSegments, realtimeTableName, segmentName, state);
+      PinotResourceManagerResponse responseOffline = toggleSegmentsForTable(offlineSegments, offlineTableName, segmentName, state);
+      setStatus(responseRealtime.isSuccessful() && responseOffline.isSuccessful() ? Status.SUCCESS_OK : Status.SERVER_ERROR_INTERNAL);
+      List<PinotResourceManagerResponse> responses = new ArrayList<>();
+      responses.add(responseRealtime);
+      responses.add(responseOffline);
+      ret.put(responses);
+      return new StringRepresentation(ret.toString());
+    }
+    else if (TableType.REALTIME.name().equalsIgnoreCase(tableType)) {
+      if (_pinotHelixResourceManager.hasRealtimeTable(tableName)) {
+        tableNameWithType = realtimeTableName;
+        if (segmentName != null) {
+          segmentsToToggle = Collections.singletonList(segmentName);
+        } else {
+          segmentsToToggle.addAll(realtimeSegments);
+        }
+      } else {
+        throw new UnsupportedOperationException("There is no realtime table for " + tableName);
+      }
+    } else {
+      if (_pinotHelixResourceManager.hasOfflineTable(tableName)) {
+        tableNameWithType = offlineTableName;
+        if (segmentName != null) {
+          segmentsToToggle = Collections.singletonList(segmentName);
+        } else {
+          segmentsToToggle.addAll(offlineSegments);
+        }
+      } else {
+        LOGGER.info("There is no offline table for: " + tableName);
+        return new StringRepresentation("There is no offline table for: " + tableName);      }
     }
 
-    if ((tableType == null || TableType.REALTIME.name().equalsIgnoreCase(tableType))
-        && _pinotHelixResourceManager.hasRealtimeTable(tableName)) {
-      tableNameWithType = TableNameBuilder.REALTIME_TABLE_NAME_BUILDER.forTable(tableName);
-    }
-
-    if (tableNameWithType != null) {
-      PinotResourceManagerResponse resourceManagerResponse = toggleSegmentsForTable(tableNameWithType, segmentName, state);
-      setStatus(resourceManagerResponse.isSuccessful() ? Status.SUCCESS_OK : Status.SERVER_ERROR_INTERNAL);
-      ret.put(resourceManagerResponse);
-    }
+    PinotResourceManagerResponse resourceManagerResponse = toggleSegmentsForTable(segmentsToToggle, tableNameWithType, segmentName, state);
+    setStatus(resourceManagerResponse.isSuccessful() ? Status.SUCCESS_OK : Status.SERVER_ERROR_INTERNAL);
+    ret.put(resourceManagerResponse);
     return new StringRepresentation(ret.toString());
   }
 
@@ -253,26 +400,19 @@ public class PinotSegmentRestletResource extends BasePinotControllerRestletResou
    * Helper method to toggle state of segment for a given table. The tableName expected is the internally
    * stored name (with offline/realtime annotation).
    *
+   * @param segmentsToToggle: segments that we want to perform operations on
    * @param tableName: Internal name (created by TableNameBuilder) for the table
    * @param segmentName: Segment to set the state for.
    * @param state: Value of state to set.
    * @return
    * @throws JSONException
    */
-  private PinotResourceManagerResponse toggleSegmentsForTable(String tableName, String segmentName, String state) throws JSONException {
-    List<String> segmentsToToggle;
-    JSONArray ret = new JSONArray();
-
+  private PinotResourceManagerResponse toggleSegmentsForTable(@Nonnull List<String> segmentsToToggle, @Nonnull String tableName, String segmentName, @Nonnull String state) throws JSONException {
     long timeOutInSeconds = 10L;
-    if (segmentName != null) {
-      segmentsToToggle = new ArrayList<String>();
-      segmentsToToggle.add(segmentName);
-    } else {
-      segmentsToToggle = _pinotHelixResourceManager.getAllSegmentsForResource(tableName);
-
+    if (segmentName == null) {
       // For enable, allow 5 seconds per segment for an instance as timeout.
       if (StateType.ENABLE.name().equalsIgnoreCase(state)) {
-        int instanceCount = _pinotHelixResourceManager.getAllInstanceNames().size();
+        int instanceCount = _pinotHelixResourceManager.getAllInstances().size();
         if (instanceCount != 0) {
           timeOutInSeconds = (long) ((_offlineToOnlineTimeoutInseconds * segmentsToToggle.size()) / instanceCount);
         } else {
@@ -286,7 +426,7 @@ public class PinotSegmentRestletResource extends BasePinotControllerRestletResou
     } else if (StateType.DISABLE.name().equalsIgnoreCase(state)) {
       return _pinotHelixResourceManager.toggleSegmentState(tableName, segmentsToToggle, false, timeOutInSeconds);
     } else if (StateType.DROP.name().equalsIgnoreCase(state)) {
-      return _pinotHelixResourceManager.dropSegments(tableName, segmentsToToggle, timeOutInSeconds);
+      return _pinotHelixResourceManager.deleteSegments(tableName, segmentsToToggle);
     } else {
       return new PinotResourceManagerResponse(INVALID_STATE_ERROR, false);
     }
@@ -308,13 +448,13 @@ public class PinotSegmentRestletResource extends BasePinotControllerRestletResou
     JSONArray ret = new JSONArray();
     if ((tableType == null || TableType.OFFLINE.name().equalsIgnoreCase(tableType))
         && _pinotHelixResourceManager.hasOfflineTable(tableName)) {
-      String offlineTableName = TableNameBuilder.OFFLINE_TABLE_NAME_BUILDER.forTable(tableName);
+      String offlineTableName = TableNameBuilder.OFFLINE.tableNameWithType(tableName);
       ret.put(getSegmentMetaData(offlineTableName, segmentName, TableType.OFFLINE));
     }
 
     if ((tableType == null || TableType.REALTIME.name().equalsIgnoreCase(tableType))
         && _pinotHelixResourceManager.hasRealtimeTable(tableName)) {
-      String realtimeTableName = TableNameBuilder.REALTIME_TABLE_NAME_BUILDER.forTable(tableName);
+      String realtimeTableName = TableNameBuilder.REALTIME.tableNameWithType(tableName);
       ret.put(getSegmentMetaData(realtimeTableName, segmentName, TableType.REALTIME));
     }
 
@@ -333,7 +473,7 @@ public class PinotSegmentRestletResource extends BasePinotControllerRestletResou
       throws JSONException {
     if (!ZKMetadataProvider.isSegmentExisted(_pinotHelixResourceManager.getPropertyStore(), tableName, segmentName)) {
       String error = new String("Error: segment " + segmentName + " not found.");
-      LOGGER.error(error);
+      LOGGER.info(error);
       setStatus(Status.CLIENT_ERROR_BAD_REQUEST);
       return new StringRepresentation(error);
     }
@@ -359,5 +499,56 @@ public class PinotSegmentRestletResource extends BasePinotControllerRestletResou
 
     ret.put(jsonObj);
     return new StringRepresentation(ret.toString());
+  }
+
+  @HttpVerb("get")
+  @Summary("Reloads a given segment")
+  @Tags({ "segment", "table" })
+  @Paths({ "/tables/{tableName}/segments/{segmentName}/reload", "/tables/{tableName}/segments/{segmentName}/reload/" })
+  private Representation reloadSegmentForTable(
+      @Parameter(name = "tableName", in = "path", description = "The name of the table for which to reload segment",
+          required = true) String tableName,
+      @Parameter(name = "segmentName", in = "path", description = "The name of the segment for which to reload",
+          required = true) String segmentName,
+      @Parameter(name = "type", in = "query", description = "Type of table {offline|realtime}",
+          required = false) String tableType) {
+    int numReloadMessagesSent = 0;
+
+    if ((tableType == null) || TableType.OFFLINE.name().equalsIgnoreCase(tableType)) {
+      String offlineTableName = TableNameBuilder.OFFLINE.tableNameWithType(tableName);
+      numReloadMessagesSent += _pinotHelixResourceManager.reloadSegment(offlineTableName, segmentName);
+    }
+
+    if ((tableType == null) || TableType.REALTIME.name().equalsIgnoreCase(tableType)) {
+      String realtimeTableName = TableNameBuilder.REALTIME.tableNameWithType(tableName);
+      numReloadMessagesSent += _pinotHelixResourceManager.reloadSegment(realtimeTableName, segmentName);
+    }
+
+    return new StringRepresentation("Sent " + numReloadMessagesSent + " reload messages");
+  }
+
+
+  @HttpVerb("get")
+  @Summary("Reloads all segments in a given table")
+  @Tags({ "segment", "table" })
+  @Paths({ "/tables/{tableName}/segments/reload", "/tables/{tableName}/segments/reload/" })
+  private Representation reloadAllSegmentsForTable(
+      @Parameter(name = "tableName", in = "path", description = "The name of the table for which to list segment metadata",
+          required = true) String tableName,
+      @Parameter(name = "type", in = "query", description = "Type of table {offline|realtime}",
+          required = false) String tableType) {
+    int numReloadMessagesSent = 0;
+
+    if ((tableType == null) || TableType.OFFLINE.name().equalsIgnoreCase(tableType)) {
+      String offlineTableName = TableNameBuilder.OFFLINE.tableNameWithType(tableName);
+      numReloadMessagesSent += _pinotHelixResourceManager.reloadAllSegments(offlineTableName);
+    }
+
+    if ((tableType == null) || TableType.REALTIME.name().equalsIgnoreCase(tableType)) {
+      String realtimeTableName = TableNameBuilder.REALTIME.tableNameWithType(tableName);
+      numReloadMessagesSent += _pinotHelixResourceManager.reloadAllSegments(realtimeTableName);
+    }
+
+    return new StringRepresentation("Sent " + numReloadMessagesSent + " reload messages");
   }
 }

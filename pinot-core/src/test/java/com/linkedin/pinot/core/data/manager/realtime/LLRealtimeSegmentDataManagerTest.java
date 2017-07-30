@@ -13,26 +13,37 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package com.linkedin.pinot.core.data.manager.realtime;
 
-import java.lang.reflect.Field;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
-import java.util.LinkedList;
-import org.mockito.Mockito;
-import org.testng.annotations.Test;
-import com.linkedin.pinot.common.config.AbstractTableConfig;
+import com.linkedin.pinot.common.config.TableConfig;
 import com.linkedin.pinot.common.data.Schema;
 import com.linkedin.pinot.common.metadata.instance.InstanceZKMetadata;
 import com.linkedin.pinot.common.metadata.segment.LLCRealtimeSegmentZKMetadata;
 import com.linkedin.pinot.common.metadata.segment.RealtimeSegmentZKMetadata;
 import com.linkedin.pinot.common.metrics.ServerMetrics;
 import com.linkedin.pinot.common.protocols.SegmentCompletionProtocol;
+import com.linkedin.pinot.common.utils.CommonConstants;
 import com.linkedin.pinot.common.utils.LLCSegmentName;
 import com.linkedin.pinot.core.realtime.impl.RealtimeSegmentImpl;
-import com.linkedin.pinot.core.realtime.impl.kafka.KafkaHighLevelStreamProviderConfig;
+import com.linkedin.pinot.core.realtime.impl.kafka.KafkaLowLevelStreamProviderConfig;
+import com.linkedin.pinot.core.realtime.impl.kafka.SimpleConsumerWrapper;
+import com.linkedin.pinot.core.segment.index.loader.IndexLoadingConfig;
+import com.yammer.metrics.core.MetricsRegistry;
+import java.io.File;
+import java.io.IOException;
+import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.util.LinkedList;
 import junit.framework.Assert;
+import org.apache.commons.io.FileUtils;
+import org.apache.kafka.common.protocol.Errors;
+import org.json.JSONObject;
+import org.mockito.Mockito;
+import org.testng.annotations.AfterClass;
+import org.testng.annotations.BeforeClass;
+import org.testng.annotations.Test;
+
 import static org.mockito.Matchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -40,7 +51,8 @@ import static org.mockito.Mockito.when;
 
 // TODO Write more tests for other parts of the class
 public class LLRealtimeSegmentDataManagerTest {
-  private static final String _segmentDir = "/somedir";
+  private static final String _segmentDir = "/tmp/" + LLRealtimeSegmentDataManagerTest.class.getSimpleName();
+  private static final File _segmentDirFile = new File(_segmentDir);
   private static final String _tableName = "Coffee";
   private static final int _partitionId = 13;
   private static final int _sequenceId = 945;
@@ -65,7 +77,7 @@ public class LLRealtimeSegmentDataManagerTest {
       + "    ], \n" + "    \"lazyLoad\": \"false\", \n" + "    \"loadMode\": \"HEAP\", \n"
       + "    \"segmentFormatVersion\": null, \n" + "    \"sortedColumn\": [], \n"
       + "    \"streamConfigs\": {\n" + "      \"realtime.segment.flush.threshold.size\": \"" + String.valueOf(maxRowsInSegment) + "\", \n"
-      + "      \"realtime.segment.flush.threshold.time\": \"" + String.valueOf(maxTimeForSegmentCloseMs) + "\", \n"
+      + "      \"" + CommonConstants.Helix.DataSource.Realtime.REALTIME_SEGMENT_FLUSH_TIME + "\": \"" + maxTimeForSegmentCloseMs + "\", \n"
       + "      \"stream.kafka.broker.list\": \"broker:7777\", \n"
       + "      \"stream.kafka.consumer.prop.auto.offset.reset\": \"smallest\", \n"
       + "      \"stream.kafka.consumer.type\": \"simple\", \n"
@@ -95,15 +107,19 @@ public class LLRealtimeSegmentDataManagerTest {
         + "}";
   }
 
-  private AbstractTableConfig createTableConfig() throws Exception {
-    AbstractTableConfig tableConfig = AbstractTableConfig.init(_tableConfigJson);
-    return tableConfig;
+  private TableConfig createTableConfig()
+      throws Exception {
+    return TableConfig.fromJSONConfig(new JSONObject(_tableConfigJson));
   }
+
   private RealtimeTableDataManager createTableDataManager() {
+    final String instanceId = "server-1";
+    SegmentBuildTimeLeaseExtender.create(instanceId);
     RealtimeTableDataManager tableDataManager = mock(RealtimeTableDataManager.class);
-    when(tableDataManager.getServerInstance()).thenReturn("server-1");
+    when(tableDataManager.getServerInstance()).thenReturn(instanceId);
     return tableDataManager;
   }
+
   private LLCRealtimeSegmentZKMetadata createZkMetadata() {
 
     LLCRealtimeSegmentZKMetadata segmentZKMetadata = new LLCRealtimeSegmentZKMetadata();
@@ -115,15 +131,62 @@ public class LLRealtimeSegmentDataManagerTest {
 
   private FakeLLRealtimeSegmentDataManager createFakeSegmentManager() throws Exception {
     LLCRealtimeSegmentZKMetadata segmentZKMetadata = createZkMetadata();
-    AbstractTableConfig tableConfig = createTableConfig();
+    TableConfig tableConfig = createTableConfig();
     InstanceZKMetadata instanceZKMetadata = new InstanceZKMetadata();
     RealtimeTableDataManager tableDataManager = createTableDataManager();
     String resourceDir = _segmentDir;
     Schema schema = Schema.fromString(makeSchema());
-    ServerMetrics serverMetrics  = null;
+    ServerMetrics serverMetrics = new ServerMetrics(new MetricsRegistry());
     FakeLLRealtimeSegmentDataManager segmentDataManager = new FakeLLRealtimeSegmentDataManager(segmentZKMetadata,
         tableConfig, instanceZKMetadata, tableDataManager, resourceDir, schema, serverMetrics);
     return segmentDataManager;
+  }
+
+  @BeforeClass
+  public void setUp() {
+    _segmentDirFile.deleteOnExit();
+  }
+
+  @AfterClass
+  public void tearDown() {
+    FileUtils.deleteQuietly(_segmentDirFile);
+  }
+
+  @Test
+  public void testTimeString() throws Exception {
+    JSONObject tableConfigJson = new JSONObject(_tableConfigJson);
+    JSONObject tableIndexConfig = (JSONObject)tableConfigJson.get("tableIndexConfig");
+    JSONObject streamConfigs = (JSONObject)tableIndexConfig.get("streamConfigs");
+    {
+      streamConfigs.put(CommonConstants.Helix.DataSource.Realtime.REALTIME_SEGMENT_FLUSH_TIME, "3h");
+      TableConfig tableConfig = TableConfig.fromJSONConfig(tableConfigJson);
+      InstanceZKMetadata instanceZKMetadata = new InstanceZKMetadata();
+      Schema schema = Schema.fromString(makeSchema());
+      KafkaLowLevelStreamProviderConfig config = new KafkaLowLevelStreamProviderConfig();
+      config.init(tableConfig, instanceZKMetadata, schema);
+      Assert.assertEquals(3 * 3600 * 1000L, config.getTimeThresholdToFlushSegment());
+    }
+
+    {
+      streamConfigs.put(CommonConstants.Helix.DataSource.Realtime.REALTIME_SEGMENT_FLUSH_TIME, "3h30m");
+      TableConfig tableConfig = TableConfig.fromJSONConfig(tableConfigJson);
+      InstanceZKMetadata instanceZKMetadata = new InstanceZKMetadata();
+      Schema schema = Schema.fromString(makeSchema());
+      KafkaLowLevelStreamProviderConfig config = new KafkaLowLevelStreamProviderConfig();
+      config.init(tableConfig, instanceZKMetadata, schema);
+      Assert.assertEquals((3 * 3600  + 30 * 60) * 1000L, config.getTimeThresholdToFlushSegment());
+    }
+
+    {
+      final long segTime = 898789748357L;
+      streamConfigs.put(CommonConstants.Helix.DataSource.Realtime.REALTIME_SEGMENT_FLUSH_TIME, String.valueOf(segTime));
+      TableConfig tableConfig = TableConfig.fromJSONConfig(tableConfigJson);
+      InstanceZKMetadata instanceZKMetadata = new InstanceZKMetadata();
+      Schema schema = Schema.fromString(makeSchema());
+      KafkaLowLevelStreamProviderConfig config = new KafkaLowLevelStreamProviderConfig();
+      config.init(tableConfig, instanceZKMetadata, schema);
+      Assert.assertEquals(segTime, config.getTimeThresholdToFlushSegment());
+    }
   }
 
   // Test that we are in HOLDING state as long as the controller responds HOLD to our segmentConsumed() message.
@@ -136,7 +199,8 @@ public class LLRealtimeSegmentDataManagerTest {
     // We should consume initially...
     segmentDataManager._consumeOffsets.add(endOffset);
     final SegmentCompletionProtocol.Response response = new SegmentCompletionProtocol.Response(
-        SegmentCompletionProtocol.ControllerResponseStatus.HOLD, endOffset);
+        new SegmentCompletionProtocol.Response.Params().withStatus(
+            SegmentCompletionProtocol.ControllerResponseStatus.HOLD).withOffset(endOffset));
     // And then never consume as long as we get a hold response, 100 times.
     for (int i = 0; i < 100; i++) {
       segmentDataManager._responses.add(response);
@@ -162,9 +226,11 @@ public class LLRealtimeSegmentDataManagerTest {
     // We should consume initially...
     segmentDataManager._consumeOffsets.add(endOffset);
     final SegmentCompletionProtocol.Response holdResponse = new SegmentCompletionProtocol.Response(
-        SegmentCompletionProtocol.ControllerResponseStatus.HOLD, endOffset);
+        new SegmentCompletionProtocol.Response.Params().withOffset(endOffset).withStatus(
+            SegmentCompletionProtocol.ControllerResponseStatus.HOLD));
     final SegmentCompletionProtocol.Response commitResponse = new SegmentCompletionProtocol.Response(
-        SegmentCompletionProtocol.ControllerResponseStatus.COMMIT, endOffset);
+        new SegmentCompletionProtocol.Response.Params().withOffset(endOffset).withStatus(
+            SegmentCompletionProtocol.ControllerResponseStatus.COMMIT));
     // And then never consume as long as we get a hold response, 100 times.
     segmentDataManager._responses.add(holdResponse);
     segmentDataManager._responses.add(commitResponse);
@@ -191,13 +257,19 @@ public class LLRealtimeSegmentDataManagerTest {
     segmentDataManager._consumeOffsets.add(firstOffset);
     segmentDataManager._consumeOffsets.add(catchupOffset); // Offset after catchup
     final SegmentCompletionProtocol.Response holdResponse1 = new SegmentCompletionProtocol.Response(
-        SegmentCompletionProtocol.ControllerResponseStatus.HOLD, firstOffset);
+        new SegmentCompletionProtocol.Response.Params().withStatus(
+            SegmentCompletionProtocol.ControllerResponseStatus.HOLD).
+            withOffset(firstOffset));
     final SegmentCompletionProtocol.Response catchupResponse = new SegmentCompletionProtocol.Response(
-        SegmentCompletionProtocol.ControllerResponseStatus.CATCH_UP, catchupOffset);
+        new SegmentCompletionProtocol.Response.Params().withStatus(
+            SegmentCompletionProtocol.ControllerResponseStatus.CATCH_UP).withOffset(
+            catchupOffset));
     final SegmentCompletionProtocol.Response holdResponse2 = new SegmentCompletionProtocol.Response(
-        SegmentCompletionProtocol.ControllerResponseStatus.HOLD, catchupOffset);
+        new SegmentCompletionProtocol.Response.Params().withOffset(catchupOffset).withStatus(
+            SegmentCompletionProtocol.ControllerResponseStatus.HOLD));
     final SegmentCompletionProtocol.Response commitResponse = new SegmentCompletionProtocol.Response(
-        SegmentCompletionProtocol.ControllerResponseStatus.COMMIT, catchupOffset);
+        new SegmentCompletionProtocol.Response.Params().withOffset(catchupOffset).withStatus(
+            SegmentCompletionProtocol.ControllerResponseStatus.COMMIT));
     // And then never consume as long as we get a hold response, 100 times.
     segmentDataManager._responses.add(holdResponse1);
     segmentDataManager._responses.add(catchupResponse);
@@ -222,7 +294,8 @@ public class LLRealtimeSegmentDataManagerTest {
     final long endOffset = _startOffset + 500;
     segmentDataManager._consumeOffsets.add(endOffset);
     final SegmentCompletionProtocol.Response discardResponse = new SegmentCompletionProtocol.Response(
-        SegmentCompletionProtocol.ControllerResponseStatus.DISCARD, endOffset);
+        new SegmentCompletionProtocol.Response.Params().withOffset(endOffset).withStatus(
+            SegmentCompletionProtocol.ControllerResponseStatus.DISCARD));
     segmentDataManager._responses.add(discardResponse);
 
     consumer.run();
@@ -242,8 +315,9 @@ public class LLRealtimeSegmentDataManagerTest {
     LLRealtimeSegmentDataManager.PartitionConsumer consumer = segmentDataManager.createPartitionConsumer();
     final long endOffset = _startOffset + 500;
     segmentDataManager._consumeOffsets.add(endOffset);
-    final SegmentCompletionProtocol.Response keepResponse = new SegmentCompletionProtocol.Response(
-        SegmentCompletionProtocol.ControllerResponseStatus.KEEP, endOffset);
+    SegmentCompletionProtocol.Response.Params params = new SegmentCompletionProtocol.Response.Params();
+    params.withOffset(endOffset).withStatus(SegmentCompletionProtocol.ControllerResponseStatus.KEEP);
+    final SegmentCompletionProtocol.Response keepResponse = new SegmentCompletionProtocol.Response(params);
     segmentDataManager._responses.add(keepResponse);
 
     consumer.run();
@@ -265,7 +339,8 @@ public class LLRealtimeSegmentDataManagerTest {
     // We should consume initially...
     segmentDataManager._consumeOffsets.add(endOffset);
     final SegmentCompletionProtocol.Response response = new SegmentCompletionProtocol.Response(
-        SegmentCompletionProtocol.ControllerResponseStatus.NOT_LEADER, endOffset);
+        new SegmentCompletionProtocol.Response.Params().withOffset(endOffset).withStatus(
+            SegmentCompletionProtocol.ControllerResponseStatus.NOT_LEADER));
     // And then never consume as long as we get a Not leader response, 100 times.
     for (int i = 0; i < 100; i++) {
       segmentDataManager._responses.add(response);
@@ -282,22 +357,18 @@ public class LLRealtimeSegmentDataManagerTest {
     Assert.assertEquals(segmentDataManager._state.get(segmentDataManager), LLRealtimeSegmentDataManager.State.HOLDING);
   }
 
-  // Tests to go online from consuming state
-
   @Test
-  public void testOnlineTransitionOnStopTakingTooLong() throws Exception {
+  public void testConsumingException() throws Exception {
     FakeLLRealtimeSegmentDataManager segmentDataManager = createFakeSegmentManager();
-    LLCRealtimeSegmentZKMetadata metadata = new LLCRealtimeSegmentZKMetadata();
-    metadata.setEndOffset(_startOffset+600);
-    segmentDataManager._stopWaitTimeMs = segmentDataManager.getMaxTimeForConsumingToOnlineSec() * 1000 + 300;
-    try {
-      segmentDataManager.goOnlineFromConsuming(metadata);
-      Assert.fail();
-    } catch (RuntimeException e) {
-      // We should see an exception here
-    }
-    Assert.assertFalse(segmentDataManager._downloadAndReplaceCalled);
+    LLRealtimeSegmentDataManager.PartitionConsumer consumer = segmentDataManager.createPartitionConsumer();
+
+    segmentDataManager._throwExceptionFromConsume = true;
+    segmentDataManager._postConsumeStoppedCalled = false;
+    consumer.run();
+    Assert.assertTrue(segmentDataManager._postConsumeStoppedCalled);
   }
+
+  // Tests to go online from consuming state
 
   // If the state is is COMMITTED or RETAINED, nothing to do
   // If discarded or error state, then downloadAndReplace the segment
@@ -399,6 +470,7 @@ public class LLRealtimeSegmentDataManagerTest {
       Assert.assertFalse(segmentDataManager.invokeEndCriteriaReached());
       segmentDataManager.setNumRowsConsumed(maxRowsInSegment);
       Assert.assertTrue(segmentDataManager.invokeEndCriteriaReached());
+      Assert.assertEquals(segmentDataManager.getStopReason(), SegmentCompletionProtocol.REASON_ROW_LIMIT);
     }
     // test reaching max time limit
     {
@@ -412,6 +484,7 @@ public class LLRealtimeSegmentDataManagerTest {
       // Now we can test when we are far ahead in time
       _timeNow += maxTimeForSegmentCloseMs;
       Assert.assertTrue(segmentDataManager.invokeEndCriteriaReached());
+      Assert.assertEquals(segmentDataManager.getStopReason(), SegmentCompletionProtocol.REASON_TIME_LIMIT);
     }
     // In catching up state, test reaching final offset
     {
@@ -475,10 +548,75 @@ public class LLRealtimeSegmentDataManagerTest {
     segmentImpl.set(segmentDataManager, mockSegmentImpl);
   }
 
+  // If commit fails, make sure that we do not re-build the segment when we try to commit again.
+  @Test
+  public void testReuseOfBuiltSegment() throws Exception {
+    FakeLLRealtimeSegmentDataManager segmentDataManager = createFakeSegmentManager();
+
+    SegmentCompletionProtocol.Response.Params params = new SegmentCompletionProtocol.Response.Params();
+    params.withStatus(SegmentCompletionProtocol.ControllerResponseStatus.COMMIT_SUCCESS);
+    SegmentCompletionProtocol.Response commitSuccess = new SegmentCompletionProtocol.Response(params);
+    params.withStatus(SegmentCompletionProtocol.ControllerResponseStatus.FAILED);
+    SegmentCompletionProtocol.Response commitFailed = new SegmentCompletionProtocol.Response(params);
+
+    // Set up the responses so that we get a failed respnse first and then a success response.
+    segmentDataManager._responses.add(commitFailed);
+    segmentDataManager._responses.add(commitSuccess);
+    final long leaseTime = 50000L;
+
+    // The first time we invoke build, it should go ahead and build the segment.
+    String segTarFileName = segmentDataManager.invokeBuildForCommit(leaseTime);
+    Assert.assertTrue(segmentDataManager._buildSegmentCalled);
+    Assert.assertFalse(segmentDataManager.invokeCommit(segTarFileName));
+    Assert.assertTrue(new File(segTarFileName).exists());
+
+    segmentDataManager._buildSegmentCalled = false;
+
+    // This time around it should not build the segment.
+    String segTarFileName1 = segmentDataManager.invokeBuildForCommit(leaseTime);
+    Assert.assertFalse(segmentDataManager._buildSegmentCalled);
+    Assert.assertEquals(segTarFileName1, segTarFileName);
+    Assert.assertTrue(new File(segTarFileName).exists());
+    Assert.assertTrue(segmentDataManager.invokeCommit(segTarFileName1));
+    Assert.assertFalse(new File(segTarFileName).exists());
+  }
+
+  // If commit fails, and we still have the file, make sure that we remove the file when we go
+  // online.
+  @Test
+  public void testFileRemovedDuringOnlineTransition() throws Exception {
+    FakeLLRealtimeSegmentDataManager segmentDataManager = createFakeSegmentManager();
+
+    SegmentCompletionProtocol.Response.Params params = new SegmentCompletionProtocol.Response.Params();
+    params.withStatus(SegmentCompletionProtocol.ControllerResponseStatus.FAILED);
+    SegmentCompletionProtocol.Response commitFailed = new SegmentCompletionProtocol.Response(params);
+
+    // Set up the responses so that we get a failed respnse first and then a success response.
+    segmentDataManager._responses.add(commitFailed);
+    final long leaseTime = 50000L;
+    final long finalOffset = _startOffset + 600;
+    segmentDataManager.setCurrentOffset(finalOffset);
+
+    // We have set up commit to fail, so we should carry over the segment file.
+    String segTarFileName = segmentDataManager.invokeBuildForCommit(leaseTime);
+    Assert.assertTrue(segmentDataManager._buildSegmentCalled);
+    Assert.assertFalse(segmentDataManager.invokeCommit(segTarFileName));
+    Assert.assertTrue(new File(segTarFileName).exists());
+
+    // Now let the segment go ONLINE from CONSUMING, and ensure that the file is removed.
+    LLCRealtimeSegmentZKMetadata metadata = new LLCRealtimeSegmentZKMetadata();
+    metadata.setEndOffset(finalOffset);
+    segmentDataManager._stopWaitTimeMs = 0;
+    segmentDataManager._state.set(segmentDataManager, LLRealtimeSegmentDataManager.State.HOLDING);
+    segmentDataManager.goOnlineFromConsuming(metadata);
+    Assert.assertFalse(new File(segTarFileName).exists());
+  }
+
   public static class FakeLLRealtimeSegmentDataManager extends LLRealtimeSegmentDataManager {
 
     public Field _state;
-    public Field _receivedStop;
+    public Field _shouldStop;
+    public Field _stopReason;
     public LinkedList<Long> _consumeOffsets = new LinkedList<>();
     public LinkedList<SegmentCompletionProtocol.Response> _responses = new LinkedList<>();
     public boolean _commitSegmentCalled = false;
@@ -486,18 +624,30 @@ public class LLRealtimeSegmentDataManagerTest {
     public boolean _buildAndReplaceCalled = false;
     public int _stopWaitTimeMs = 100;
     private boolean _downloadAndReplaceCalled = false;
+    public boolean _throwExceptionFromConsume = false;
+    public boolean _postConsumeStoppedCalled = false;
 
-    public FakeLLRealtimeSegmentDataManager(RealtimeSegmentZKMetadata segmentZKMetadata,
-        AbstractTableConfig tableConfig, InstanceZKMetadata instanceZKMetadata,
-        RealtimeTableDataManager realtimeTableDataManager, String resourceDataDir, Schema schema,
-        ServerMetrics serverMetrics)
+    public FakeLLRealtimeSegmentDataManager(RealtimeSegmentZKMetadata segmentZKMetadata, TableConfig tableConfig,
+        InstanceZKMetadata instanceZKMetadata, RealtimeTableDataManager realtimeTableDataManager,
+        String resourceDataDir, Schema schema, ServerMetrics serverMetrics)
         throws Exception {
-      super(segmentZKMetadata, tableConfig, instanceZKMetadata, realtimeTableDataManager, resourceDataDir, schema,
-          serverMetrics);
+      super(segmentZKMetadata, tableConfig, instanceZKMetadata, realtimeTableDataManager, resourceDataDir,
+          new IndexLoadingConfig(null, tableConfig), schema, serverMetrics);
       _state = LLRealtimeSegmentDataManager.class.getDeclaredField("_state");
       _state.setAccessible(true);
-      _receivedStop = LLRealtimeSegmentDataManager.class.getDeclaredField("_receivedStop");
-      _receivedStop.setAccessible(true);
+      _shouldStop = LLRealtimeSegmentDataManager.class.getDeclaredField("_shouldStop");
+      _shouldStop.setAccessible(true);
+      _stopReason = LLRealtimeSegmentDataManager.class.getDeclaredField("_stopReason");
+      _stopReason.setAccessible(true);
+    }
+
+    public String getStopReason() {
+      try {
+        return (String) _stopReason.get(this);
+      } catch (Exception e) {
+        Assert.fail();
+      }
+      return null;
     }
 
     public PartitionConsumer createPartitionConsumer() {
@@ -505,10 +655,20 @@ public class LLRealtimeSegmentDataManagerTest {
       return consumer;
     }
 
+    public String invokeBuildForCommit(long leaseTime) {
+      return super.buildSegmentForCommit(leaseTime);
+    }
+
+    public boolean invokeCommit(String segTarFileName) {
+      SegmentCompletionProtocol.Response response = mock(SegmentCompletionProtocol.Response.class);
+      when(response.getIsSplitCommit()).thenReturn(false);
+      return super.commitSegment(segTarFileName, response);
+    }
+
     private void terminateLoopIfNecessary() {
       if (_consumeOffsets.isEmpty() && _responses.isEmpty()) {
         try {
-          _receivedStop.set(this, true);
+          _shouldStop.set(this, true);
         } catch (Exception e) {
           Assert.fail();
         }
@@ -521,9 +681,13 @@ public class LLRealtimeSegmentDataManagerTest {
     }
 
     @Override
-    protected void consumeLoop() {
+    protected boolean consumeLoop() throws Exception {
+      if (_throwExceptionFromConsume) {
+        throw new SimpleConsumerWrapper.PermanentConsumerException(Errors.OFFSET_OUT_OF_RANGE);
+      }
       setCurrentOffset(_consumeOffsets.remove());
       terminateLoopIfNecessary();
+      return true;
     }
 
     @Override
@@ -534,9 +698,20 @@ public class LLRealtimeSegmentDataManagerTest {
     }
 
     @Override
-    protected KafkaHighLevelStreamProviderConfig createStreamProviderConfig() {
-      KafkaHighLevelStreamProviderConfig config = mock(KafkaHighLevelStreamProviderConfig.class);
-      Mockito.doNothing().when(config).init(any(AbstractTableConfig.class), any(InstanceZKMetadata.class), any(Schema.class));
+    protected SegmentCompletionProtocol.Response postSegmentCommitMsg(File segTarFile) {
+      SegmentCompletionProtocol.Response response = _responses.remove();
+      return response;
+    }
+
+    @Override
+    protected void postStopConsumedMsg(String reason) {
+      _postConsumeStoppedCalled = true;
+    }
+
+    @Override
+    protected KafkaLowLevelStreamProviderConfig createStreamProviderConfig() {
+      KafkaLowLevelStreamProviderConfig config = mock(KafkaLowLevelStreamProviderConfig.class);
+      Mockito.doNothing().when(config).init(any(TableConfig.class), any(InstanceZKMetadata.class), any(Schema.class));
       when(config.getTopicName()).thenReturn(_topicName);
       when(config.getStreamName()).thenReturn(_topicName);
       when(config.getSizeThresholdToFlushSegment()).thenReturn(maxRowsInSegment);
@@ -566,13 +741,23 @@ public class LLRealtimeSegmentDataManagerTest {
     }
 
     @Override
-    protected boolean buildSegment(boolean buildTgz) {
+    protected String buildSegmentInternal(boolean forCommit) {
       _buildSegmentCalled = true;
-      return true;
+      if (!forCommit) {
+        return _segmentDir;
+      }
+      final String segTarFileName =  _segmentDir + "/" + "segmentFile";
+      File segmentTgzFile = new File(segTarFileName);
+      try {
+        segmentTgzFile.createNewFile();
+      } catch (IOException e) {
+        Assert.fail("Could not create file " + segmentTgzFile);
+      }
+      return segTarFileName;
     }
 
     @Override
-    protected boolean commitSegment() {
+    protected boolean commitSegment(final String segTarFile, SegmentCompletionProtocol.Response response) {
       _commitSegmentCalled = true;
       return true;
     }
@@ -647,5 +832,4 @@ public class LLRealtimeSegmentDataManagerTest {
       }
     }
   }
-
 }

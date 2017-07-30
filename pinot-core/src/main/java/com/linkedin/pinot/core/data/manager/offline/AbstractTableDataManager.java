@@ -15,31 +15,28 @@
  */
 package com.linkedin.pinot.core.data.manager.offline;
 
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.collect.ImmutableList;
+import com.linkedin.pinot.common.metrics.ServerGauge;
+import com.linkedin.pinot.common.metrics.ServerMeter;
+import com.linkedin.pinot.common.metrics.ServerMetrics;
+import com.linkedin.pinot.core.data.manager.config.TableDataManagerConfig;
+import com.linkedin.pinot.core.indexsegment.IndexSegment;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
+import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import com.google.common.annotations.VisibleForTesting;
-import com.google.common.collect.ImmutableList;
-import com.linkedin.pinot.common.metadata.segment.IndexLoadingConfigMetadata;
-import com.linkedin.pinot.common.metrics.ServerGauge;
-import com.linkedin.pinot.common.metrics.ServerMeter;
-import com.linkedin.pinot.common.metrics.ServerMetrics;
-import com.linkedin.pinot.common.segment.ReadMode;
-import com.linkedin.pinot.common.utils.NamedThreadFactory;
-import com.linkedin.pinot.core.data.manager.config.TableDataManagerConfig;
-import com.linkedin.pinot.core.indexsegment.IndexSegment;
-import javax.annotation.Nonnull;
 
 
-public abstract  class AbstractTableDataManager implements TableDataManager {
+// TODO: pass a reference to Helix property store during initialization. Both OFFLINE and REALTIME use case need it.
+public abstract class AbstractTableDataManager implements TableDataManager {
   protected final List<String> _activeSegments = new ArrayList<String>();
   protected final List<String> _loadingSegments = new ArrayList<String>();
   // This read-write lock protects the _segmentsMap and SegmentDataManager.refCnt
@@ -50,24 +47,19 @@ public abstract  class AbstractTableDataManager implements TableDataManager {
   protected Logger LOGGER = LoggerFactory.getLogger(AbstractTableDataManager.class);
   protected volatile boolean _isStarted = false;
   protected String _tableName;
-  protected ExecutorService _queryExecutorService;
 
-  protected ReadMode _readMode;
   protected TableDataManagerConfig _tableDataManagerConfig;
   protected String _tableDataDir;
   protected File _indexDir;
-  protected int _numberOfTableQueryExecutorThreads;
-  protected IndexLoadingConfigMetadata _indexLoadingConfigMetadata;
   protected ServerMetrics _serverMetrics;
   protected String _serverInstance;
 
-
   protected AbstractTableDataManager() {
-
   }
 
   @Override
-  public void init(TableDataManagerConfig tableDataManagerConfig, ServerMetrics serverMetrics, String serverInstance) {
+  public void init(@Nonnull TableDataManagerConfig tableDataManagerConfig, @Nonnull ServerMetrics serverMetrics,
+      @Nullable String serverInstance) {
     _serverInstance = serverInstance;
     _tableDataManagerConfig = tableDataManagerConfig;
     _serverMetrics = serverMetrics;
@@ -80,22 +72,8 @@ public abstract  class AbstractTableDataManager implements TableDataManager {
     if (!_indexDir.exists()) {
       _indexDir.mkdirs();
     }
-    _numberOfTableQueryExecutorThreads = _tableDataManagerConfig.getNumberOfTableQueryExecutorThreads();
-    if (_numberOfTableQueryExecutorThreads > 0) {
-      _queryExecutorService =
-          Executors.newFixedThreadPool(_numberOfTableQueryExecutorThreads,
-              new NamedThreadFactory("parallel-query-executor-" + _tableName));
-    } else {
-      _queryExecutorService =
-          Executors.newCachedThreadPool(new NamedThreadFactory("parallel-query-executor-" + _tableName));
-    }
-    _readMode = ReadMode.valueOf(_tableDataManagerConfig.getReadMode());
-    _indexLoadingConfigMetadata = _tableDataManagerConfig.getIndexLoadingConfigMetadata();
-    LOGGER
-        .info("Initialized table : " + _tableName + " with :\n\tData Directory: " + _tableDataDir
-            + "\n\tRead Mode : " + _readMode + "\n\tQuery Exeutor with "
-            + ((_numberOfTableQueryExecutorThreads > 0) ? _numberOfTableQueryExecutorThreads : "cached")
-            + " threads");
+
+    LOGGER.info("Initialized table: {} with data directory: {}", _tableName, _tableDataDir);
   }
 
   protected abstract void doInit();
@@ -119,7 +97,6 @@ public abstract  class AbstractTableDataManager implements TableDataManager {
     LOGGER.info("Trying to shutdown table : " + _tableName);
     doShutdown();
     if (_isStarted) {
-      _queryExecutorService.shutdown();
       _tableDataManagerConfig = null;
       _isStarted = false;
     } else {
@@ -130,7 +107,8 @@ public abstract  class AbstractTableDataManager implements TableDataManager {
   protected abstract void doShutdown();
 
   /**
-   * Add a segment (or replace it, if one exists with the same name.
+   * Add a segment (or replace it, if one exists with the same name).
+   * <p>
    * Ensures that reference count of the old segment (if replaced) is reduced by 1, so that the
    * last user of the old segment (or the calling thread, if there are none) remove the segment.
    * The new segment is added with a refcnt of 1, so that is never removed until a drop command
@@ -138,8 +116,7 @@ public abstract  class AbstractTableDataManager implements TableDataManager {
    *
    * @param indexSegmentToAdd new segment to add/replace.
    */
-  // Add or a segment (or, replace it if it exists with the same name).
-  public void addSegment(final IndexSegment indexSegmentToAdd) {
+  public void addSegment(@Nonnull IndexSegment indexSegmentToAdd) {
     final String segmentName = indexSegmentToAdd.getSegmentName();
     LOGGER.info("Trying to add a new segment {} of table {} with OfflineSegmentDataManager", segmentName, _tableName);
     OfflineSegmentDataManager newSegmentManager = new OfflineSegmentDataManager(indexSegmentToAdd);
@@ -212,11 +189,6 @@ public abstract  class AbstractTableDataManager implements TableDataManager {
     return _isStarted;
   }
 
-  @Override
-  public ExecutorService getExecutorService() {
-    return _queryExecutorService;
-  }
-
   @Nonnull
   @Override
   public ImmutableList<SegmentDataManager> acquireAllSegments() {
@@ -283,9 +255,5 @@ public abstract  class AbstractTableDataManager implements TableDataManager {
   @Override
   public String getTableName() {
     return _tableName;
-  }
-
-  public IndexLoadingConfigMetadata getIndexLoadingConfigMetadata() {
-    return _indexLoadingConfigMetadata;
   }
 }

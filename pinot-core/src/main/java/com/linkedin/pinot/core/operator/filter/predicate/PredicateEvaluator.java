@@ -50,8 +50,57 @@ public interface PredicateEvaluator {
    * Will return true if the predicate is evaluated as false all the time. Useful to skip the
    * segment. e.g if country=zm and segment contains no record for "zm" country we can skip the
    * segment
+   *
    * @return
    */
   public boolean alwaysFalse();
 
+  /**
+   *
+   * @param value
+   * @return
+   */
+  public boolean apply(String value);
+
+  /**
+   *
+   * @param values
+   * @return
+   */
+  public boolean apply(String[] values);
+
+  /**
+   * @param values String[] type
+   * @param length how many elements in the array should the predicate be evaluated against
+   * @return
+   */
+
+  public boolean apply(String[] values, int length);
+
+  /**
+   * LONG
+   */
+  public boolean apply(long value);
+
+  public boolean apply(long[] values);
+
+  public boolean apply(long[] values, int length);
+
+  /**
+   * FLOAT
+   */
+  public boolean apply(float value);
+
+  public boolean apply(float[] values);
+
+  public boolean apply(float[] values, int length);
+
+  /**
+   * DOUBLE
+   */
+  public boolean apply(double value);
+
+  public boolean apply(double[] values);
+
+  public boolean apply(double[] values, int length);
 }

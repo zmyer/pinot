@@ -15,22 +15,64 @@
 # limitations under the License.
 #
 
-# Ignore changes not related to pinot code
-git diff --name-only $TRAVIS_COMMIT_RANGE | egrep '^(pinot-|pom.xml|.travis|.codecov)'
-if [ $? -ne 0 ]; then
-  echo 'No changes related to the pinot code, skip the test.'
+# ThirdEye related changes
+git diff --name-only $TRAVIS_COMMIT_RANGE | egrep '^(thirdeye)'
+if [ $? -eq 0 ]; then
+  echo 'ThirdEye changes.'
+
+  if [ "$TRAVIS_JDK_VERSION" != 'oraclejdk7' ]; then
+    echo 'Skip ThirdEye tests for version other than oracle jdk7.'
+    rm -rf ~/.m2/repository/com/linkedin/pinot ~/.m2/repository/com/linkedin/thirdeye
+    exit 0
+  fi
+
+  if [ "$RUN_INTEGRATION_TESTS" == 'false' ]; then
+    echo 'Skip ThirdEye tests when integration tests off'
+    rm -rf ~/.m2/repository/com/linkedin/pinot ~/.m2/repository/com/linkedin/thirdeye
+    exit 0
+  fi
+
+  cd thirdeye
+  mvn test
+  failed=$?
+  # Remove Pinot/ThirdEye files from local Maven repository to avoid a useless cache rebuild
+  rm -rf ~/.m2/repository/com/linkedin/pinot ~/.m2/repository/com/linkedin/thirdeye
+  if [ $failed -eq 0 ]; then
+    exit 0
+  else
+    exit 1
+  fi
+fi
+
+# Only run tests for JDK 7
+if [ "$TRAVIS_JDK_VERSION" != 'oraclejdk7' ]; then
+  echo 'Skip tests for version other than oracle jdk7.'
+  # Remove Pinot files from local Maven repository to avoid a useless cache rebuild
+  rm -rf ~/.m2/repository/com/linkedin/pinot
   exit 0
 fi
 
-# Only run tests for JDK 8
-if [ $TRAVIS_JDK_VERSION != 'oraclejdk7' ]; then
-  echo 'Skip tests for version other than oraclejdk7.'
-  exit 0
+passed=0
+# Only run integration tests if needed
+if [ "$RUN_INTEGRATION_TESTS" != 'false' ]; then
+  mvn test -B -P travis,travis-integration-tests-only
+  if [ $? -eq 0 ]; then
+    passed=1
+  fi
+else
+  mvn test -B -P travis,travis-no-integration-tests
+  if [ $? -eq 0 ]; then
+    passed=1
+  fi
 fi
 
-mvn test -B -P travis
-if [ $? -ne 0 ]; then
+# Remove Pinot files from local Maven repository to avoid a useless cache rebuild
+rm -rf ~/.m2/repository/com/linkedin/pinot
+
+if [ $passed -eq 1 ]; then
+  # Only send code coverage data if passed
+  bash <(cat .codecov_bash)
+  exit 0
+else
   exit 1
 fi
-
-bash <(cat .codecov_bash)

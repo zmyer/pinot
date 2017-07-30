@@ -1,0 +1,117 @@
+/**
+ * Base page styles common to all
+ */
+
+body {
+  background-color: $te-main-background;
+  margin: 0;
+}
+
+.te-title {
+  @include app-title-mixin;
+
+  &--flush {
+    @include padding-reset;
+    @include margin-reset;
+  }
+}
+
+.te-sub-title {
+  @include app-sub-title-mixin;
+  &--flush {
+    @include padding-reset;
+    @include margin-reset;
+  }
+}
+
+.te-form {
+  margin-top: $te-default-element-spacing;
+
+  &__group {
+    &--horizontal {
+      width: 350px;
+      float: left;
+      margin-right: 20px;
+    }
+
+    &--last {
+      margin-right: 0;
+    }
+  }
+}
+
+.te-hide {
+  @include app-hide;
+}
+
+.te-page-right {
+  float: right;
+  margin-top: -24px;
+
+  &--inside {
+    margin-top: 0;
+  }
+}
+
+.te-search-results {
+  border-bottom: 1px app-shade(black, 1) solid;
+
+  &__list {
+    list-style: none;
+
+    &--details-block {
+      padding: 0 15px 15px 15px;
+    }
+  }
+
+  &__summary-item {
+    line-height: 22px;
+
+    &--tag {
+      margin-top: 4px;
+    }
+
+    &--title {
+      margin: 0;
+    }
+  }
+
+  &__icon {
+    float: right;
+  }
+
+  &__tag {
+    background-color: app-shade(black, 3);
+    border-radius: 5px;
+    padding: 4px 8px;
+    color: app-shade(white, 8);
+
+    &--active {
+      background-color: app-shade(black, 7);
+    }
+  }
+
+  &:last-child {
+    border: none;
+  }
+}
+
+.te-search-header {
+  padding-bottom: $te-spacing--sm;
+  margin-bottom: $te-spacing--sm;
+  border-bottom: 1px app-shade(black, 1) solid;
+}
+
+.te-search-title {
+  font-size: 16px;
+  color: lighten(black, 25%);
+}
+
+.te-link--show {
+  display: block;
+  float: right;
+}
+
+.te-link--hide {
+  display: none;
+}

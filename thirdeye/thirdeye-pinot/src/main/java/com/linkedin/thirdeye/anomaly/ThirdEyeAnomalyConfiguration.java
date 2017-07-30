@@ -1,6 +1,8 @@
 package com.linkedin.thirdeye.anomaly;
 
 import com.linkedin.thirdeye.anomaly.monitor.MonitorConfiguration;
+import com.linkedin.thirdeye.anomaly.task.TaskDriverConfiguration;
+import com.linkedin.thirdeye.auto.onboard.AutoOnboardConfiguration;
 import com.linkedin.thirdeye.common.ThirdEyeConfiguration;
 
 public class ThirdEyeAnomalyConfiguration extends ThirdEyeConfiguration {
@@ -9,11 +11,16 @@ public class ThirdEyeAnomalyConfiguration extends ThirdEyeConfiguration {
   private boolean monitor = false;
   private boolean alert = false;
   private boolean merger = false;
+  private boolean autoload = false;
+  private boolean dataCompleteness = false;
+  private boolean classifier = false;
 
   private long id;
   private String dashboardHost;
   private SmtpConfiguration smtpConfiguration;
   private MonitorConfiguration monitorConfiguration = new MonitorConfiguration();
+  private AutoOnboardConfiguration autoOnboardConfiguration = new AutoOnboardConfiguration();
+  private TaskDriverConfiguration taskDriverConfiguration = new TaskDriverConfiguration();
   private String failureFromAddress;
   private String failureToAddress;
 
@@ -65,6 +72,24 @@ public class ThirdEyeAnomalyConfiguration extends ThirdEyeConfiguration {
     this.monitorConfiguration = monitorConfiguration;
   }
 
+
+
+  public AutoOnboardConfiguration getAutoOnboardConfiguration() {
+    return autoOnboardConfiguration;
+  }
+
+  public void setAutoOnboardConfiguration(AutoOnboardConfiguration autoOnboardConfiguration) {
+    this.autoOnboardConfiguration = autoOnboardConfiguration;
+  }
+
+  public TaskDriverConfiguration getTaskDriverConfiguration() {
+    return taskDriverConfiguration;
+  }
+
+  public void setTaskDriverConfiguration(TaskDriverConfiguration taskDriverConfiguration) {
+    this.taskDriverConfiguration = taskDriverConfiguration;
+  }
+
   public boolean isAlert() {
     return alert;
   }
@@ -83,6 +108,30 @@ public class ThirdEyeAnomalyConfiguration extends ThirdEyeConfiguration {
 
   public void setMerger(boolean merger) {
     this.merger = merger;
+  }
+
+  public boolean isAutoload() {
+    return autoload;
+  }
+
+  public void setAutoload(boolean autoload) {
+    this.autoload = autoload;
+  }
+
+  public boolean isDataCompleteness() {
+    return dataCompleteness;
+  }
+
+  public void setDataCompleteness(boolean dataCompleteness) {
+    this.dataCompleteness = dataCompleteness;
+  }
+
+  public boolean isClassifier() {
+    return classifier;
+  }
+
+  public void setClassifier(boolean classifier) {
+    this.classifier = classifier;
   }
 
   public void setSmtpConfiguration(SmtpConfiguration smtpConfiguration) {

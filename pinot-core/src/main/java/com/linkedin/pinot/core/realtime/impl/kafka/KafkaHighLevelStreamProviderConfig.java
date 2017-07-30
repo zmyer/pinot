@@ -15,28 +15,35 @@
  */
 package com.linkedin.pinot.core.realtime.impl.kafka;
 
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Properties;
-import com.linkedin.pinot.common.config.AbstractTableConfig;
+import com.linkedin.pinot.common.config.TableConfig;
 import com.linkedin.pinot.common.data.Schema;
 import com.linkedin.pinot.common.metadata.instance.InstanceZKMetadata;
 import com.linkedin.pinot.common.metadata.stream.KafkaStreamMetadata;
 import com.linkedin.pinot.common.utils.CommonConstants.Helix;
 import com.linkedin.pinot.core.realtime.StreamProviderConfig;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Properties;
+import kafka.consumer.ConsumerConfig;
+import org.joda.time.Duration;
+import org.joda.time.Period;
+import org.joda.time.format.PeriodFormatter;
+import org.joda.time.format.PeriodFormatterBuilder;
+
 import static com.linkedin.pinot.common.utils.EqualityUtils.hashCodeOf;
 import static com.linkedin.pinot.common.utils.EqualityUtils.isEqual;
 import static com.linkedin.pinot.common.utils.EqualityUtils.isNullOrNotSameClass;
 import static com.linkedin.pinot.common.utils.EqualityUtils.isSameReference;
-import kafka.consumer.ConsumerConfig;
 
 
 public class KafkaHighLevelStreamProviderConfig implements StreamProviderConfig {
   private static final Map<String, String> defaultProps;
 
-  public static final int FIVE_MILLION = 5000000;
+  private static final int DEFAULT_MAX_REALTIME_ROWS_COUNT = 5000000;
   private final static long ONE_MINUTE_IN_MILLSEC = 1000 * 60;
   public static final long ONE_HOUR = ONE_MINUTE_IN_MILLSEC * 60;
+
+  private final static PeriodFormatter PERIOD_FORMATTER;
 
   static {
     defaultProps = new HashMap<String, String>();
@@ -49,9 +56,21 @@ public class KafkaHighLevelStreamProviderConfig implements StreamProviderConfig 
     // Rebalance retries will take up to 1 mins to fail.
     defaultProps.put("rebalance.max.retries", "30");
     defaultProps.put("rebalance.backoff.ms", "2000");
-    
+
     defaultProps.put("auto.commit.enable", "false");
-    defaultProps.put("auto.offset.reset", "largest");
+    defaultProps.put(Helix.DataSource.Realtime.Kafka.AUTO_OFFSET_RESET, "largest");
+
+    // A formatter for time specification that allows time to be specified in days, hours and minutes
+    // e.g. 1d2h3m, or 6h5m or simply 5h
+    PERIOD_FORMATTER =  new PeriodFormatterBuilder()
+        .appendDays().appendSuffix("d")
+        .appendHours().appendSuffix("h")
+        .appendMinutes().appendSuffix("m")
+        .toFormatter();
+  }
+
+  public static int getDefaultMaxRealtimeRowsCount() {
+    return DEFAULT_MAX_REALTIME_ROWS_COUNT;
   }
 
   private String kafkaTopicName;
@@ -63,7 +82,7 @@ public class KafkaHighLevelStreamProviderConfig implements StreamProviderConfig 
   private Map<String, String> decoderProps;
   private Map<String, String> kafkaConsumerProps;
   private long segmentTimeInMillis = ONE_HOUR;
-  private int realtimeRecordsThreshold = FIVE_MILLION;
+  private int realtimeRecordsThreshold = DEFAULT_MAX_REALTIME_ROWS_COUNT;
 
   public KafkaHighLevelStreamProviderConfig() {
 
@@ -167,7 +186,7 @@ public class KafkaHighLevelStreamProviderConfig implements StreamProviderConfig 
   }
 
   @Override
-  public void init(AbstractTableConfig tableConfig, InstanceZKMetadata instanceMetadata, Schema schema) {
+  public void init(TableConfig tableConfig, InstanceZKMetadata instanceMetadata, Schema schema) {
     this.indexingSchema = schema;
     if (instanceMetadata != null) {
       // For LL segments, instanceZkMetadata will be null
@@ -186,7 +205,7 @@ public class KafkaHighLevelStreamProviderConfig implements StreamProviderConfig 
 
     if (tableConfig.getIndexingConfig().getStreamConfigs().containsKey(Helix.DataSource.Realtime.REALTIME_SEGMENT_FLUSH_TIME)) {
       segmentTimeInMillis =
-          Long.parseLong(tableConfig.getIndexingConfig().getStreamConfigs().get(Helix.DataSource.Realtime.REALTIME_SEGMENT_FLUSH_TIME));
+          convertToMs(tableConfig.getIndexingConfig().getStreamConfigs().get(Helix.DataSource.Realtime.REALTIME_SEGMENT_FLUSH_TIME));
     }
   }
 
@@ -203,6 +222,30 @@ public class KafkaHighLevelStreamProviderConfig implements StreamProviderConfig 
   @Override
   public long getTimeThresholdToFlushSegment() {
     return segmentTimeInMillis;
+  }
+
+  String getGroupId() {
+    return groupId;
+  }
+
+  String getZkString() {
+    return zkString;
+  }
+
+  protected long convertToMs(String timeStr) {
+    long ms = -1;
+    try {
+      ms = Long.valueOf(timeStr);
+    } catch (NumberFormatException e1) {
+      try {
+        Period p = PERIOD_FORMATTER.parsePeriod(timeStr);
+        Duration d = p.toStandardDuration();
+        ms = d.getStandardSeconds() * 1000L;
+      } catch (Exception e2) {
+        throw new RuntimeException("Invalid time spec '" + timeStr + "' (Valid examples: '3h', '4h30m')", e2);
+      }
+    }
+    return ms;
   }
 
   @Override

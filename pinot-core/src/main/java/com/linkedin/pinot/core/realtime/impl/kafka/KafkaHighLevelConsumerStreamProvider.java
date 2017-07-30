@@ -17,6 +17,7 @@ package com.linkedin.pinot.core.realtime.impl.kafka;
 
 import com.linkedin.pinot.common.metrics.ServerMeter;
 import com.linkedin.pinot.common.metrics.ServerMetrics;
+import com.yammer.metrics.core.Meter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import com.linkedin.pinot.core.data.GenericRow;
@@ -47,6 +48,9 @@ public class KafkaHighLevelConsumerStreamProvider implements StreamProvider {
   private String tableAndStreamName;
   private long currentCount = 0L;
 
+  private Meter tableAndStreamRowsConsumed = null;
+  private Meter tableRowsConsumed = null;
+
   @Override
   public void init(StreamProviderConfig streamProviderConfig, String tableName, ServerMetrics serverMetrics)
       throws Exception {
@@ -72,12 +76,12 @@ public class KafkaHighLevelConsumerStreamProvider implements StreamProvider {
   }
 
   @Override
-  public GenericRow next() {
+  public GenericRow next(GenericRow destination) {
     if (kafkaIterator.hasNext()) {
       try {
-        GenericRow row = decoder.decode(kafkaIterator.next().message());
-        serverMetrics.addMeteredTableValue(tableAndStreamName, ServerMeter.REALTIME_ROWS_CONSUMED, 1L);
-        serverMetrics.addMeteredGlobalValue(ServerMeter.REALTIME_ROWS_CONSUMED, 1L);
+        destination = decoder.decode(kafkaIterator.next().message(), destination);
+        tableAndStreamRowsConsumed = serverMetrics.addMeteredTableValue(tableAndStreamName, ServerMeter.REALTIME_ROWS_CONSUMED, 1L, tableAndStreamRowsConsumed);
+        tableRowsConsumed = serverMetrics.addMeteredGlobalValue(ServerMeter.REALTIME_ROWS_CONSUMED, 1L, tableRowsConsumed);
         ++currentCount;
 
         final long now = System.currentTimeMillis();
@@ -94,7 +98,7 @@ public class KafkaHighLevelConsumerStreamProvider implements StreamProvider {
           lastCount = currentCount;
           lastLogTime = now;
         }
-        return row;
+        return destination;
       } catch (Exception e) {
         INSTANCE_LOGGER.warn("Caught exception while consuming events", e);
         serverMetrics.addMeteredTableValue(tableAndStreamName, ServerMeter.REALTIME_CONSUMPTION_EXCEPTIONS, 1L);

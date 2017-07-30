@@ -1,24 +1,25 @@
 package com.linkedin.thirdeye.tools;
 
-import java.io.File;
-import java.util.ArrayList;
-import java.util.List;
-import org.apache.commons.collections.CollectionUtils;
-import org.apache.commons.lang3.StringUtils;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.testng.collections.Lists;
-
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import com.linkedin.thirdeye.anomaly.utils.DetectionResourceHttpUtils;
+import com.linkedin.thirdeye.dashboard.resources.OnboardResource;
 import com.linkedin.thirdeye.datalayer.bao.AnomalyFunctionManager;
 import com.linkedin.thirdeye.datalayer.bao.MergedAnomalyResultManager;
 import com.linkedin.thirdeye.datalayer.bao.RawAnomalyResultManager;
 import com.linkedin.thirdeye.datalayer.dto.AnomalyFunctionDTO;
-import com.linkedin.thirdeye.datalayer.dto.MergedAnomalyResultDTO;
-import com.linkedin.thirdeye.datalayer.dto.RawAnomalyResultDTO;
 import com.linkedin.thirdeye.datalayer.util.DaoProviderUtil;
+import java.io.File;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.http.client.ClientProtocolException;
+import org.joda.time.DateTime;
+import org.joda.time.format.ISODateTimeFormat;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.testng.collections.Lists;
 
 /**
  * Utility class to cleanup all anomalies for input datasets,
@@ -32,10 +33,10 @@ public class CleanupAndRegenerateAnomaliesTool {
   private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper(new YAMLFactory());
   private enum Mode {
     DELETE,
-    GENERATE
+    GENERATE_FOR_RANGE, BACKFILL_FOR_RANGE
   }
-  private String startTime;
-  private String endTime;
+  private String monitoringWindowStartTime;
+  private String monitoringWindowEndTime;
   private List<Long> functionIds;
 
   private int rawAnomaliesDeleted = 0;
@@ -50,8 +51,8 @@ public class CleanupAndRegenerateAnomaliesTool {
       File persistenceFile, String detectionHost, int detectionPort)
       throws Exception {
     init(persistenceFile);
-    this.startTime = startTime;
-    this.endTime = endTime;
+    this.monitoringWindowStartTime = startTime;
+    this.monitoringWindowEndTime = endTime;
     this.functionIds = getFunctionIds(datasets, functionIds);
     detectionResourceHttpUtils = new DetectionResourceHttpUtils(detectionHost, detectionPort);
   }
@@ -85,27 +86,57 @@ public class CleanupAndRegenerateAnomaliesTool {
     return functionIdsList;
   }
 
+  /**
+   * Delete raw or merged anomalies whose start time is located in the given time ranges, except
+   * the following two cases:
+   *
+   * 1. If a raw anomaly belongs to a merged anomaly whose start time is not located in the given
+   * time ranges, then the raw anomaly will not be deleted.
+   *
+   * 2. If a raw anomaly belongs to a merged anomaly whose start time is located in the given
+   * time ranges, then it is deleted regardless its start time.
+   *
+   * If monitoringWindowStartTime is not given, then start time is set to 0.
+   * If monitoringWindowEndTime is not given, then end time is set to Long.MAX_VALUE.
+   */
   private void deleteExistingAnomalies() {
+    long startTime = 0;
+    long endTime = Long.MAX_VALUE;
+    if (StringUtils.isNotBlank(monitoringWindowStartTime)) {
+      startTime =
+          ISODateTimeFormat.dateTimeParser().parseDateTime(monitoringWindowStartTime).getMillis();
+    }
+    if (StringUtils.isNotBlank(monitoringWindowEndTime)) {
+      endTime =
+          ISODateTimeFormat.dateTimeParser().parseDateTime(monitoringWindowEndTime).getMillis();
+    }
+    LOG.info("Deleting anomalies in the time range: {} -- {}", new DateTime(startTime), new
+        DateTime(endTime));
 
     for (Long functionId : functionIds) {
       AnomalyFunctionDTO anomalyFunction = anomalyFunctionDAO.findById(functionId);
+      if(anomalyFunction == null){
+        LOG.info("Requested functionId {} doesn't exist", functionId);
+        continue;
+      }
+
       LOG.info("Beginning cleanup of functionId {} collection {} metric {}",
           functionId, anomalyFunction.getCollection(), anomalyFunction.getMetric());
-      List<RawAnomalyResultDTO> rawResults = rawResultDAO.findByFunctionId(functionId);
-      if (CollectionUtils.isNotEmpty(rawResults)) {
-        deleteRawResults(rawResults);
-      }
-      List<MergedAnomalyResultDTO> mergedResults = mergedResultDAO.findByFunctionId(functionId);
-      if (CollectionUtils.isNotEmpty(mergedResults)) {
-        deleteMergedResults(mergedResults);
-      }
+
+      // Clean up merged and raw anomaly of functionID
+      OnboardResource onboardResource = new OnboardResource(anomalyFunctionDAO, mergedResultDAO, rawResultDAO);
+      onboardResource.deleteExistingAnomalies(functionId, startTime, endTime);
     }
-    LOG.info("Deleted {} raw anomalies", rawAnomaliesDeleted);
-    LOG.info("Deleted {} merged anomalies", mergedAnomaliesDeleted);
   }
 
 
-  private void regenerateAnomalies() throws Exception {
+  /**
+   * Regenerates anomalies for the whole given range as one monitoring window
+   * @throws Exception
+   */
+  @Deprecated
+  private void regenerateAnomaliesInRange() throws Exception {
+    LOG.info("Begin regenerate anomalies for entire range...");
     for (Long functionId : functionIds) {
       AnomalyFunctionDTO anomalyFunction = anomalyFunctionDAO.findById(functionId);
       boolean isActive = anomalyFunction.getIsActive();
@@ -113,31 +144,39 @@ public class CleanupAndRegenerateAnomaliesTool {
         LOG.info("Skipping function {}", functionId);
         continue;
       }
-      LOG.info("Running adhoc function {}", functionId);
-      String response = detectionResourceHttpUtils.runAdhocAnomalyFunction(String.valueOf(functionId),
-          startTime, endTime);
+      runAdhocFunctionForWindow(functionId, monitoringWindowStartTime, monitoringWindowEndTime);
+    }
+  }
+
+  /**
+   * Breaks down the given range into consecutive monitoring windows as per function definition
+   * Regenerates anomalies for each window separately
+   * @throws Exception
+   */
+  private void regenerateAnomaliesForBucketsInRange(boolean forceBackfill) throws Exception {
+    for (Long functionId : functionIds) {
+      AnomalyFunctionDTO anomalyFunction = anomalyFunctionDAO.findById(functionId);
+      if (!anomalyFunction.getIsActive()) {
+        LOG.info("Skipping deactivated function {}", functionId);
+        continue;
+      }
+
+      LOG.info("Sending backfill function {} for range {} to {}", functionId, monitoringWindowStartTime, monitoringWindowEndTime);
+
+      String response =
+          detectionResourceHttpUtils.runBackfillAnomalyFunction(String.valueOf(functionId), monitoringWindowStartTime,
+              monitoringWindowEndTime, forceBackfill);
       LOG.info("Response {}", response);
     }
   }
 
-  private void deleteRawResults(List<RawAnomalyResultDTO> rawResults) {
-    LOG.info("Deleting raw results");
-    for (RawAnomalyResultDTO rawResult : rawResults) {
-      LOG.info("......Deleting id {} for functionId {}", rawResult.getId(), rawResult.getFunctionId());
-      rawResultDAO.delete(rawResult);
-      rawAnomaliesDeleted++;
-    }
+  private void runAdhocFunctionForWindow(Long functionId, String monitoringWindowStart, String monitoringWindowEnd)
+      throws ClientProtocolException, IOException {
+    LOG.info("Running adhoc function {} for range {} to {}", functionId, monitoringWindowStart, monitoringWindowEnd);
+    String response = detectionResourceHttpUtils.runAdhocAnomalyFunction(String.valueOf(functionId),
+        monitoringWindowStart, monitoringWindowEnd);
+    LOG.info("Response {}", response);
   }
-
-  private void deleteMergedResults(List<MergedAnomalyResultDTO> mergedResults) {
-    LOG.info("Deleting merged results");
-    for (MergedAnomalyResultDTO mergedResult : mergedResults) {
-      LOG.info(".....Deleting id {} for functionId {}", mergedResult.getId(), mergedResult.getFunctionId());
-      mergedResultDAO.delete(mergedResult);
-      mergedAnomaliesDeleted++;
-    }
-  }
-
 
   public static void main(String[] args) throws Exception {
 
@@ -167,7 +206,8 @@ public class CleanupAndRegenerateAnomaliesTool {
 
     String startTimeIso = config.getStartTimeIso();
     String endTimeIso = config.getEndTimeIso();
-    if (Mode.valueOf(mode).equals(Mode.GENERATE)
+    Mode runMode = Mode.valueOf(mode);
+    if ((runMode.equals(Mode.GENERATE_FOR_RANGE) || runMode.equals(Mode.BACKFILL_FOR_RANGE))
         && (StringUtils.isBlank(startTimeIso) || StringUtils.isBlank(endTimeIso))) {
       LOG.error("StarteTime and endTime must be provided in generate mode");
       System.exit(1);
@@ -180,19 +220,32 @@ public class CleanupAndRegenerateAnomaliesTool {
       System.exit(1);
     }
 
+    boolean doForceBackfill = false;
+    String forceBackfill = config.getForceBackfill();
+    if (StringUtils.isNotBlank(forceBackfill)) {
+      doForceBackfill = Boolean.parseBoolean(forceBackfill);
+    }
+
     CleanupAndRegenerateAnomaliesTool tool = new CleanupAndRegenerateAnomaliesTool(startTimeIso,
         endTimeIso, datasets, functionIds, persistenceFile, detectorHost, detectorPort);
 
-    if (Mode.valueOf(mode).equals(Mode.DELETE)) {
+    if (runMode.equals(Mode.DELETE)) {
       // DELETE mode deletes *ALL* anomalies for all functions in functionIds or datasets
       tool.deleteExistingAnomalies();
-    } else if (Mode.valueOf(mode).equals(Mode.GENERATE)) {
-      // GENERATE mode regenerates anomalies for all active functions in functionIds or datasets
-      tool.regenerateAnomalies();
+    } else if (runMode.equals(Mode.GENERATE_FOR_RANGE)) {
+      // GENERATE_FOR_RANGE mode regenerates anomalies for all active functions in functionIds or datasets
+      tool.regenerateAnomaliesInRange();
+    } else if (runMode.equals(Mode.BACKFILL_FOR_RANGE)) {
+      // BACKFILL_FOR_RANGE mode regenerates anomalies for all active functions in functionIds or datasets
+      // It will honor the monitoring window size of the function, and run for all consecutive windows, one by one,
+      // to cover the entire range provided as input
+      tool.regenerateAnomaliesForBucketsInRange(doForceBackfill);
     } else {
       LOG.error("Incorrect mode {}", mode);
       System.exit(1);
     }
+    // Added this because database connection gets stuck at times and program never terminates
+    System.exit(0);
   }
 
 }

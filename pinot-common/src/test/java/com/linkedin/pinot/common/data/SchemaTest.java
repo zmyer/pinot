@@ -15,36 +15,24 @@
  */
 package com.linkedin.pinot.common.data;
 
-import com.google.common.base.Preconditions;
 import com.linkedin.pinot.common.data.FieldSpec.DataType;
 import com.linkedin.pinot.common.data.TimeGranularitySpec.TimeFormat;
 import com.linkedin.pinot.common.utils.SchemaUtils;
 import java.io.File;
-import java.io.IOException;
 import java.net.URL;
 import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.testng.Assert;
-import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
 
 
 public class SchemaTest {
   public static final Logger LOGGER = LoggerFactory.getLogger(SchemaTest.class);
 
-  private Schema schema;
-
-  @BeforeClass
-  public void setUp()
-      throws IOException {
-    URL resourceUrl = getClass().getClassLoader().getResource("schemaTest.schema");
-    Preconditions.checkNotNull(resourceUrl);
-    schema = Schema.fromFile(new File(resourceUrl.getFile()));
-  }
-
   @Test
-  public void testValidation() throws Exception {
+  public void testValidation()
+      throws Exception {
     Schema schemaToValidate;
 
     schemaToValidate = Schema.fromString(makeSchema(FieldSpec.DataType.LONG, FieldSpec.DataType.STRING, true));
@@ -78,6 +66,7 @@ public class SchemaTest {
 
   @Test
   public void testSchemaBuilder() {
+    final Float defaultFloat = 0.5f;
     Schema schema = new Schema.SchemaBuilder()
         .addSingleValueDimension("svDimension", FieldSpec.DataType.INT)
         .addSingleValueDimension("svDimensionWithDefault", FieldSpec.DataType.INT, 10)
@@ -85,9 +74,9 @@ public class SchemaTest {
         .addMultiValueDimension("mvDimensionWithDefault", FieldSpec.DataType.STRING, "default")
         .addMetric("metric", FieldSpec.DataType.INT)
         .addMetric("metricWithDefault", FieldSpec.DataType.INT, 5)
-        .addMetric("derivedMetric", FieldSpec.DataType.STRING, 10, MetricFieldSpec.DerivedMetricType.HLL)
-        .addMetric("derivedMetricWithDefault", FieldSpec.DataType.STRING, 10, MetricFieldSpec.DerivedMetricType.HLL,
-            "default")
+        .addMetric("derivedMetric", FieldSpec.DataType.LONG, 10, MetricFieldSpec.DerivedMetricType.HLL)
+        .addMetric("derivedMetricWithDefault", DataType.FLOAT, 10, MetricFieldSpec.DerivedMetricType.HLL,
+            defaultFloat.toString())
         .addTime("time", TimeUnit.DAYS, FieldSpec.DataType.LONG)
         .build();
 
@@ -131,14 +120,14 @@ public class SchemaTest {
     fieldSpec = schema.getMetricSpec("derivedMetric");
     Assert.assertNotNull(fieldSpec);
     Assert.assertEquals(fieldSpec.isSingleValueField(), true);
-    Assert.assertEquals(fieldSpec.getDataType(), FieldSpec.DataType.STRING);
-    Assert.assertEquals(fieldSpec.getDefaultNullValue(), "null");
+    Assert.assertEquals(fieldSpec.getDataType(), FieldSpec.DataType.LONG);
+    Assert.assertEquals(fieldSpec.getDefaultNullValue(), 0L);
 
     fieldSpec = schema.getMetricSpec("derivedMetricWithDefault");
     Assert.assertNotNull(fieldSpec);
     Assert.assertEquals(fieldSpec.isSingleValueField(), true);
-    Assert.assertEquals(fieldSpec.getDataType(), FieldSpec.DataType.STRING);
-    Assert.assertEquals(fieldSpec.getDefaultNullValue(), "default");
+    Assert.assertEquals(fieldSpec.getDataType(), FieldSpec.DataType.FLOAT);
+    Assert.assertEquals(fieldSpec.getDefaultNullValue(), defaultFloat);
 
     fieldSpec = schema.getTimeFieldSpec();
     Assert.assertNotNull(fieldSpec);
@@ -249,32 +238,39 @@ public class SchemaTest {
 
   @Test
   public void testSerializeDeserialize()
-      throws IOException, IllegalAccessException {
-    Schema newSchema;
+      throws Exception {
+    URL resourceUrl = getClass().getClassLoader().getResource("schemaTest.schema");
+    Assert.assertNotNull(resourceUrl);
+    Schema schema = Schema.fromFile(new File(resourceUrl.getFile()));
 
-    newSchema = Schema.fromString(schema.getJSONSchema());
-    Assert.assertEquals(newSchema, schema);
-    Assert.assertEquals(newSchema.hashCode(), schema.hashCode());
+    Schema schemaToCompare = Schema.fromString(schema.getJSONSchema());
+    Assert.assertEquals(schemaToCompare, schema);
+    Assert.assertEquals(schemaToCompare.hashCode(), schema.hashCode());
 
-    newSchema = SchemaUtils.fromZNRecord(SchemaUtils.toZNRecord(schema));
-    Assert.assertEquals(newSchema, schema);
-    Assert.assertEquals(newSchema.hashCode(), schema.hashCode());
+    schemaToCompare = SchemaUtils.fromZNRecord(SchemaUtils.toZNRecord(schema));
+    Assert.assertEquals(schemaToCompare, schema);
+    Assert.assertEquals(schemaToCompare.hashCode(), schema.hashCode());
+
+    // When setting new fields, schema string should be updated
+    String JSONSchema = schemaToCompare.getJSONSchema();
+    schemaToCompare.setSchemaName("newSchema");
+    String JSONSchemaToCompare = schemaToCompare.getJSONSchema();
+    Assert.assertFalse(JSONSchema.equals(JSONSchemaToCompare));
   }
-  
+
   @Test
-  public void testSimpleDateFormat() throws IOException {
-    TimeGranularitySpec incomingTimeGranularitySpec = new TimeGranularitySpec(DataType.STRING, 1,
-        TimeUnit.DAYS, TimeFormat.SIMPLE_DATE_FORMAT + ":yyyyMMdd" , "Date");
-    TimeGranularitySpec outgoingTimeGranularitySpec = new TimeGranularitySpec(DataType.STRING, 1,
-        TimeUnit.DAYS, TimeFormat.SIMPLE_DATE_FORMAT + ":yyyyMMdd", "Date");
-    System.out.println(incomingTimeGranularitySpec);
+  public void testSimpleDateFormat()
+      throws Exception {
+    TimeGranularitySpec incomingTimeGranularitySpec =
+        new TimeGranularitySpec(DataType.STRING, 1, TimeUnit.DAYS, TimeFormat.SIMPLE_DATE_FORMAT + ":yyyyMMdd", "Date");
+    TimeGranularitySpec outgoingTimeGranularitySpec =
+        new TimeGranularitySpec(DataType.STRING, 1, TimeUnit.DAYS, TimeFormat.SIMPLE_DATE_FORMAT + ":yyyyMMdd", "Date");
     Schema schema = new Schema.SchemaBuilder().setSchemaName("testSchema")
-        .addTime(incomingTimeGranularitySpec, outgoingTimeGranularitySpec).build();
+        .addTime(incomingTimeGranularitySpec, outgoingTimeGranularitySpec)
+        .build();
     String jsonSchema = schema.getJSONSchema();
     Schema schemaFromJson = Schema.fromString(jsonSchema);
     Assert.assertEquals(schemaFromJson, schema);
     Assert.assertEquals(schemaFromJson.hashCode(), schema.hashCode());
-
-
   }
 }

@@ -16,6 +16,7 @@
 package com.linkedin.pinot.core.indexsegment.generator;
 
 import com.google.common.base.Preconditions;
+import com.linkedin.pinot.common.config.SegmentPartitionConfig;
 import com.linkedin.pinot.common.data.FieldSpec;
 import com.linkedin.pinot.common.data.FieldSpec.FieldType;
 import com.linkedin.pinot.common.data.Schema;
@@ -25,6 +26,8 @@ import com.linkedin.pinot.core.data.readers.CSVRecordReaderConfig;
 import com.linkedin.pinot.core.data.readers.FileFormat;
 import com.linkedin.pinot.core.data.readers.RecordReaderConfig;
 import com.linkedin.pinot.core.indexsegment.utils.AvroUtils;
+import com.linkedin.pinot.core.segment.DefaultSegmentNameGenerator;
+import com.linkedin.pinot.core.segment.SegmentNameGenerator;
 import com.linkedin.pinot.core.segment.creator.impl.V1Constants;
 import com.linkedin.pinot.core.startree.hll.HllConfig;
 import java.io.File;
@@ -32,25 +35,35 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import javax.annotation.Nonnull;
 import org.apache.commons.lang.StringUtils;
 import org.codehaus.jackson.annotate.JsonIgnore;
 import org.codehaus.jackson.annotate.JsonIgnoreProperties;
 import org.codehaus.jackson.map.ObjectMapper;
+import org.joda.time.format.DateTimeFormat;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
 
 /**
  * Configuration properties used in the creation of index segments.
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class SegmentGeneratorConfig {
+  public enum TimeColumnType {
+    EPOCH,
+    SIMPLE_DATE
+  }
   private static final Logger LOGGER = LoggerFactory.getLogger(SegmentGeneratorConfig.class);
 
   private Map<String, String> _customProperties = new HashMap<>();
+  private Set<String> _rawIndexCreationColumns = new HashSet<>();
   private List<String> _invertedIndexCreationColumns = new ArrayList<>();
   private String _dataDir = null;
   private String _inputFilePath = null;
@@ -65,7 +78,7 @@ public class SegmentGeneratorConfig {
   private String _segmentCreationTime = null;
   private String _segmentStartTime = null;
   private String _segmentEndTime = null;
-  private SegmentVersion _segmentVersion = SegmentVersion.v1;
+  private SegmentVersion _segmentVersion = SegmentVersion.v3;
   private String _schemaFile = null;
   private Schema _schema = null;
   private String _readerConfigFile = null;
@@ -76,13 +89,25 @@ public class SegmentGeneratorConfig {
   private String _creatorVersion = null;
   private char _paddingCharacter = V1Constants.Str.DEFAULT_STRING_PAD_CHAR;
   private HllConfig _hllConfig = null;
+  private SegmentNameGenerator _segmentNameGenerator = null;
+  private SegmentPartitionConfig _segmentPartitionConfig = null;
+  private int _sequenceId = -1;
+  private TimeColumnType _timeColumnType = TimeColumnType.EPOCH;
+  private String _simpleDateFormat = null;
 
   public SegmentGeneratorConfig() {
   }
 
+  /**
+   * @deprecated To be replaced by a builder pattern. Use set methods in the meantime.
+   * For now, this works only if no setters are called after this copy constructor.
+   * @param config to copy from
+   */
+  @Deprecated
   public SegmentGeneratorConfig(SegmentGeneratorConfig config) {
     Preconditions.checkNotNull(config);
     _customProperties.putAll(config._customProperties);
+    _rawIndexCreationColumns.addAll(config._rawIndexCreationColumns);
     _invertedIndexCreationColumns.addAll(config._invertedIndexCreationColumns);
     _dataDir = config._dataDir;
     _inputFilePath = config._inputFilePath;
@@ -108,6 +133,10 @@ public class SegmentGeneratorConfig {
     _creatorVersion = config._creatorVersion;
     _paddingCharacter = config._paddingCharacter;
     _hllConfig = config._hllConfig;
+    _segmentVersion = config._segmentVersion;
+    _segmentName = config._segmentName;
+    _segmentNameGenerator = config._segmentNameGenerator;
+    _sequenceId = config._sequenceId;
   }
 
   public SegmentGeneratorConfig(Schema schema) {
@@ -123,13 +152,40 @@ public class SegmentGeneratorConfig {
     _customProperties.putAll(properties);
   }
 
+  public void setSimpleDateFormat(@Nonnull String simpleDateFormat) {
+    _timeColumnType = TimeColumnType.SIMPLE_DATE;
+    try {
+      DateTimeFormat.forPattern(simpleDateFormat);
+    } catch (Exception e) {
+      throw new RuntimeException("Illegal simple date format specification", e);
+    }
+    _simpleDateFormat = simpleDateFormat;
+  }
+
+  public String getSimpleDateFormat() {
+    return _simpleDateFormat;
+  }
+
+  public TimeColumnType getTimeColumnType() {
+    return _timeColumnType;
+  }
+
   public boolean containsCustomProperty(String key) {
     Preconditions.checkNotNull(key);
     return _customProperties.containsKey(key);
   }
 
+  public Set<String> getRawIndexCreationColumns() {
+    return _rawIndexCreationColumns;
+  }
+
   public List<String> getInvertedIndexCreationColumns() {
     return _invertedIndexCreationColumns;
+  }
+
+  public void setRawIndexCreationColumns(List<String> rawIndexCreationColumns) {
+    Preconditions.checkNotNull(rawIndexCreationColumns);
+    _rawIndexCreationColumns.addAll(rawIndexCreationColumns);
   }
 
   public void setInvertedIndexCreationColumns(List<String> indexCreationColumns) {
@@ -175,7 +231,6 @@ public class SegmentGeneratorConfig {
     Preconditions.checkNotNull(inputFilePath);
     File inputFile = new File(inputFilePath);
     Preconditions.checkState(inputFile.exists(), "Input path {} does not exist.", inputFilePath);
-    Preconditions.checkState(inputFile.isFile(), "Input path {} is not a file.", inputFilePath);
     _inputFilePath = inputFile.getAbsolutePath();
   }
 
@@ -246,6 +301,9 @@ public class SegmentGeneratorConfig {
     return _segmentNamePostfix;
   }
 
+  /**
+   * If you are adding a sequence Id to the segment, please use setSequenceId.
+   */
   public void setSegmentNamePostfix(String postfix) {
     _segmentNamePostfix = postfix;
   }
@@ -259,6 +317,17 @@ public class SegmentGeneratorConfig {
 
   public void setTimeColumnName(String timeColumnName) {
     _segmentTimeColumnName = timeColumnName;
+  }
+
+  public int getSequenceId() {
+    return _sequenceId;
+  }
+
+  /**
+   * This method should be used instead of setPostfix if you are adding a sequence number.
+   */
+  public void setSequenceId(int sequenceId) {
+    _sequenceId = sequenceId;
   }
 
   public TimeUnit getSegmentTimeUnit() {
@@ -388,11 +457,30 @@ public class SegmentGeneratorConfig {
     _hllConfig = hllConfig;
   }
 
+  public SegmentNameGenerator getSegmentNameGenerator() {
+    if (_segmentNameGenerator != null) {
+      return _segmentNameGenerator;
+    }
+    if (_segmentName != null) {
+      return new DefaultSegmentNameGenerator(_segmentName);
+    }
+    return new DefaultSegmentNameGenerator(getTimeColumnName(), getTableName(), getSegmentNamePostfix(), getSequenceId());
+  }
+
+  public void setSegmentNameGenerator(SegmentNameGenerator segmentNameGenerator) {
+    _segmentNameGenerator = segmentNameGenerator;
+  }
+
   @JsonIgnore
   public String getMetrics() {
     return getQualifyingDimensions(FieldType.METRIC);
   }
 
+  /**
+   * @deprecated Load outside the class and use the setter for schema setting.
+   * @throws IOException
+   */
+  @Deprecated
   public void loadConfigFiles()
       throws IOException {
     ObjectMapper objectMapper = new ObjectMapper();
@@ -427,6 +515,14 @@ public class SegmentGeneratorConfig {
   @JsonIgnore
   public String getDimensions() {
     return getQualifyingDimensions(FieldType.DIMENSION);
+  }
+
+  public void setSegmentPartitionConfig(SegmentPartitionConfig segmentPartitionConfig) {
+    _segmentPartitionConfig = segmentPartitionConfig;
+  }
+
+  public SegmentPartitionConfig getSegmentPartitionConfig() {
+    return _segmentPartitionConfig;
   }
 
   /**

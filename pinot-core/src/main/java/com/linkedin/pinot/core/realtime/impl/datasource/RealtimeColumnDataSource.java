@@ -16,7 +16,6 @@
 package com.linkedin.pinot.core.realtime.impl.datasource;
 
 import org.roaringbitmap.buffer.MutableRoaringBitmap;
-
 import com.linkedin.pinot.common.data.FieldSpec;
 import com.linkedin.pinot.common.data.FieldSpec.DataType;
 import com.linkedin.pinot.common.data.FieldSpec.FieldType;
@@ -32,13 +31,13 @@ import com.linkedin.pinot.core.io.readerwriter.impl.FixedByteSingleColumnMultiVa
 import com.linkedin.pinot.core.io.readerwriter.impl.FixedByteSingleColumnSingleValueReaderWriter;
 import com.linkedin.pinot.core.operator.blocks.RealtimeMultiValueBlock;
 import com.linkedin.pinot.core.operator.blocks.RealtimeSingleValueBlock;
-import com.linkedin.pinot.core.realtime.impl.dictionary.MutableDictionaryReader;
+import com.linkedin.pinot.core.realtime.impl.dictionary.MutableDictionary;
 import com.linkedin.pinot.core.realtime.impl.invertedIndex.RealtimeInvertedIndex;
 import com.linkedin.pinot.core.segment.index.readers.InvertedIndexReader;
-import com.linkedin.pinot.core.segment.index.readers.Dictionary;
 
 
 public class RealtimeColumnDataSource extends DataSource {
+  private static final String OPERATOR_NAME = "RealtimeColumnDataSource";
 
   private static final int REALTIME_DICTIONARY_INIT_ID = 1;
   private Predicate predicate;
@@ -53,10 +52,10 @@ public class RealtimeColumnDataSource extends DataSource {
   private final RealtimeInvertedIndex invertedIndex;
   private final int offset;
   private final int maxNumberOfMultiValues;
-  private final MutableDictionaryReader dictionary;
+  private final MutableDictionary dictionary;
 
   public RealtimeColumnDataSource(FieldSpec spec, DataFileReader indexReader, RealtimeInvertedIndex invertedIndex,
-      int searchOffset, int maxNumberOfMultivalues, Schema schema, MutableDictionaryReader dictionary) {
+      int searchOffset, int maxNumberOfMultivalues, Schema schema, MutableDictionary dictionary) {
     this.fieldSpec = spec;
     this.indexReader = indexReader;
     this.invertedIndex = invertedIndex;
@@ -75,9 +74,8 @@ public class RealtimeColumnDataSource extends DataSource {
       blockReturned = true;
       isPredicateEvaluated = true;
       if (fieldSpec.isSingleValueField()) {
-        Block SvBlock =
-            new RealtimeSingleValueBlock(filteredDocIdBitmap, fieldSpec, dictionary, offset,
-                (FixedByteSingleColumnSingleValueReaderWriter) indexReader);
+        Block SvBlock = new RealtimeSingleValueBlock(filteredDocIdBitmap, fieldSpec, dictionary, offset,
+            (FixedByteSingleColumnSingleValueReaderWriter) indexReader);
         return SvBlock;
       } else {
         Block mvBlock =
@@ -104,7 +102,7 @@ public class RealtimeColumnDataSource extends DataSource {
 
   @Override
   public String getOperatorName() {
-    return "RealtimeColumnDataSource";
+    return OPERATOR_NAME;
   }
 
   @Override
@@ -126,7 +124,6 @@ public class RealtimeColumnDataSource extends DataSource {
       return Double.longBitsToDouble(1L);
     }
     return Double.longBitsToDouble(bitsValue - 1);
-
   }
 
   private double getSmallerDoubleValue(double value) {
@@ -191,7 +188,7 @@ public class RealtimeColumnDataSource extends DataSource {
   }
 
   @Override
-  public Dictionary getDictionary() {
+  public MutableDictionary getDictionary() {
     return dictionary;
   }
 }

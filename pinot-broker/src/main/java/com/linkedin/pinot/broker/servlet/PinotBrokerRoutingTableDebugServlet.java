@@ -15,20 +15,18 @@
  */
 package com.linkedin.pinot.broker.servlet;
 
+import com.linkedin.pinot.broker.requesthandler.BrokerRequestHandler;
+import com.linkedin.pinot.common.metrics.BrokerMeter;
+import com.linkedin.pinot.common.metrics.BrokerMetrics;
 import java.io.IOException;
-
 import javax.servlet.ServletConfig;
 import javax.servlet.ServletException;
 import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.linkedin.pinot.common.metrics.BrokerMeter;
-import com.linkedin.pinot.common.metrics.BrokerMetrics;
-import com.linkedin.pinot.requestHandler.BrokerRequestHandler;
 
 public class PinotBrokerRoutingTableDebugServlet extends HttpServlet {
   // for serde
@@ -51,7 +49,7 @@ public class PinotBrokerRoutingTableDebugServlet extends HttpServlet {
       String tableName;
       String pathInfo = req.getPathInfo();
 
-      if (pathInfo.startsWith("/") && pathInfo.lastIndexOf('/') == 0) {
+      if (pathInfo != null && !pathInfo.isEmpty() && pathInfo.startsWith("/") && pathInfo.lastIndexOf('/') == 0) {
         // Drop leading slash
         tableName = pathInfo.substring(1);
       } else {

@@ -18,35 +18,28 @@ import org.joda.time.DateTime;
 
 import com.google.common.collect.Lists;
 import com.google.common.collect.Multimap;
-import com.linkedin.thirdeye.api.CollectionSchema;
-import com.linkedin.thirdeye.client.MetricExpression;
-import com.linkedin.thirdeye.client.ThirdEyeCacheRegistry;
-import com.linkedin.thirdeye.client.cache.QueryCache;
-import com.linkedin.thirdeye.client.comparison.Row;
-import com.linkedin.thirdeye.client.comparison.Row.Metric;
-import com.linkedin.thirdeye.client.comparison.TimeOnTimeComparisonHandler;
-import com.linkedin.thirdeye.client.comparison.TimeOnTimeComparisonRequest;
-import com.linkedin.thirdeye.client.comparison.TimeOnTimeComparisonResponse;
+import com.linkedin.thirdeye.api.TimeSpec;
 import com.linkedin.thirdeye.dashboard.Utils;
 import com.linkedin.thirdeye.dashboard.views.GenericResponse;
 import com.linkedin.thirdeye.dashboard.views.GenericResponse.Info;
 import com.linkedin.thirdeye.dashboard.views.GenericResponse.ResponseSchema;
 import com.linkedin.thirdeye.dashboard.views.TimeBucket;
 import com.linkedin.thirdeye.dashboard.views.ViewHandler;
+import com.linkedin.thirdeye.datalayer.dto.DatasetConfigDTO;
+import com.linkedin.thirdeye.datasource.MetricExpression;
+import com.linkedin.thirdeye.datasource.ThirdEyeCacheRegistry;
+import com.linkedin.thirdeye.datasource.cache.QueryCache;
+import com.linkedin.thirdeye.datasource.comparison.Row;
+import com.linkedin.thirdeye.datasource.comparison.TimeOnTimeComparisonHandler;
+import com.linkedin.thirdeye.datasource.comparison.TimeOnTimeComparisonRequest;
+import com.linkedin.thirdeye.datasource.comparison.TimeOnTimeComparisonResponse;
+import com.linkedin.thirdeye.datasource.comparison.Row.Metric;
+import com.linkedin.thirdeye.util.ThirdEyeUtils;
 
 public class ContributorViewHandler implements
     ViewHandler<ContributorViewRequest, ContributorViewResponse> {
-  private static ThirdEyeCacheRegistry CACHE_REGISTRY_INSTANCE = ThirdEyeCacheRegistry.getInstance();
 
-  private final Comparator<DateTime> dateTimeComparator = new Comparator<DateTime>() {
-    @Override
-    public int compare(DateTime dateTime1, DateTime dateTime2) {
-      long millisSinceEpoch1 = dateTime1.getMillis();
-      long millisSinceEpoch2 = dateTime2.getMillis();
-      return (millisSinceEpoch1 < millisSinceEpoch2) ? -1
-          : (millisSinceEpoch1 == millisSinceEpoch2) ? 0 : 1;
-    }
-  };
+  private static final ThirdEyeCacheRegistry CACHE_REGISTRY = ThirdEyeCacheRegistry.getInstance();
 
   private final Comparator<Row> rowComparator = new Comparator<Row>() {
     @Override
@@ -73,16 +66,17 @@ public class ContributorViewHandler implements
     DateTime baselineEnd = request.getBaselineEnd();
     DateTime currentStart = request.getCurrentStart();
     DateTime currentEnd = request.getCurrentEnd();
-    CollectionSchema collectionSchema = CACHE_REGISTRY_INSTANCE.getCollectionSchemaCache().get(collection);
+    DatasetConfigDTO datasetConfig = CACHE_REGISTRY.getDatasetConfigCache().get(collection);
+    TimeSpec timespec = ThirdEyeUtils.getTimeSpecFromDatasetConfig(datasetConfig);
     if (!request.getTimeGranularity().getUnit().equals(TimeUnit.DAYS) ||
-        !StringUtils.isBlank(collectionSchema.getTime().getFormat())) {
+        !StringUtils.isBlank(timespec.getFormat())) {
       comparisonRequest.setEndDateInclusive(true);
     }
 
     Multimap<String, String> filters = request.getFilters();
     List<String> dimensionsToGroupBy = request.getGroupByDimensions();
     if (dimensionsToGroupBy == null || dimensionsToGroupBy.isEmpty()) {
-      List<String> allDimensions = Utils.getDimensionsToGroupBy(queryCache, collection, filters);
+      List<String> allDimensions = Utils.getDimensionsToGroupBy(collection, filters);
       dimensionsToGroupBy = Lists.newArrayList(allDimensions.get(0));
     }
     List<MetricExpression> metricExpressions = request.getMetricExpressions();
@@ -253,6 +247,8 @@ public class ContributorViewHandler implements
     }
     contributorViewResponse.setDimensionValuesMap(dimensionValuesMap);
     contributorViewResponse.setResponseData(genericResponse);
+    contributorViewResponse.setCurrentTotalMapPerDimensionValue(currentTotalMapPerDimensionValue);
+    contributorViewResponse.setBaselineTotalMapPerDimensionValue(baselineTotalMapPerDimensionValue);
     return contributorViewResponse;
   }
 

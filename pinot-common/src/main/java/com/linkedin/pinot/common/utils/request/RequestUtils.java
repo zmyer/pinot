@@ -15,7 +15,6 @@
  */
 package com.linkedin.pinot.common.utils.request;
 
-import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableSet;
 import com.linkedin.pinot.common.request.AggregationInfo;
 import com.linkedin.pinot.common.request.BrokerRequest;
@@ -31,14 +30,13 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import javax.annotation.Nullable;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 
 public class RequestUtils {
+  private RequestUtils() {
+  }
 
-  private static final Logger LOGGER = LoggerFactory.getLogger(RequestUtils.class);
+  private static final String USE_STAR_TREE_KEY = "useStarTree";
 
   /**
    * Generates thrift compliant filterQuery and populate it in the broker request
@@ -113,6 +111,7 @@ public class RequestUtils {
 
   /**
    * Returns true for the following, false otherwise:
+   * - BrokerRequest debug options have not explicitly disabled use of star tree
    * - Query is not aggregation/group-by
    * - Segment does not contain star tree
    * - The only aggregation function in the query should be in {@link #ALLOWED_AGGREGATION_FUNCTIONS}
@@ -126,6 +125,11 @@ public class RequestUtils {
    */
   public static boolean isFitForStarTreeIndex(SegmentMetadata segmentMetadata, FilterQueryTree filterTree,
       BrokerRequest brokerRequest) {
+
+    // If broker request disables use of star tree, return false.
+    if (!isStarTreeEnabledInBrokerRequest(brokerRequest)) {
+      return false;
+    }
     // Apply the checks in order of their runtime.
     List<AggregationInfo> aggregationsInfo = brokerRequest.getAggregationsInfo();
 
@@ -140,18 +144,23 @@ public class RequestUtils {
       return false;
     }
 
-    // Ensure that none of the group-by columns are skipped for materialization.
+    Set<String> metricColumnSet = new HashSet<>(segmentMetadata.getSchema().getMetricNames());
     List<String> skipMaterializationList = starTreeMetadata.getSkipMaterializationForDimensions();
     Set<String> skipMaterializationSet = null;
     if (skipMaterializationList != null && !skipMaterializationList.isEmpty()) {
-      skipMaterializationSet = new HashSet<String>(skipMaterializationList);
+      skipMaterializationSet = new HashSet<>(skipMaterializationList);
+    }
 
-      GroupBy groupBy = brokerRequest.getGroupBy();
-      if (groupBy != null) {
-        for (String groupByColumn : groupBy.getColumns()) {
-          if (skipMaterializationSet.contains(groupByColumn)) {
-            return false;
-          }
+    // Ensure that none of the group-by columns are metric or skipped for materialization.
+    GroupBy groupBy = brokerRequest.getGroupBy();
+    if (groupBy != null) {
+      List<String> groupByColumns = groupBy.getColumns();
+      for (String groupByColumn : groupByColumns) {
+        if (metricColumnSet.contains(groupByColumn)) {
+          return false;
+        }
+        if (skipMaterializationSet != null && skipMaterializationSet.contains(groupByColumn)) {
+          return false;
         }
       }
     }
@@ -166,8 +175,6 @@ public class RequestUtils {
 
     //if the filter tree has children, ensure that root is AND and all its children are leaves, and
     //no metric columns appear in the predicates.
-    Set<String> metricColumnSet = new HashSet<String>();
-    metricColumnSet.addAll(segmentMetadata.getSchema().getMetricNames());
     if (filterTree != null && filterTree.getChildren() != null && !filterTree.getChildren().isEmpty()) {
       //ensure that its AND
       if (filterTree.getOperator() != FilterOperator.AND) {
@@ -197,7 +204,7 @@ public class RequestUtils {
         }
         predicateColumns.add(column);
       }
-    } else if (filterTree != null){
+    } else if (filterTree != null) {
       // Predicate column of root node should be materialized.
       String rootColumn = filterTree.getColumn();
       if (skipMaterializationSet != null && skipMaterializationSet.contains(rootColumn)) {
@@ -214,41 +221,18 @@ public class RequestUtils {
   }
 
   /**
-   * Must be called after a successful check of {@link #isFitForStarTreeIndex}
-   * @return true if no fasthll aggregation or rewriting successful, false otherwise
+   * This method returns the value of {@link #USE_STAR_TREE_KEY} boolean flag specified in the debug options
+   * in broker request. If the flag is not specified in the debug options, it returns true.
+   *
+   * @param brokerRequest Broker Request
+   * @return Value of {@link #USE_STAR_TREE_KEY} debug option, or true if not option not specified.
    */
-  public static boolean performFastHllRewriting(SegmentMetadata segmentMetadata, BrokerRequest brokerRequest) {
-    List<AggregationInfo> aggregationsInfo = brokerRequest.getAggregationsInfo();
-    StarTreeMetadata starTreeMetadata = segmentMetadata.getStarTreeMetadata();
-    Map<AggregationInfo, String> fastHllAggregationInfoToDerivedColumnNameMap = new HashMap<>();
-    // Check if all fasthll derived columns exist
-    for (AggregationInfo aggregationInfo : aggregationsInfo) {
-      if (aggregationInfo.getAggregationType().toLowerCase().equals("fasthll")) {
-        String derivedColumn = extractDerivedColumn(aggregationInfo, starTreeMetadata);
-        if (derivedColumn == null) {
-          // If derivedColumn does not exist, which means we need to aggregate directly on original column,
-          // in that case, star tree can not be used since no generated star tree docs are available.
-          return false;
-        } else {
-          fastHllAggregationInfoToDerivedColumnNameMap.put(aggregationInfo, derivedColumn);
-        }
-      }
+  public static boolean isStarTreeEnabledInBrokerRequest(BrokerRequest brokerRequest) {
+    Map<String, String> debugOptions = brokerRequest.getDebugOptions();
+    if (debugOptions == null) {
+      return true;
     }
-    // Rewrite all fasthll derived columns
-    for (AggregationInfo aggregationInfo : fastHllAggregationInfoToDerivedColumnNameMap.keySet()) {
-      String derivedColumn = fastHllAggregationInfoToDerivedColumnNameMap.get(aggregationInfo);
-      LOGGER.info("Performed rewriting to fasthll({})", derivedColumn);
-      aggregationInfo.getAggregationParams().put("column", derivedColumn);
-    }
-    return true;
+    String useStarTreeString = debugOptions.get(USE_STAR_TREE_KEY);
+    return (useStarTreeString != null) ? Boolean.valueOf(useStarTreeString) : true;
   }
-
-  @Nullable
-  private static String extractDerivedColumn(AggregationInfo aggregationInfo, StarTreeMetadata starTreeMetadata) {
-    String[] columns = aggregationInfo.getAggregationParams().get("column").trim().split(",");
-    Preconditions.checkArgument(columns.length == 1);
-    String aggrColumn = columns[0];
-    return starTreeMetadata.getDerivedHllColumnFromOrigin(aggrColumn);
-  }
-
 }

@@ -15,19 +15,35 @@
  */
 package com.linkedin.thirdeye.hadoop.segment.creation;
 
-import static com.linkedin.thirdeye.hadoop.segment.creation.SegmentCreationPhaseConstants.SEGMENT_CREATION_OUTPUT_PATH;
-import static com.linkedin.thirdeye.hadoop.segment.creation.SegmentCreationPhaseConstants.SEGMENT_CREATION_SCHEDULE;
-import static com.linkedin.thirdeye.hadoop.segment.creation.SegmentCreationPhaseConstants.SEGMENT_CREATION_THIRDEYE_CONFIG;
-import static com.linkedin.thirdeye.hadoop.segment.creation.SegmentCreationPhaseConstants.SEGMENT_CREATION_WALLCLOCK_END_TIME;
-import static com.linkedin.thirdeye.hadoop.segment.creation.SegmentCreationPhaseConstants.SEGMENT_CREATION_WALLCLOCK_START_TIME;
-import static com.linkedin.thirdeye.hadoop.segment.creation.SegmentCreationPhaseConstants.SEGMENT_CREATION_BACKFILL;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import com.google.common.base.Joiner;
+import com.linkedin.pinot.common.data.FieldSpec;
+import com.linkedin.pinot.common.data.Schema;
+import com.linkedin.pinot.common.data.StarTreeIndexSpec;
+import com.linkedin.pinot.common.data.TimeGranularitySpec.TimeFormat;
+import com.linkedin.pinot.common.utils.TarGzCompressionUtils;
+import com.linkedin.pinot.core.data.readers.FileFormat;
+import com.linkedin.pinot.core.indexsegment.generator.SegmentGeneratorConfig;
+import com.linkedin.pinot.core.segment.creator.StatsCollectorConfig;
+import com.linkedin.pinot.core.segment.creator.impl.SegmentIndexCreationDriverImpl;
+import com.linkedin.pinot.core.segment.creator.impl.stats.LongColumnPreIndexStatsCollector;
+import com.linkedin.thirdeye.hadoop.config.ThirdEyeConfig;
+import com.linkedin.thirdeye.hadoop.config.ThirdEyeConstants;
+import com.linkedin.thirdeye.hadoop.util.ThirdeyePinotSchemaUtils;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 
+import org.apache.avro.file.DataFileStream;
+import org.apache.avro.generic.GenericDatumReader;
+import org.apache.avro.generic.GenericRecord;
 import org.apache.commons.io.FileUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
@@ -36,21 +52,20 @@ import org.apache.hadoop.io.LongWritable;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapreduce.Mapper;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
+import org.joda.time.DateTime;
+import org.joda.time.format.DateTimeFormat;
+import org.joda.time.format.DateTimeFormatter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
-import com.linkedin.pinot.common.data.Schema;
-import com.linkedin.pinot.common.data.StarTreeIndexSpec;
-import com.linkedin.pinot.common.utils.SegmentNameBuilder;
-import com.linkedin.pinot.common.utils.TarGzCompressionUtils;
-import com.linkedin.pinot.core.data.readers.FileFormat;
-import com.linkedin.pinot.core.indexsegment.generator.SegmentGeneratorConfig;
-import com.linkedin.pinot.core.segment.creator.impl.SegmentIndexCreationDriverImpl;
-import com.linkedin.thirdeye.hadoop.config.ThirdEyeConfig;
-import com.linkedin.thirdeye.hadoop.config.ThirdEyeConstants;
-import com.linkedin.thirdeye.hadoop.util.ThirdeyePinotSchemaUtils;
+import static com.linkedin.pinot.core.segment.creator.impl.V1Constants.MetadataKeys.Segment.SEGMENT_START_TIME;
+import static com.linkedin.pinot.core.segment.creator.impl.V1Constants.MetadataKeys.Segment.SEGMENT_END_TIME;
+import static com.linkedin.thirdeye.hadoop.segment.creation.SegmentCreationPhaseConstants.SEGMENT_CREATION_OUTPUT_PATH;
+import static com.linkedin.thirdeye.hadoop.segment.creation.SegmentCreationPhaseConstants.SEGMENT_CREATION_THIRDEYE_CONFIG;
+import static com.linkedin.thirdeye.hadoop.segment.creation.SegmentCreationPhaseConstants.SEGMENT_CREATION_WALLCLOCK_START_TIME;
+import static com.linkedin.thirdeye.hadoop.segment.creation.SegmentCreationPhaseConstants.SEGMENT_CREATION_WALLCLOCK_END_TIME;
+import static com.linkedin.thirdeye.hadoop.segment.creation.SegmentCreationPhaseConstants.SEGMENT_CREATION_SCHEDULE;
+import static com.linkedin.thirdeye.hadoop.segment.creation.SegmentCreationPhaseConstants.SEGMENT_CREATION_BACKFILL;
 
 /**
  * Mapper class for SegmentCreation job, which sets configs required for
@@ -59,7 +74,7 @@ import com.linkedin.thirdeye.hadoop.util.ThirdeyePinotSchemaUtils;
 public class SegmentCreationPhaseMapReduceJob {
 
   public static class SegmentCreationMapper extends Mapper<LongWritable, Text, LongWritable, Text> {
-    private static Logger LOGGER = LoggerFactory.getLogger(SegmentCreationPhaseMapReduceJob.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(SegmentCreationPhaseMapReduceJob.class);
     private static ObjectMapper OBJECT_MAPPER = new ObjectMapper(new YAMLFactory());
 
     private Configuration properties;
@@ -203,8 +218,9 @@ public class SegmentCreationPhaseMapReduceJob {
         segmentName = segmentName.split(ThirdEyeConstants.AVRO_SUFFIX)[0];
         segmentGeneratorConfig.setSegmentName(segmentName);
       } else {
-        segmentGeneratorConfig.setSegmentName(SegmentNameBuilder
-            .buildBasic(tableName + ThirdEyeConstants.SEGMENT_JOINER + segmentSchedule, minTime, maxTime, seqId));
+        String segmentName =
+            Joiner.on(ThirdEyeConstants.SEGMENT_JOINER).join(tableName, segmentSchedule, minTime, maxTime, seqId);
+        segmentGeneratorConfig.setSegmentName(segmentName);
       }
       LOGGER.info("Setting segment name {}", segmentGeneratorConfig.getSegmentName());
 
@@ -239,6 +255,29 @@ public class SegmentCreationPhaseMapReduceJob {
       segmentGeneratorConfig.setStarTreeIndexSpec(starTreeIndexSpec);
       LOGGER.info("*********************************************************************");
 
+      // Set time for SIMPLE_DATE_FORMAT case
+      String sdfPrefix = TimeFormat.SIMPLE_DATE_FORMAT.toString() + ThirdEyeConstants.SDF_SEPARATOR;
+      if (thirdeyeConfig.getTime().getTimeFormat().startsWith(sdfPrefix)) {
+
+        String pattern = thirdeyeConfig.getTime().getTimeFormat().split(ThirdEyeConstants.SDF_SEPARATOR)[1];
+        DateTimeFormatter sdfFormatter = DateTimeFormat.forPattern(pattern);
+
+        File localAvroFile = new File(dataPath, hdfsDataPath.getName());
+        LongColumnPreIndexStatsCollector timeColumnStatisticsCollector =
+            getTimeColumnStatsCollector(schema, localAvroFile);
+        String startTime = timeColumnStatisticsCollector.getMinValue().toString();
+        String endTime = timeColumnStatisticsCollector.getMaxValue().toString();
+        startTime = String.valueOf(DateTime.parse(startTime, sdfFormatter).getMillis());
+        endTime = String.valueOf(DateTime.parse(endTime, sdfFormatter).getMillis());
+
+        // set start time
+        segmentGeneratorConfig.getCustomProperties().put(SEGMENT_START_TIME, startTime);
+        // set end time
+        segmentGeneratorConfig.getCustomProperties().put(SEGMENT_END_TIME, endTime);
+        // set time unit
+        segmentGeneratorConfig.setSegmentTimeUnit(TimeUnit.MILLISECONDS);
+      }
+
       // Generate segment
       SegmentIndexCreationDriverImpl driver = new SegmentIndexCreationDriverImpl();
       driver.init(segmentGeneratorConfig);
@@ -266,5 +305,25 @@ public class SegmentCreationPhaseMapReduceJob {
       fs.copyFromLocalFile(true, true, new Path(localTarPath), new Path(hdfsTarPath));
       return segmentName;
     }
+
+    private LongColumnPreIndexStatsCollector getTimeColumnStatsCollector(Schema schema, File localAvroFile)
+        throws FileNotFoundException, IOException {
+      String timeColumnName = schema.getTimeColumnName();
+      FieldSpec spec =  schema.getTimeFieldSpec();
+      LOGGER.info("Spec for " + timeColumnName + " is " + spec);
+      LongColumnPreIndexStatsCollector timeColumnStatisticsCollector = new LongColumnPreIndexStatsCollector(spec.getName(), new StatsCollectorConfig(schema, null));
+      LOGGER.info("StatsCollector :" + timeColumnStatisticsCollector);
+      DataFileStream<GenericRecord> dataStream =
+          new DataFileStream<GenericRecord>(new FileInputStream(localAvroFile), new GenericDatumReader<GenericRecord>());
+      while (dataStream.hasNext()) {
+        GenericRecord next = dataStream.next();
+        timeColumnStatisticsCollector.collect(next.get(timeColumnName));
+      }
+      dataStream.close();
+      timeColumnStatisticsCollector.seal();
+
+      return timeColumnStatisticsCollector;
+    }
+
   }
 }

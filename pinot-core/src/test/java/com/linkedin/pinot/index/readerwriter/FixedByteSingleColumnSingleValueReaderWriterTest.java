@@ -15,46 +15,102 @@
  */
 package com.linkedin.pinot.index.readerwriter;
 
-import com.linkedin.pinot.core.io.readerwriter.impl.FixedByteSingleColumnSingleValueReaderWriter;
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.Random;
 import org.testng.Assert;
+import org.testng.annotations.AfterClass;
+import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
+import com.linkedin.pinot.core.io.readerwriter.RealtimeIndexOffHeapMemoryManager;
+import com.linkedin.pinot.core.io.readerwriter.impl.FixedByteSingleColumnSingleValueReaderWriter;
+import com.linkedin.pinot.core.io.writer.impl.DirectMemoryManager;
 
 
 public class FixedByteSingleColumnSingleValueReaderWriterTest {
+  private RealtimeIndexOffHeapMemoryManager _memoryManager;
+
+  @BeforeClass
+  public void setUp() {
+    _memoryManager = new DirectMemoryManager(FixedByteSingleColumnSingleValueReaderWriterTest.class.getName());
+  }
+
+  @AfterClass
+  public void tearDown() throws Exception {
+    _memoryManager.close();
+  }
+
   @Test
   public void testInt() throws IOException {
-    FixedByteSingleColumnSingleValueReaderWriter readerWriter;
-    int rows = 10;
-    int[] columnSizesInBytes = new int[] { Integer.SIZE / 8 };
-    readerWriter = new FixedByteSingleColumnSingleValueReaderWriter(rows, columnSizesInBytes);
     Random r = new Random();
+    final long seed = r.nextLong();
+    r = new Random(seed);
+    int rows = 10;
+    for (int div = 1; div <= rows/2; div++) {
+      try {
+        testInt(r, rows, div);
+      } catch (Throwable t) {
+        t.printStackTrace();
+        Assert.fail("Failed with seed " + seed);
+      }
+    }
+  }
+
+  private void testInt(final Random r, final int rows, final int div) throws IOException {
+    FixedByteSingleColumnSingleValueReaderWriter readerWriter;
+    final int columnSizesInBytes = Integer.SIZE / 8;
+    readerWriter = new FixedByteSingleColumnSingleValueReaderWriter(rows/div, columnSizesInBytes, _memoryManager, "Int");
     int[] data = new int[rows];
     for (int i = 0; i < rows; i++) {
       data[i] = r.nextInt();
       readerWriter.setInt(i, data[i]);
     }
     for (int i = 0; i < rows; i++) {
-      Assert.assertEquals(data[i], readerWriter.getInt(i));
+      Assert.assertEquals(readerWriter.getInt(i), data[i]);
     }
+
+    int[] rowIds = new int[rows];
+    for (int i = 0; i < rows; i++) {
+      rowIds[i] = i;
+    }
+    int[] values = new int[rows];
+    Arrays.fill(values, 0);
+
+    int vStart = 2;
+    int dStart = 3;
+    int numValues = 4;
+    readerWriter.readValues(rowIds, dStart, numValues, values, vStart);
+    for (int i = 0; i < numValues; i++) {
+      Assert.assertEquals(values[i+vStart], data[i+dStart]);
+    }
+
+    readerWriter.readValues(rowIds, 0, 0, values, 0);
+    Assert.assertEquals(values[0], 0);
     readerWriter.close();
   }
 
   @Test
   public void testLong() throws IOException {
-    FixedByteSingleColumnSingleValueReaderWriter readerWriter;
     int rows = 10;
-    int[] columnSizesInBytes = new int[] { Long.SIZE / 8 };
-    readerWriter = new FixedByteSingleColumnSingleValueReaderWriter(rows, columnSizesInBytes);
     Random r = new Random();
+    final long seed = r.nextLong();
+    r = new Random(seed);
+    for (int div = 1; div <= rows/2; div++) {
+      testLong(r, rows, div);
+    }
+  }
+
+  private void testLong(final Random r, final int rows, final int div) throws IOException {
+    FixedByteSingleColumnSingleValueReaderWriter readerWriter;
+    final int columnSizesInBytes = Long.SIZE / 8;
+    readerWriter = new FixedByteSingleColumnSingleValueReaderWriter(rows/div, columnSizesInBytes, _memoryManager, "Long");
     long[] data = new long[rows];
     for (int i = 0; i < rows; i++) {
       data[i] = r.nextLong();
       readerWriter.setLong(i, data[i]);
     }
     for (int i = 0; i < rows; i++) {
-      Assert.assertEquals(data[i], readerWriter.getLong(i));
+      Assert.assertEquals(readerWriter.getLong(i), data[i]);
     }
     readerWriter.close();
   }

@@ -1,16 +1,17 @@
 package com.linkedin.thirdeye.anomaly.alert;
 
-import org.joda.time.DateTime;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.linkedin.thirdeye.anomaly.job.JobContext;
+import com.linkedin.thirdeye.datalayer.dto.AlertConfigDTO;
 import com.linkedin.thirdeye.datalayer.dto.EmailConfigurationDTO;
 
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class AlertJobContext extends JobContext {
 
   private Long alertConfigId;
-  private DateTime windowStartTime;
-  private DateTime windowEndTime;
   private EmailConfigurationDTO alertConfig;
+  private AlertConfigDTO alertConfigDTO;
 
   public Long getAlertConfigId() {
     return alertConfigId;
@@ -28,21 +29,11 @@ public class AlertJobContext extends JobContext {
     this.alertConfig = alertConfig;
   }
 
-  public DateTime getWindowStartTime() {
-    return windowStartTime;
+  public AlertConfigDTO getAlertConfigDTO() {
+    return alertConfigDTO;
   }
 
-  public void setWindowStartTime(DateTime windowStartTime) {
-    this.windowStartTime = windowStartTime;
+  public void setAlertConfigDTO(AlertConfigDTO alertConfigDTO) {
+    this.alertConfigDTO = alertConfigDTO;
   }
-
-  public DateTime getWindowEndTime() {
-    return windowEndTime;
-  }
-
-  public void setWindowEndTime(DateTime windowEndTime) {
-    this.windowEndTime = windowEndTime;
-  }
-
-
 }

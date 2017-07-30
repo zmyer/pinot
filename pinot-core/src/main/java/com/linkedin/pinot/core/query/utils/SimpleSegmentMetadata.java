@@ -15,12 +15,14 @@
  */
 package com.linkedin.pinot.core.query.utils;
 
+import com.linkedin.pinot.common.data.MetricFieldSpec;
 import com.linkedin.pinot.common.segment.StarTreeMetadata;
 import com.linkedin.pinot.core.segment.creator.impl.V1Constants;
 import com.linkedin.pinot.core.startree.hll.HllConstants;
 import java.util.HashMap;
 import java.util.Map;
 
+import java.util.concurrent.TimeUnit;
 import javax.annotation.Nullable;
 import org.apache.commons.configuration.Configuration;
 import org.joda.time.Duration;
@@ -75,6 +77,26 @@ public class SimpleSegmentMetadata implements SegmentMetadata {
   @Override
   public String getIndexType() {
     return _indexType;
+  }
+
+  @Override
+  public String getTimeColumn() {
+    return null;
+  }
+
+  @Override
+  public long getStartTime() {
+    return Long.MAX_VALUE;
+  }
+
+  @Override
+  public long getEndTime() {
+    return Long.MIN_VALUE;
+  }
+
+  @Override
+  public TimeUnit getTimeUnit() {
+    return null;
   }
 
   @Override
@@ -172,6 +194,7 @@ public class SimpleSegmentMetadata implements SegmentMetadata {
     return false;
   }
 
+  @Nullable
   @Override
   public StarTreeMetadata getStarTreeMetadata() {
     return null;
@@ -195,11 +218,14 @@ public class SimpleSegmentMetadata implements SegmentMetadata {
     return null;
   }
 
-  @Nullable @Override public String getCreatorName() {
+  @Nullable
+  @Override
+  public String getCreatorName() {
     return null;
   }
 
-  @Override public Character getPaddingCharacter() {
+  @Override
+  public char getPaddingCharacter() {
     return _paddingCharacter;
   }
 
@@ -208,4 +234,9 @@ public class SimpleSegmentMetadata implements SegmentMetadata {
     return HllConstants.DEFAULT_LOG2M;
   }
 
+  @Nullable
+  @Override
+  public String getDerivedColumn(String column, MetricFieldSpec.DerivedMetricType derivedMetricType) {
+    return null;
+  }
 }

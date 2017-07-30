@@ -16,13 +16,14 @@
 package com.linkedin.pinot.core.operator.docvalsets;
 
 import com.linkedin.pinot.common.data.FieldSpec.DataType;
+import com.linkedin.pinot.core.common.BaseBlockValSet;
 import com.linkedin.pinot.core.common.BlockValIterator;
-import com.linkedin.pinot.core.common.BlockValSet;
 import com.linkedin.pinot.core.io.reader.SingleColumnMultiValueReader;
 import com.linkedin.pinot.core.operator.docvaliterators.MultiValueIterator;
 import com.linkedin.pinot.core.segment.index.ColumnMetadata;
 
-public final class MultiValueSet implements BlockValSet {
+
+public final class MultiValueSet extends BaseBlockValSet {
   private ColumnMetadata columnMetadata;
   private SingleColumnMultiValueReader mVReader;
 
@@ -41,10 +42,4 @@ public final class MultiValueSet implements BlockValSet {
   public DataType getValueType() {
     return columnMetadata.getDataType();
   }
-
-  @Override
-  public void readIntValues(int[] inDocIds, int inStartPos, int inDocIdsSize, int[] outDictionaryIds, int outStartPos) {
-    throw new UnsupportedOperationException("Reading a batch of values is not supported for multi-value BlockValSet");
-  }
-
 }

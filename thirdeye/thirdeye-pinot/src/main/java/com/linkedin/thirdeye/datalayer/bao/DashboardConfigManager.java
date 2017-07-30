@@ -8,5 +8,6 @@ public interface DashboardConfigManager extends AbstractManager<DashboardConfigD
 
   DashboardConfigDTO findByName(String name);
   List<DashboardConfigDTO> findByDataset(String dataset);
-
+  List<DashboardConfigDTO> findActiveByDataset(String dataset);
+  List<DashboardConfigDTO> findWhereNameLikeAndActive(String name);
 }

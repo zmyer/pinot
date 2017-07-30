@@ -15,299 +15,289 @@
  */
 package com.linkedin.pinot.controller.helix.retention;
 
-import com.linkedin.pinot.core.startree.hll.HllConstants;
-import java.io.File;
 import java.io.IOException;
-import java.io.UnsupportedEncodingException;
+import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
-import org.apache.commons.io.FileUtils;
-import org.apache.helix.AccessOption;
 import org.apache.helix.HelixAdmin;
-import org.apache.helix.HelixManager;
-import org.apache.helix.manager.zk.ZkClient;
 import org.apache.helix.model.IdealState;
 import org.joda.time.Duration;
 import org.joda.time.Interval;
 import org.json.JSONException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.mockito.invocation.InvocationOnMock;
+import org.mockito.stubbing.Answer;
 import org.testng.Assert;
-import org.testng.annotations.AfterTest;
-import org.testng.annotations.BeforeTest;
 import org.testng.annotations.Test;
-import com.linkedin.pinot.common.config.AbstractTableConfig;
+import com.linkedin.pinot.common.config.TableConfig;
 import com.linkedin.pinot.common.config.TableNameBuilder;
+import com.linkedin.pinot.common.data.MetricFieldSpec;
 import com.linkedin.pinot.common.data.Schema;
-import com.linkedin.pinot.common.metadata.ZKMetadataProvider;
+import com.linkedin.pinot.common.metadata.segment.LLCRealtimeSegmentZKMetadata;
 import com.linkedin.pinot.common.metadata.segment.OfflineSegmentZKMetadata;
+import com.linkedin.pinot.common.metadata.segment.RealtimeSegmentZKMetadata;
 import com.linkedin.pinot.common.segment.SegmentMetadata;
 import com.linkedin.pinot.common.segment.StarTreeMetadata;
-import com.linkedin.pinot.common.utils.ZkStarter;
+import com.linkedin.pinot.common.utils.CommonConstants;
+import com.linkedin.pinot.common.utils.LLCSegmentName;
 import com.linkedin.pinot.common.utils.time.TimeUtils;
-import com.linkedin.pinot.controller.helix.ControllerRequestBuilderUtil;
 import com.linkedin.pinot.controller.helix.core.PinotHelixResourceManager;
+import com.linkedin.pinot.controller.helix.core.PinotTableIdealStateBuilder;
+import com.linkedin.pinot.controller.helix.core.SegmentDeletionManager;
 import com.linkedin.pinot.controller.helix.core.retention.RetentionManager;
 import com.linkedin.pinot.controller.helix.core.util.ZKMetadataUtils;
 import com.linkedin.pinot.core.indexsegment.generator.SegmentVersion;
 import com.linkedin.pinot.core.segment.creator.impl.V1Constants;
+import com.linkedin.pinot.core.startree.hll.HllConstants;
 import javax.annotation.Nullable;
+import static org.mockito.Matchers.anyInt;
+import static org.mockito.Matchers.anyList;
+import static org.mockito.Matchers.anyString;
+import static org.mockito.Mockito.*;
 
 
 public class RetentionManagerTest {
 
-  private static File INDEXES_DIR =
-      new File(FileUtils.getTempDirectory() + File.separator + "TestRetentionManagerList");
-
-  private static final Logger LOGGER = LoggerFactory.getLogger(RetentionManagerTest.class);
-
   private final static String HELIX_CLUSTER_NAME = "TestRetentionManager";
 
-  private static final String ZK_STR = ZkStarter.DEFAULT_ZK_STR;
-  private static final String CONTROLLER_INSTANCE_NAME = "localhost_11984";
+  private final String TEST_TABLE_NAME = "testTable";
+  private final String OFFLINE_TABLE_NAME = TableNameBuilder.OFFLINE.tableNameWithType(TEST_TABLE_NAME);
+  private final String REALTIME_TABLE_NAME = TableNameBuilder.REALTIME.tableNameWithType(TEST_TABLE_NAME);
 
-  private PinotHelixResourceManager _pinotHelixResourceManager;
+  private void testDifferentTimeUnits(final String pastTimeStamp, TimeUnit timeUnit, final long dayAfterTomorrowTimeStamp) throws Exception {
+    List<OfflineSegmentZKMetadata> metadataList = new ArrayList<>();
+    // Create metadata for 10 segments really old, that will be removed by the retention manager.
+    final int numOlderSegments = 10;
+    List<String> removedSegments = new ArrayList<>();
+    for (int i = 0; i < numOlderSegments; ++i) {
+      SegmentMetadata segmentMetadata = getTimeSegmentMetadataImpl(pastTimeStamp, pastTimeStamp, timeUnit.toString());
+      OfflineSegmentZKMetadata offlineSegmentZKMetadata = new OfflineSegmentZKMetadata();
+      ZKMetadataUtils.updateSegmentMetadata(offlineSegmentZKMetadata, segmentMetadata);
+      metadataList.add(offlineSegmentZKMetadata);
+      removedSegments.add(offlineSegmentZKMetadata.getSegmentName());
+    }
+    // Create metadata for 5 segments that will not be removed.
+    for (int i = 0; i < 5; ++i) {
+      SegmentMetadata segmentMetadata = getTimeSegmentMetadataImpl(String.valueOf(dayAfterTomorrowTimeStamp),
+          String.valueOf(dayAfterTomorrowTimeStamp), timeUnit.toString());
+      OfflineSegmentZKMetadata offlineSegmentZKMetadata = new OfflineSegmentZKMetadata();
+      ZKMetadataUtils.updateSegmentMetadata(offlineSegmentZKMetadata, segmentMetadata);
+      metadataList.add(offlineSegmentZKMetadata);
+    }
+    final TableConfig tableConfig = createOfflineTableConfig();
+    PinotHelixResourceManager pinotHelixResourceManager = mock(PinotHelixResourceManager.class);
+    setupPinotHelixResourceManager(tableConfig, removedSegments, pinotHelixResourceManager);
 
-  private ZkClient _zkClient;
+    when(pinotHelixResourceManager.getOfflineTableConfig(TEST_TABLE_NAME)).thenReturn(tableConfig);
+    when(pinotHelixResourceManager.getOfflineSegmentMetadata(OFFLINE_TABLE_NAME)).thenReturn(metadataList);
 
-  private HelixManager _helixZkManager;
-  private HelixAdmin _helixAdmin;
-  private String _testTableName = "testTable";
-  private String _offlineTableName = TableNameBuilder.OFFLINE_TABLE_NAME_BUILDER.forTable(_testTableName);
+    RetentionManager retentionManager = new RetentionManager(pinotHelixResourceManager, 100000);
+    Method execute = RetentionManager.class.getDeclaredMethod("execute");
+    execute.setAccessible(true);
+    execute.invoke(retentionManager);
 
-  private RetentionManager _retentionManager;
-  private ZkStarter.ZookeeperInstance _zookeeperInstance;
+    SegmentDeletionManager deletionManager = pinotHelixResourceManager.getSegmentDeletionManager();
 
-  @BeforeTest
-  public void setup() throws Exception {
-    _zookeeperInstance = ZkStarter.startLocalZkServer();
-    _zkClient = new ZkClient(ZK_STR);
+    // Verify that the removeAgedDeletedSegments() method in deletion manager is actually called.
+    verify(deletionManager, times(1)).removeAgedDeletedSegments(anyInt());
 
-    _pinotHelixResourceManager =
-        new PinotHelixResourceManager(ZK_STR, HELIX_CLUSTER_NAME, CONTROLLER_INSTANCE_NAME, null, 10000L, true, /*isUpdateStateModel=*/false);
-    _pinotHelixResourceManager.start();
-    ControllerRequestBuilderUtil.addFakeDataInstancesToAutoJoinHelixCluster(HELIX_CLUSTER_NAME, ZK_STR, 2, true);
-    ControllerRequestBuilderUtil.addFakeBrokerInstancesToAutoJoinHelixCluster(HELIX_CLUSTER_NAME, ZK_STR, 2, true);
+    // Verify that the deleteSegments method is actually called.
+    verify(pinotHelixResourceManager, times(1)).deleteSegments(anyString(), anyList());
 
-    _helixAdmin = _pinotHelixResourceManager.getHelixAdmin();
-    _helixZkManager = _pinotHelixResourceManager.getHelixZkManager();
-
-    String OfflineTableConfigJson =
-        ControllerRequestBuilderUtil.buildCreateOfflineTableJSON(_testTableName, null, null, 2).toString();
-    AbstractTableConfig offlineTableConfig = AbstractTableConfig.init(OfflineTableConfigJson);
-    _pinotHelixResourceManager.addTable(offlineTableConfig);
+    retentionManager.stop();
   }
 
-  @AfterTest
-  public void tearDown() {
-    _retentionManager.stop();
-    _pinotHelixResourceManager.stop();
-    if (INDEXES_DIR.exists()) {
-      FileUtils.deleteQuietly(INDEXES_DIR);
-    }
-    _zkClient.close();
-    ZkStarter.stopLocalZkServer(_zookeeperInstance);
-  }
-
-  public void cleanupSegments() throws InterruptedException {
-    _retentionManager.stop();
-    for (String segmentId : _pinotHelixResourceManager.getAllSegmentsForResource(_offlineTableName)) {
-      _pinotHelixResourceManager.deleteSegment(_offlineTableName, segmentId);
-    }
-    while (_helixZkManager.getHelixPropertyStore()
-        .getChildNames(ZKMetadataProvider.constructPropertyStorePathForResource(_offlineTableName),
-            AccessOption.PERSISTENT)
-        .size() > 0) {
-      Thread.sleep(1000);
-    }
-  }
-
-  /**
-   * Test with millseconds time unit.
-   * @throws JSONException
-   * @throws UnsupportedEncodingException
-   * @throws IOException
-   * @throws InterruptedException
-   */
   @Test
-  public void testRetentionWithMillsTimeUnit()
-      throws JSONException, UnsupportedEncodingException, IOException, InterruptedException {
-    _retentionManager = new RetentionManager(_pinotHelixResourceManager, 5);
-    _retentionManager.start();
-    long theDayAfterTomorrowSinceEpoch = System.currentTimeMillis() / 1000 / 60 / 60 / 24 + 2;
-    long millsSinceEpochTimeStamp = theDayAfterTomorrowSinceEpoch * 24 * 60 * 60 * 1000;
-    for (int i = 0; i < 10; ++i) {
-      SegmentMetadata segmentMetadata =
-          getTimeSegmentMetadataImpl("1343001600000", "1343001600000", TimeUnit.MILLISECONDS.toString());
-      registerSegmentMetadata(segmentMetadata);
-      Thread.sleep(100);
-    }
-    for (int i = 0; i < 10; ++i) {
-      SegmentMetadata segmentMetadata = getTimeSegmentMetadataImpl(millsSinceEpochTimeStamp + "",
-          millsSinceEpochTimeStamp + "", TimeUnit.MILLISECONDS.toString());
-      registerSegmentMetadata(segmentMetadata);
-      Thread.sleep(100);
-    }
-    validate();
-    cleanupSegments();
+  public void testRetentionWithMinutes() throws Exception {
+    final long theDayAfterTomorrowSinceEpoch = System.currentTimeMillis() / 1000 / 60 / 60 / 24 + 2;
+    final long minutesSinceEpochTimeStamp = theDayAfterTomorrowSinceEpoch * 24 * 60;
+    final String pastMinsSinceEpoch = "22383360";
+    testDifferentTimeUnits(pastMinsSinceEpoch, TimeUnit.MINUTES, minutesSinceEpochTimeStamp);
   }
 
-  /**
-   * @throws JSONException
-   * @throws UnsupportedEncodingException
-   * @throws IOException
-   * @throws InterruptedException
-   */
   @Test
-  public void testRetentionWithSecondsTimeUnit()
-      throws JSONException, UnsupportedEncodingException, IOException, InterruptedException {
-    _retentionManager = new RetentionManager(_pinotHelixResourceManager, 5);
-    _retentionManager.start();
-    long theDayAfterTomorrowSinceEpoch = System.currentTimeMillis() / 1000 / 60 / 60 / 24 + 2;
-    long secondsSinceEpochTimeStamp = theDayAfterTomorrowSinceEpoch * 24 * 60 * 60;
-    for (int i = 0; i < 10; ++i) {
-      SegmentMetadata segmentMetadata =
-          getTimeSegmentMetadataImpl("1343001600", "1343001600", TimeUnit.SECONDS.toString());
-      registerSegmentMetadata(segmentMetadata);
-      Thread.sleep(100);
-    }
-    for (int i = 0; i < 10; ++i) {
-      SegmentMetadata segmentMetadata = getTimeSegmentMetadataImpl(secondsSinceEpochTimeStamp + "",
-          secondsSinceEpochTimeStamp + "", TimeUnit.SECONDS.toString());
-      registerSegmentMetadata(segmentMetadata);
-      Thread.sleep(100);
-    }
-    validate();
-    cleanupSegments();
+  public void testRetentionWithSeconds() throws Exception {
+    final long theDayAfterTomorrowSinceEpoch = System.currentTimeMillis() / 1000 / 60 / 60 / 24 + 2;
+    final long secondsSinceEpochTimeStamp = theDayAfterTomorrowSinceEpoch * 24 * 60 * 60;
+    final String pastSecondsSinceEpoch = "1343001600";
+    testDifferentTimeUnits(pastSecondsSinceEpoch, TimeUnit.SECONDS, secondsSinceEpochTimeStamp);
   }
 
-  private void validate() throws InterruptedException {
-    int INCREMENTAL_WAIT_TIME = 5000;
-    int INITIAL_WAIT_TIME = 8000;
-    String segmentMetadaPathForTable = ZKMetadataProvider.constructPropertyStorePathForResource(_offlineTableName);
-    int numSegmentsInMetadata = _helixZkManager.getHelixPropertyStore()
-        .getChildNames(segmentMetadaPathForTable, AccessOption.PERSISTENT).size();
-    Assert.assertEquals(numSegmentsInMetadata, 20);
-    Thread.sleep(INITIAL_WAIT_TIME);
-    LOGGER.info("Sleeping thread wakes up!");
-    int evSize = 0;
-    int isSize = 0;
-    numSegmentsInMetadata = 0;
-    long start = System.currentTimeMillis();
-    int MAX_WAIT_TIME = 2 * 60 * 1000; // 2 minutes
-    while (System.currentTimeMillis() - start < MAX_WAIT_TIME) {
-      evSize = _helixAdmin.getResourceExternalView(HELIX_CLUSTER_NAME, _offlineTableName).getPartitionSet().size();
-      isSize = _helixAdmin.getResourceIdealState(HELIX_CLUSTER_NAME, _offlineTableName).getPartitionSet().size();
-      numSegmentsInMetadata = _helixZkManager.getHelixPropertyStore()
-          .getChildNames(segmentMetadaPathForTable, AccessOption.PERSISTENT).size();
-      if (evSize == 10 && isSize == 10 && numSegmentsInMetadata == 10) {
-        break;
+  @Test
+  public void testRetentionWithMillis() throws Exception {
+    final long theDayAfterTomorrowSinceEpoch = System.currentTimeMillis() / 1000 / 60 / 60 / 24 + 2;
+    final long millisSinceEpochTimeStamp = theDayAfterTomorrowSinceEpoch * 24 * 60 * 60 * 1000;
+    final String pastMillisSinceEpoch = "1343001600000";
+    testDifferentTimeUnits(pastMillisSinceEpoch, TimeUnit.MILLISECONDS, millisSinceEpochTimeStamp);
+  }
+
+  @Test
+  public void testRetentionWithHours() throws Exception {
+    final long theDayAfterTomorrowSinceEpoch = System.currentTimeMillis() / 1000 / 60 / 60 / 24 + 2;
+    final long hoursSinceEpochTimeStamp = theDayAfterTomorrowSinceEpoch * 24;
+    final String pastHoursSinceEpoch = "373056";
+    testDifferentTimeUnits(pastHoursSinceEpoch, TimeUnit.HOURS, hoursSinceEpochTimeStamp);
+  }
+
+  @Test
+  public void testRetentionWithDays() throws Exception {
+    final long daysSinceEpochTimeStamp = System.currentTimeMillis() / 1000 / 60 / 60 / 24 + 2;
+    final String pastDaysSinceEpoch = "15544";
+    testDifferentTimeUnits(pastDaysSinceEpoch, TimeUnit.DAYS, daysSinceEpochTimeStamp);
+  }
+
+  private TableConfig createOfflineTableConfig() throws Exception {
+    return new TableConfig.Builder(CommonConstants.Helix.TableType.OFFLINE).setTableName(TEST_TABLE_NAME)
+        .setRetentionTimeUnit("DAYS")
+        .setRetentionTimeValue("365")
+        .setNumReplicas(2)
+        .build();
+  }
+
+  private TableConfig createRealtimeTableConfig1(int replicaCount)
+      throws IOException, JSONException {
+    return new TableConfig.Builder(CommonConstants.Helix.TableType.REALTIME).setTableName(TEST_TABLE_NAME)
+        .setLLC(true)
+        .setRetentionTimeUnit("DAYS")
+        .setRetentionTimeValue("5")
+        .setNumReplicas(replicaCount)
+        .build();
+  }
+
+  private void setupPinotHelixResourceManager(TableConfig tableConfig,
+      final List<String> removedSegments, PinotHelixResourceManager resourceManager) throws Exception {
+    final String tableNameWithType = tableConfig.getTableName();
+    when(resourceManager.isLeader()).thenReturn(true);
+    when(resourceManager.getAllTables()).thenReturn(Collections.singletonList(tableNameWithType));
+
+    SegmentDeletionManager deletionManager = mock(SegmentDeletionManager.class);
+    // Ignore the call to SegmentDeletionManager.removeAgedDeletedSegments. we only test that the call is made once per
+    // run of the retention manager
+    doAnswer(new Answer() {
+      @Override
+      public Void answer(InvocationOnMock invocationOnMock)
+          throws Throwable {
+        return null;
       }
-      Thread.sleep(INCREMENTAL_WAIT_TIME);
-    }
-    Assert.assertEquals(evSize, 10);
-    Assert.assertEquals(isSize, 10);
-    Assert.assertEquals(numSegmentsInMetadata, 10);
+    }).when(deletionManager).removeAgedDeletedSegments(anyInt());
+    when(resourceManager.getSegmentDeletionManager()).thenReturn(deletionManager);
+
+    // If and when PinotHelixResourceManager.deleteSegments() is invoked, make sure that the segments deleted
+    // are exactly the same as the ones we expect to be deleted.
+    doAnswer(new Answer() {
+      @Override
+      public Object answer(InvocationOnMock invocationOnMock)
+          throws Throwable {
+        Object[] args = invocationOnMock.getArguments();
+        String tableNameArg = (String)args[0];
+        Assert.assertEquals(tableNameArg, tableNameWithType);
+        List<String> segmentListArg = (List<String>) args[1];
+        Assert.assertEquals(segmentListArg.size(), removedSegments.size());
+        for (String segmentName : removedSegments) {
+          Assert.assertTrue(segmentListArg.contains(segmentName));
+        }
+        return null;
+      }
+    }).when(resourceManager).deleteSegments(anyString(), anyList());
   }
 
-  /**
-   * @throws JSONException
-   * @throws UnsupportedEncodingException
-   * @throws IOException
-   * @throws InterruptedException
-   */
+  // This test makes sure that we clean up the segments marked OFFLINE in realtime for more than 7 days
   @Test
-  public void testRetentionWithMinutesTimeUnit()
-      throws JSONException, UnsupportedEncodingException, IOException, InterruptedException {
-    _retentionManager = new RetentionManager(_pinotHelixResourceManager, 5);
-    _retentionManager.start();
-    long theDayAfterTomorrowSinceEpoch = System.currentTimeMillis() / 1000 / 60 / 60 / 24 + 2;
-    long minutesSinceEpochTimeStamp = theDayAfterTomorrowSinceEpoch * 24 * 60;
-    for (int i = 0; i < 10; ++i) {
-      SegmentMetadata segmentMetadata = getTimeSegmentMetadataImpl("22383360", "22383360", TimeUnit.MINUTES.toString());
-      registerSegmentMetadata(segmentMetadata);
-      Thread.sleep(100);
-    }
-    for (int i = 0; i < 10; ++i) {
-      SegmentMetadata segmentMetadata = getTimeSegmentMetadataImpl(minutesSinceEpochTimeStamp + "",
-          minutesSinceEpochTimeStamp + "", TimeUnit.MINUTES.toString());
-      registerSegmentMetadata(segmentMetadata);
-      Thread.sleep(100);
-    }
-    validate();
-    cleanupSegments();
+  public void testRealtimeLLCCleanup() throws Exception {
+    final int initialNumSegments = 8;
+    final long now = System.currentTimeMillis();
+
+    final int replicaCount = 1;
+
+    TableConfig tableConfig = createRealtimeTableConfig1(replicaCount);
+    List<String> removedSegments = new ArrayList<>();
+    PinotHelixResourceManager pinotHelixResourceManager = setupSegmentMetadata(tableConfig, now, initialNumSegments, removedSegments);
+    setupPinotHelixResourceManager(tableConfig, removedSegments, pinotHelixResourceManager);
+
+    RetentionManager retentionManager = new RetentionManager(pinotHelixResourceManager, 100000);
+    Method execute = RetentionManager.class.getDeclaredMethod("execute");
+    execute.setAccessible(true);
+    execute.invoke(retentionManager);
+
+    SegmentDeletionManager deletionManager = pinotHelixResourceManager.getSegmentDeletionManager();
+
+    // Verify that the removeAgedDeletedSegments() method in deletion manager is actually called.
+    verify(deletionManager, times(1)).removeAgedDeletedSegments(anyInt());
+
+    // Verify that the deleteSegments method is actually called.
+    verify(pinotHelixResourceManager, times(1)).deleteSegments(anyString(), anyList());
+
+    retentionManager.stop();
   }
 
-  /**
-   * @throws JSONException
-   * @throws UnsupportedEncodingException
-   * @throws IOException
-   * @throws InterruptedException
-   */
-  @Test
-  public void testRetentionWithHoursTimeUnit()
-      throws JSONException, UnsupportedEncodingException, IOException, InterruptedException {
-    _retentionManager = new RetentionManager(_pinotHelixResourceManager, 5);
-    _retentionManager.start();
-    long theDayAfterTomorrowSinceEpoch = System.currentTimeMillis() / 1000 / 60 / 60 / 24 + 2;
-    long hoursSinceEpochTimeStamp = theDayAfterTomorrowSinceEpoch * 24;
-    for (int i = 0; i < 10; ++i) {
-      SegmentMetadata segmentMetadata = getTimeSegmentMetadataImpl("373056", "373056", TimeUnit.HOURS.toString());
-      registerSegmentMetadata(segmentMetadata);
-      Thread.sleep(100);
+  private PinotHelixResourceManager setupSegmentMetadata(TableConfig tableConfig, final long now, final int nSegments, List<String> segmentsToBeDeleted) throws  Exception {
+    final int replicaCount = Integer.valueOf(tableConfig.getValidationConfig().getReplicasPerPartition());
+
+    List<RealtimeSegmentZKMetadata> allSegments = new ArrayList<>();
+
+    IdealState idealState =
+        PinotTableIdealStateBuilder.buildEmptyKafkaConsumerRealtimeIdealStateFor(REALTIME_TABLE_NAME, replicaCount);
+
+    final int kafkaPartition = 5;
+    final long millisInDays = TimeUnit.DAYS.toMillis(1);
+    final String serverName = "Server_localhost_0";
+    // If we set the segment creation time to a certain value and compare it as being X ms old,
+    // then we could get unpredictable results depending on whether it takes more or less than
+    // one millisecond to get to RetentionManager time comparison code. To be safe, set the
+    // milliseconds off by 1/2 day.
+    long segmentCreationTime = now - (nSegments + 1) * millisInDays + millisInDays / 2;
+    for (int seq = 1; seq <= nSegments; seq++) {
+      segmentCreationTime += millisInDays;
+      LLCRealtimeSegmentZKMetadata segmentMetadata = createSegmentMetadata(replicaCount, segmentCreationTime);
+      LLCSegmentName llcSegmentName = new LLCSegmentName(TEST_TABLE_NAME, kafkaPartition, seq, segmentCreationTime);
+      final String segName = llcSegmentName.getSegmentName();
+      segmentMetadata.setSegmentName(segName);
+      if (seq == nSegments) {
+        // create consuming segment
+        segmentMetadata.setStatus(CommonConstants.Segment.Realtime.Status.IN_PROGRESS);
+        idealState.setPartitionState(segName, serverName, "CONSUMING");
+        allSegments.add(segmentMetadata);
+      } else if (seq % 2 == 0) {
+        // create ONLINE segment
+        segmentMetadata.setStatus(CommonConstants.Segment.Realtime.Status.DONE);
+        idealState.setPartitionState(segName, serverName, "ONLINE");
+        allSegments.add(segmentMetadata);
+      } else {
+        segmentMetadata.setStatus(CommonConstants.Segment.Realtime.Status.IN_PROGRESS);
+        idealState.setPartitionState(segName, serverName, "OFFLINE");
+        allSegments.add(segmentMetadata);
+        if ((now - segmentCreationTime) >= TimeUnit.DAYS.toMillis(
+            RetentionManager.getRetentionTimeForOldLLCSegmentsDays())) {
+          segmentsToBeDeleted.add(segmentMetadata.getSegmentName());
+        }
+      }
     }
-    for (int i = 0; i < 10; ++i) {
-      SegmentMetadata segmentMetadata = getTimeSegmentMetadataImpl(hoursSinceEpochTimeStamp + "",
-          hoursSinceEpochTimeStamp + "", TimeUnit.HOURS.toString());
-      registerSegmentMetadata(segmentMetadata);
-      Thread.sleep(100);
-    }
-    validate();
-    cleanupSegments();
+
+    PinotHelixResourceManager pinotHelixResourceManager = mock(PinotHelixResourceManager.class);
+
+    when(pinotHelixResourceManager.getRealtimeTableConfig(TEST_TABLE_NAME)).thenReturn(tableConfig);
+    when(pinotHelixResourceManager.getRealtimeSegmentMetadata(REALTIME_TABLE_NAME)).thenReturn(allSegments);
+    when(pinotHelixResourceManager.getHelixClusterName()).thenReturn(HELIX_CLUSTER_NAME);
+
+    HelixAdmin helixAdmin = mock(HelixAdmin.class);
+    when(helixAdmin.getResourceIdealState(HELIX_CLUSTER_NAME, REALTIME_TABLE_NAME)).thenReturn(idealState);
+    when(pinotHelixResourceManager.getHelixAdmin()).thenReturn(helixAdmin);
+
+    return pinotHelixResourceManager;
   }
 
-  /**
-   * Test with daysSinceEpoch time unit and make 10 segments with expired time value, 10 segments
-   * with the day after tomorrow's time stamp.
-   * @throws JSONException
-   * @throws UnsupportedEncodingException
-   * @throws IOException
-   * @throws InterruptedException
-   */
-  @Test
-  public void testRetentionWithDaysTimeUnit()
-      throws JSONException, UnsupportedEncodingException, IOException, InterruptedException {
-    _retentionManager = new RetentionManager(_pinotHelixResourceManager, 5);
-    _retentionManager.start();
-    long theDayAfterTomorrowSinceEpoch = System.currentTimeMillis() / 1000 / 60 / 60 / 24 + 2;
-    for (int i = 0; i < 10; ++i) {
-      SegmentMetadata segmentMetadata = getTimeSegmentMetadataImpl("15544", "15544", TimeUnit.DAYS.toString());
-      registerSegmentMetadata(segmentMetadata);
-      Thread.sleep(100);
-    }
-    for (int i = 0; i < 10; ++i) {
-      SegmentMetadata segmentMetadata = getTimeSegmentMetadataImpl(theDayAfterTomorrowSinceEpoch + "",
-          theDayAfterTomorrowSinceEpoch + "", TimeUnit.DAYS.toString());
-      registerSegmentMetadata(segmentMetadata);
-      Thread.sleep(100);
-    }
-    validate();
-    cleanupSegments();
-  }
+  private LLCRealtimeSegmentZKMetadata createSegmentMetadata(int replicaCount, long segmentCreationTime) {
+    LLCRealtimeSegmentZKMetadata segmentMetadata = new LLCRealtimeSegmentZKMetadata();
+    segmentMetadata.setCreationTime(segmentCreationTime);
+    segmentMetadata.setStartOffset(0L);
+    segmentMetadata.setEndOffset(-1L);
 
-  private void registerSegmentMetadata(SegmentMetadata segmentMetadata) {
-    // put into propertyStore
-    OfflineSegmentZKMetadata offlineSegmentZKMetadata = new OfflineSegmentZKMetadata();
-    ZKMetadataUtils.updateSegmentMetadata(offlineSegmentZKMetadata, segmentMetadata);
-    ZKMetadataProvider.setOfflineSegmentZKMetadata(_pinotHelixResourceManager.getPropertyStore(),
-        offlineSegmentZKMetadata);
-
-    // put into idealStates
-    IdealState idealState = _helixAdmin.getResourceIdealState(HELIX_CLUSTER_NAME, _offlineTableName);
-    idealState.setPartitionState(segmentMetadata.getName(), "Server_localhost_0", "ONLINE");
-    idealState.setPartitionState(segmentMetadata.getName(), "Server_localhost_1", "ONLINE");
-    _helixAdmin.setResourceIdealState(HELIX_CLUSTER_NAME, _offlineTableName, idealState);
+    segmentMetadata.setNumReplicas(replicaCount);
+    segmentMetadata.setTableName(TEST_TABLE_NAME);
+    return segmentMetadata;
   }
 
   private SegmentMetadata getTimeSegmentMetadataImpl(final String startTime, final String endTime,
@@ -318,7 +308,7 @@ public class RetentionManagerTest {
     }
 
     final long creationTime = System.currentTimeMillis();
-    final String segmentName = _testTableName + creationTime;
+    final String segmentName = TEST_TABLE_NAME + creationTime;
 
     SegmentMetadata segmentMetadata = new SegmentMetadata() {
       TimeUnit segmentTimeUnit = TimeUtils.timeUnitFromString(timeUnit);
@@ -379,7 +369,7 @@ public class RetentionManagerTest {
 
       @Override
       public String getTableName() {
-        return _testTableName;
+        return TEST_TABLE_NAME;
       }
 
       @Override
@@ -390,6 +380,26 @@ public class RetentionManagerTest {
       @Override
       public String getIndexType() {
         return "offline";
+      }
+
+      @Override
+      public String getTimeColumn() {
+        return null;
+      }
+
+      @Override
+      public long getStartTime() {
+        return Long.valueOf(startTime);
+      }
+
+      @Override
+      public long getEndTime() {
+        return Long.valueOf(endTime);
+      }
+
+      @Override
+      public TimeUnit getTimeUnit() {
+        return segmentTimeUnit;
       }
 
       @Override
@@ -452,12 +462,14 @@ public class RetentionManagerTest {
         throw new UnsupportedOperationException("getBitmapInvertedIndexFileName not supported in " + this.getClass());
       }
 
-      @Nullable @Override public String getCreatorName() {
+      @Nullable
+      @Override
+      public String getCreatorName() {
         return null;
       }
 
       @Override
-      public Character getPaddingCharacter() {
+      public char getPaddingCharacter() {
         return V1Constants.Str.DEFAULT_STRING_PAD_CHAR;
       }
 
@@ -466,6 +478,11 @@ public class RetentionManagerTest {
         return HllConstants.DEFAULT_LOG2M;
       }
 
+      @Nullable
+      @Override
+      public String getDerivedColumn(String column, MetricFieldSpec.DerivedMetricType derivedMetricType) {
+        return null;
+      }
     };
     return segmentMetadata;
   }

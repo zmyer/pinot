@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2014-2015 LinkedIn Corp. (pinot-core@linkedin.com)
+ * Copyright (C) 2014-2016 LinkedIn Corp. (pinot-core@linkedin.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package com.linkedin.pinot.controller.api.restlet.resources;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
@@ -88,13 +87,13 @@ public class TableSizeReader {
     TableSizeDetails tableSizeDetails = new TableSizeDetails(tableName);
 
     if (hasRealtimeTable) {
-      String realtimeTableName = new TableNameBuilder(CommonConstants.Helix.TableType.REALTIME).forTable(tableName);
+      String realtimeTableName = TableNameBuilder.REALTIME.tableNameWithType(tableName);
       tableSizeDetails.realtimeSegments = getTableSubtypeSize(realtimeTableName, timeoutMsec);
       tableSizeDetails.reportedSizeInBytes += tableSizeDetails.realtimeSegments.reportedSizeInBytes;
       tableSizeDetails.estimatedSizeInBytes += tableSizeDetails.realtimeSegments.estimatedSizeInBytes;
     }
     if (hasOfflineTable) {
-      String offlineTableName = new TableNameBuilder(CommonConstants.Helix.TableType.OFFLINE).forTable(tableName);
+      String offlineTableName = TableNameBuilder.OFFLINE.tableNameWithType(tableName);
       tableSizeDetails.offlineSegments = getTableSubtypeSize(offlineTableName, timeoutMsec);
       tableSizeDetails.reportedSizeInBytes += tableSizeDetails.offlineSegments.reportedSizeInBytes;
       tableSizeDetails.estimatedSizeInBytes += tableSizeDetails.offlineSegments.estimatedSizeInBytes;

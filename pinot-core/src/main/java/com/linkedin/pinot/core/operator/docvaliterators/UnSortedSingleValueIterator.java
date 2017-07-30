@@ -19,6 +19,9 @@ import com.linkedin.pinot.common.data.FieldSpec.DataType;
 import com.linkedin.pinot.core.common.BlockSingleValIterator;
 import com.linkedin.pinot.core.common.Constants;
 import com.linkedin.pinot.core.io.reader.SingleColumnSingleValueReader;
+import com.linkedin.pinot.core.io.reader.impl.ChunkReaderContext;
+import com.linkedin.pinot.core.io.reader.impl.UnSortedValueReaderContext;
+import com.linkedin.pinot.core.io.reader.impl.v1.VarByteChunkSingleValueReader;
 import com.linkedin.pinot.core.segment.index.ColumnMetadata;
 
 public final class UnSortedSingleValueIterator extends BlockSingleValIterator {
@@ -26,13 +29,19 @@ public final class UnSortedSingleValueIterator extends BlockSingleValIterator {
   private int counter = 0;
   private ColumnMetadata columnMetadata;
   private SingleColumnSingleValueReader sVReader;
+  private UnSortedValueReaderContext context;
 
-  
   public UnSortedSingleValueIterator(SingleColumnSingleValueReader sVReader,
       ColumnMetadata columnMetadata) {
+    this(sVReader, columnMetadata, (UnSortedValueReaderContext) sVReader.createContext());
+  }
+
+  public UnSortedSingleValueIterator(SingleColumnSingleValueReader sVReader,
+      ColumnMetadata columnMetadata, UnSortedValueReaderContext context) {
     super();
     this.sVReader = sVReader;
     this.columnMetadata = columnMetadata;
+    this.context = context;
   }
 
   @Override
@@ -57,7 +66,42 @@ public final class UnSortedSingleValueIterator extends BlockSingleValIterator {
       return Constants.EOF;
     }
 
-    return sVReader.getInt(counter++);
+    return sVReader.getInt(counter++, context);
+  }
+
+  @Override
+  public long nextLongVal() {
+    if (counter >= columnMetadata.getTotalDocs()) {
+      return Constants.EOF;
+    }
+
+    return sVReader.getLong(counter++, context);
+  }
+
+  @Override
+  public float nextFloatVal() {
+    if (counter >= columnMetadata.getTotalDocs()) {
+      return Constants.EOF;
+    }
+
+    return sVReader.getFloat(counter++, context);
+  }
+
+  @Override
+  public double nextDoubleVal() {
+    if (counter >= columnMetadata.getTotalDocs()) {
+      return Constants.EOF;
+    }
+
+    return sVReader.getDouble(counter++, context);
+  }
+
+  @Override
+  public String nextStringVal() {
+    if (counter >= columnMetadata.getTotalDocs()) {
+      return null;
+    }
+    return sVReader.getString(counter++, context);
   }
 
   @Override

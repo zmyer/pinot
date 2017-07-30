@@ -15,10 +15,28 @@
  */
 package com.linkedin.pinot.server.starter.helix;
 
+import com.google.common.collect.ImmutableList;
+import com.google.common.util.concurrent.Uninterruptibles;
+import com.linkedin.pinot.common.Utils;
+import com.linkedin.pinot.common.config.TableNameBuilder;
+import com.linkedin.pinot.common.metadata.ZKMetadataProvider;
+import com.linkedin.pinot.common.metrics.ServerMeter;
+import com.linkedin.pinot.common.utils.CommonConstants;
+import com.linkedin.pinot.common.utils.ControllerTenantNameBuilder;
+import com.linkedin.pinot.common.utils.MmapUtils;
+import com.linkedin.pinot.common.utils.NetUtil;
+import com.linkedin.pinot.common.utils.ServiceStatus;
+import com.linkedin.pinot.common.utils.ZkUtils;
+import com.linkedin.pinot.core.indexsegment.columnar.ColumnarSegmentMetadataLoader;
+import com.linkedin.pinot.server.conf.ServerConf;
+import com.linkedin.pinot.server.realtime.ControllerLeaderLocator;
+import com.linkedin.pinot.server.starter.ServerInstance;
+import com.yammer.metrics.core.MetricsRegistry;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
+import java.util.concurrent.TimeUnit;
 import org.apache.commons.configuration.Configuration;
 import org.apache.commons.configuration.PropertiesConfiguration;
 import org.apache.helix.HelixAdmin;
@@ -37,20 +55,6 @@ import org.apache.helix.participant.statemachine.StateModelFactory;
 import org.apache.helix.store.zk.ZkHelixPropertyStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import com.linkedin.pinot.common.Utils;
-import com.linkedin.pinot.common.config.TableNameBuilder;
-import com.linkedin.pinot.common.metadata.ZKMetadataProvider;
-import com.linkedin.pinot.common.metrics.ServerMeter;
-import com.linkedin.pinot.common.utils.CommonConstants;
-import com.linkedin.pinot.common.utils.ControllerTenantNameBuilder;
-import com.linkedin.pinot.common.utils.MmapUtils;
-import com.linkedin.pinot.common.utils.NetUtil;
-import com.linkedin.pinot.common.utils.ZkUtils;
-import com.linkedin.pinot.core.indexsegment.columnar.ColumnarSegmentMetadataLoader;
-import com.linkedin.pinot.server.conf.ServerConf;
-import com.linkedin.pinot.server.realtime.ControllerLeaderLocator;
-import com.linkedin.pinot.server.starter.ServerInstance;
-import com.yammer.metrics.core.MetricsRegistry;
 
 
 /**
@@ -63,6 +67,7 @@ import com.yammer.metrics.core.MetricsRegistry;
 public class HelixServerStarter {
 
   private static final Logger LOGGER = LoggerFactory.getLogger(HelixServerStarter.class);
+  private final long MAX_QUERY_TIME_MILLIS;
 
   protected final HelixManager _helixManager;
   private final Configuration _pinotHelixProperties;
@@ -73,18 +78,30 @@ public class HelixServerStarter {
 
   private final String _helixClusterName;
   private final String _instanceId;
-  private AdminApiService adminApiService;
+  private AdminApiApplication _adminApiApplication;
 
   public HelixServerStarter(String helixClusterName, String zkServer, Configuration pinotHelixProperties)
       throws Exception {
     LOGGER.info("Starting Pinot server");
     _helixClusterName = helixClusterName;
     _pinotHelixProperties = pinotHelixProperties;
+
+    String maxQueryTime = pinotHelixProperties.getString(CommonConstants.Server.CONFIG_OF_QUERY_EXECUTOR_TIMEOUT);
+    long maxQueryTimeLong;
+    try {
+      maxQueryTimeLong = Long.parseLong(maxQueryTime);
+    } catch (Exception e) {
+      LOGGER.warn("Could not parse the query executor timeout " + maxQueryTime + ", defaulting to "
+          + CommonConstants.Server.DEFAULT_QUERY_EXECUTOR_TIMEOUT, e);
+      maxQueryTimeLong = Long.parseLong(CommonConstants.Server.DEFAULT_QUERY_EXECUTOR_TIMEOUT);
+    }
+    MAX_QUERY_TIME_MILLIS = maxQueryTimeLong;
+
     String hostname = pinotHelixProperties.getString(CommonConstants.Helix.KEY_OF_SERVER_NETTY_HOST,
         NetUtil.getHostAddress());
     _instanceId =
         pinotHelixProperties.getString(
-            "instanceId",
+            CommonConstants.Helix.Instance.INSTANCE_ID_KEY,
             CommonConstants.Helix.PREFIX_OF_SERVER_INSTANCE
                 + hostname
                 + "_"
@@ -116,9 +133,9 @@ public class HelixServerStarter {
     addInstanceTagIfNeeded(helixClusterName, _instanceId);
     // Start restlet server for admin API endpoint
     int adminApiPort = pinotHelixProperties.getInt(CommonConstants.Server.CONFIG_OF_ADMIN_API_PORT,
-        Integer.parseInt(CommonConstants.Server.DEFAULT_ADMIN_API_PORT));
-    adminApiService = new AdminApiService(_serverInstance);
-    adminApiService.start(adminApiPort);
+        CommonConstants.Server.DEFAULT_ADMIN_API_PORT);
+    _adminApiApplication = new AdminApiApplication(_serverInstance);
+    _adminApiApplication.start(adminApiPort);
     updateInstanceConfigInHelix(adminApiPort, false/*shutDownStatus*/);
 
     // Register message handler factory
@@ -128,19 +145,26 @@ public class HelixServerStarter {
 
     _serverInstance.getServerMetrics()
         .addCallbackGauge("helix.connected", new Callable<Long>() {
-              @Override
-              public Long call()
-                  throws Exception {
-                return _helixManager.isConnected() ? 1L : 0L;
-              }
-            });
-
-    _helixManager.addPreConnectCallback(new PreConnectCallback() {
           @Override
-          public void onPreConnect() {
-            _serverInstance.getServerMetrics().addMeteredGlobalValue(ServerMeter.HELIX_ZOOKEEPER_RECONNECTS, 1L);
+          public Long call()
+              throws Exception {
+            return _helixManager.isConnected() ? 1L : 0L;
           }
         });
+
+    _helixManager.addPreConnectCallback(new PreConnectCallback() {
+      @Override
+      public void onPreConnect() {
+        _serverInstance.getServerMetrics().addMeteredGlobalValue(ServerMeter.HELIX_ZOOKEEPER_RECONNECTS, 1L);
+      }
+    });
+
+    // Register the service status handler
+    ServiceStatus.setServiceStatusCallback(
+        new ServiceStatus.MultipleCallbackServiceStatusCallback(ImmutableList.of(
+            new ServiceStatus.IdealStateAndCurrentStateMatchServiceStatusCallback(_helixManager, _helixClusterName, _instanceId),
+            new ServiceStatus.IdealStateAndExternalViewMatchServiceStatusCallback(_helixManager, _helixClusterName, _instanceId)
+        )));
 
     ControllerLeaderLocator.create(_helixManager);
 
@@ -171,7 +195,13 @@ public class HelixServerStarter {
               }
             });
 
-
+    _serverInstance.getServerMetrics().addCallbackGauge(
+        "memory.allocationFailureCount", new Callable<Long>() {
+              @Override
+              public Long call() throws Exception {
+                return (long) MmapUtils.getAllocationFailureCount();
+              }
+            });
   }
 
   private void updateInstanceConfigInHelix(int adminApiPort, boolean shuttingDown) {
@@ -201,9 +231,9 @@ public class HelixServerStarter {
     if (instanceTags == null || instanceTags.size() == 0) {
       if (ZKMetadataProvider.getClusterTenantIsolationEnabled(_helixManager.getHelixPropertyStore())) {
         _helixAdmin.addInstanceTag(clusterName, instanceName,
-            TableNameBuilder.OFFLINE_TABLE_NAME_BUILDER.forTable(ControllerTenantNameBuilder.DEFAULT_TENANT_NAME));
+            TableNameBuilder.OFFLINE.tableNameWithType(ControllerTenantNameBuilder.DEFAULT_TENANT_NAME));
         _helixAdmin.addInstanceTag(clusterName, instanceName,
-            TableNameBuilder.REALTIME_TABLE_NAME_BUILDER.forTable(ControllerTenantNameBuilder.DEFAULT_TENANT_NAME));
+            TableNameBuilder.REALTIME.tableNameWithType(ControllerTenantNameBuilder.DEFAULT_TENANT_NAME));
       } else {
         _helixAdmin.addInstanceTag(clusterName, instanceName, CommonConstants.Helix.UNTAGGED_SERVER_INSTANCE);
       }
@@ -229,18 +259,25 @@ public class HelixServerStarter {
   }
 
   private void setupHelixSystemProperties(Configuration conf) {
-    System.setProperty("helixmanager.flappingTimeWindow",
-        conf.getString(CommonConstants.Server.CONFIG_OF_HELIX_FLAPPING_TIMEWINDOW_MS,
-            CommonConstants.Server.DEFAULT_HELIX_FLAPPING_TIMEWINDOW_MS));
+    // [PINOT-2435] [PINOT-3927] Disable helix detection of flapping connection
+    // Helix will shutdown and effectively remove the instance from cluster if
+    // it detects flapping while the process continues to run
+    // Helix ignores the value if it is <= 0. Hence, setting time window to small value
+    // and number of connection failures within that window to high value
+    System.setProperty(CommonConstants.Helix.HELIX_MANAGER_FLAPPING_TIME_WINDOW_KEY,
+        conf.getString(CommonConstants.Helix.CONFIG_OF_HELIX_FLAPPING_TIMEWINDOW_MS,
+            CommonConstants.Helix.DEFAULT_HELIX_FLAPPING_TIMEWINDOW_MS));
+
+    System.setProperty(CommonConstants.Helix.HELIX_MANAGER_MAX_DISCONNECT_THRESHOLD_KEY,
+        conf.getString(CommonConstants.Helix.CONFIG_OF_HELIX_MAX_DISCONNECT_THRESHOLD,
+            CommonConstants.Helix.DEFAULT_HELIX_FLAPPING_MAX_DISCONNECT_THRESHOLD));
   }
 
   public void stop() {
-    adminApiService.stop();
+    _adminApiApplication.stop();
     setShuttingDownStatus(true);
-    try {
-      Thread.sleep(5000);
-    } catch (Exception e) {
-      LOGGER.error("error trying to sleep waiting for external view to change : ", e);
+    if (_pinotHelixProperties.getBoolean(CommonConstants.Server.CONFIG_OF_ENABLE_SHUTDOWN_DELAY, true)) {
+      Uninterruptibles.sleepUninterruptibly(MAX_QUERY_TIME_MILLIS, TimeUnit.MILLISECONDS);
     }
     _helixManager.disconnect();
     _serverInstance.shutDown();
@@ -250,11 +287,14 @@ public class HelixServerStarter {
     final Configuration configuration = new PropertiesConfiguration();
     final int port = 8003;
     configuration.addProperty(CommonConstants.Helix.KEY_OF_SERVER_NETTY_PORT, port);
-    long currentTimeMillis = System.currentTimeMillis();
     configuration.addProperty("pinot.server.instance.dataDir", "/tmp/PinotServer/test" + port + "/index");
     configuration.addProperty("pinot.server.instance.segmentTarDir", "/tmp/PinotServer/test" + port + "/segmentTar");
     final HelixServerStarter pinotHelixStarter = new HelixServerStarter("quickstart", "localhost:2191", configuration);
     return pinotHelixStarter;
+  }
+
+  public ServerConf getServerConf() {
+    return _serverConf;
   }
 
   public static void main(String[] args) throws Exception {

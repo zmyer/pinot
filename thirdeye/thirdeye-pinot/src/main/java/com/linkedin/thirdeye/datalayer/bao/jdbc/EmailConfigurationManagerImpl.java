@@ -1,5 +1,6 @@
 package com.linkedin.thirdeye.datalayer.bao.jdbc;
 
+import com.google.inject.Singleton;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -10,6 +11,8 @@ import com.linkedin.thirdeye.datalayer.pojo.AnomalyFunctionBean;
 import com.linkedin.thirdeye.datalayer.pojo.EmailConfigurationBean;
 import com.linkedin.thirdeye.datalayer.util.Predicate;
 
+@Deprecated
+@Singleton
 public class EmailConfigurationManagerImpl extends AbstractManagerImpl<EmailConfigurationDTO>
     implements EmailConfigurationManager {
 
@@ -44,10 +47,10 @@ public class EmailConfigurationManagerImpl extends AbstractManagerImpl<EmailConf
   }
 
   @Override
-  public void update(EmailConfigurationDTO emailConfigurationDTO) {
+  public int update(EmailConfigurationDTO emailConfigurationDTO) {
     EmailConfigurationBean emailConfigurationBean =
         (EmailConfigurationBean) convertEmailConfigurationDTO2Bean(emailConfigurationDTO);
-    genericPojoDao.update(emailConfigurationBean);
+    return genericPojoDao.update(emailConfigurationBean);
   }
 
   @Override
@@ -111,6 +114,17 @@ public class EmailConfigurationManagerImpl extends AbstractManagerImpl<EmailConf
     List<EmailConfigurationBean> list = genericPojoDao.get(predicate, EmailConfigurationBean.class);
     List<EmailConfigurationDTO> result = new ArrayList<>();
     for (EmailConfigurationBean bean : list) {
+      EmailConfigurationDTO dto = convertEmailConfigurationBean2DTO(bean);
+      result.add(dto);
+    }
+    return result;
+  }
+
+  @Override
+  public List<EmailConfigurationDTO> findAll() {
+    List<EmailConfigurationDTO> beanList = super.findAll();
+    List<EmailConfigurationDTO> result = new ArrayList<>();
+    for (EmailConfigurationBean bean : beanList) {
       EmailConfigurationDTO dto = convertEmailConfigurationBean2DTO(bean);
       result.add(dto);
     }

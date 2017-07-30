@@ -19,7 +19,6 @@ import com.linkedin.pinot.core.common.Block;
 import com.linkedin.pinot.core.common.BlockId;
 import com.linkedin.pinot.core.common.Operator;
 import com.linkedin.pinot.core.util.trace.TraceContext;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -41,9 +40,9 @@ public abstract class BaseOperator implements Operator {
   }
 
   @Override
-  public final Block nextBlock(BlockId BlockId) {
+  public final Block nextBlock(BlockId blockId) {
     long start = System.currentTimeMillis();
-    Block ret = getNextBlock(BlockId);
+    Block ret = getNextBlock(blockId);
     long end = System.currentTimeMillis();
     LOGGER.trace("Time spent in {}: {}", getOperatorName(), (end - start));
     TraceContext.logLatency(getOperatorName(), (end - start));
@@ -52,7 +51,14 @@ public abstract class BaseOperator implements Operator {
 
   public abstract Block getNextBlock();
 
-  public abstract Block getNextBlock(BlockId BlockId);
+  public abstract Block getNextBlock(BlockId blockId);
 
+  // Enforcing sub-class to implement the getOperatorName(), as they can just return a static final,
+  // as opposed to this super class calling getClass().getSimpleName().
   public abstract String getOperatorName();
+
+  @Override
+  public ExecutionStatistics getExecutionStatistics() {
+    throw new UnsupportedOperationException();
+  }
 }

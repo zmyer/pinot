@@ -15,32 +15,15 @@
  */
 package com.linkedin.pinot.server.integration.realtime;
 
-import com.linkedin.pinot.common.metrics.ServerMetrics;
-import com.yammer.metrics.core.MetricsRegistry;
-import java.io.File;
-import java.io.FileNotFoundException;
-import java.io.IOException;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.TimerTask;
-import java.util.concurrent.TimeUnit;
-
-import org.apache.commons.configuration.Configuration;
-import org.apache.commons.configuration.ConfigurationException;
-import org.apache.commons.configuration.PropertiesConfiguration;
-import org.apache.helix.ZNRecord;
-import org.json.JSONObject;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.testng.annotations.BeforeClass;
-
-import com.linkedin.pinot.common.config.AbstractTableConfig;
+import com.linkedin.pinot.common.config.TableConfig;
 import com.linkedin.pinot.common.data.FieldSpec;
 import com.linkedin.pinot.common.data.FieldSpec.FieldType;
 import com.linkedin.pinot.common.data.Schema;
 import com.linkedin.pinot.common.metadata.instance.InstanceZKMetadata;
 import com.linkedin.pinot.common.metadata.segment.RealtimeSegmentZKMetadata;
+import com.linkedin.pinot.common.metrics.ServerMetrics;
 import com.linkedin.pinot.common.segment.ReadMode;
+import com.linkedin.pinot.common.utils.CommonConstants;
 import com.linkedin.pinot.common.utils.CommonConstants.Segment.Realtime.Status;
 import com.linkedin.pinot.common.utils.CommonConstants.Segment.SegmentType;
 import com.linkedin.pinot.core.common.Block;
@@ -55,14 +38,30 @@ import com.linkedin.pinot.core.data.manager.realtime.TimerService;
 import com.linkedin.pinot.core.realtime.RealtimeFileBasedReaderTest;
 import com.linkedin.pinot.core.realtime.RealtimeSegment;
 import com.linkedin.pinot.core.realtime.impl.datasource.RealtimeColumnDataSource;
+import com.linkedin.pinot.core.segment.index.loader.IndexLoadingConfig;
 import com.linkedin.pinot.segments.v1.creator.SegmentTestUtils;
+import com.yammer.metrics.core.MetricsRegistry;
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.TimerTask;
+import java.util.concurrent.TimeUnit;
+import org.apache.commons.configuration.Configuration;
+import org.apache.commons.configuration.ConfigurationException;
+import org.apache.commons.configuration.PropertiesConfiguration;
+import org.apache.helix.ZNRecord;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.testng.annotations.BeforeClass;
 
 
 public class RealtimeTableDataManagerTest {
 
   private static final Logger LOGGER = LoggerFactory.getLogger(RealtimeTableDataManagerTest.class);
 
-  private static AbstractTableConfig tableConfig;
+  private static TableConfig tableConfig;
 
   private static InstanceZKMetadata instanceZKMetadata;
   private static RealtimeSegmentZKMetadata realtimeSegmentZKMetadata;
@@ -82,34 +81,23 @@ public class RealtimeTableDataManagerTest {
   private static volatile boolean keepOnRunning = true;
 
   @BeforeClass
-  public static void setup() throws Exception {
+  public static void setup()
+      throws Exception {
     instanceZKMetadata = getInstanceZKMetadata();
     realtimeSegmentZKMetadata = getRealtimeSegmentZKMetadata();
     tableDataManagerConfig = getTableDataManagerConfig();
 
-    JSONObject request = new JSONObject();
-    request.put("tableName", "mirror");
-    request.put("tableType", "REALTIME");
-
-    JSONObject indexing = new JSONObject();
-    indexing.put("loadMode", "HEAP");
-
-    JSONObject stream = new JSONObject();
-    stream.put("streamType", "kafka");
-    stream.put("stream.kafka.consumer.type", "highLevel");
-    stream.put("stream.kafka.topic.name", "MirrorDecoratedProfileViewEvent");
-    stream
-        .put("stream.kafka.decoder.class.name", "com.linkedin.pinot.core.realtime.impl.kafka.KafkaAvroMessageDecoder");
-    stream.put("stream.kafka.hlc.zk.connect.string", "zk-eat1-kafka.corp.linkedin.com:12913/kafka-aggregate-tracking");
-    stream.put("stream.kafka.decoder.prop.schema.registry.rest.url",
-        "http://eat1-ei2-schema-vip-z.stg.linkedin.com:10252/schemaRegistry/schemas");
-    indexing.put("streamConfigs", stream);
-
-    request.put("tableIndexConfig", indexing);
-    request.put("segmentsConfig", new JSONObject());
-    request.put("tenants", new JSONObject());
-    request.put("metadata", new JSONObject());
-    tableConfig = AbstractTableConfig.init(request.toString());
+    Map<String, String> streamConfigs = new HashMap<>();
+    streamConfigs.put("streamType", "kafka");
+    streamConfigs.put("stream.kafka.consumer.type", "highLevel");
+    streamConfigs.put("stream.kafka.topic.name", "kafkaTopic");
+    streamConfigs.put("stream.kafka.decoder.class.name",
+        "com.linkedin.pinot.core.realtime.impl.kafka.KafkaAvroMessageDecoder");
+    streamConfigs.put("stream.kafka.hlc.zk.connect.string", "localhost:1111/zkConnect");
+    streamConfigs.put("stream.kafka.decoder.prop.schema.registry.rest.url", "http://localhost:2222/schemaRegistry");
+    tableConfig = new TableConfig.Builder(CommonConstants.Helix.TableType.REALTIME).setTableName("mirror")
+        .setStreamConfigs(streamConfigs)
+        .build();
   }
 
   private static TableDataManagerConfig getTableDataManagerConfig() throws ConfigurationException {
@@ -130,8 +118,8 @@ public class RealtimeTableDataManagerTest {
   public void testSetup() throws Exception {
     final HLRealtimeSegmentDataManager manager =
         new HLRealtimeSegmentDataManager(realtimeSegmentZKMetadata, tableConfig, instanceZKMetadata, null,
-            tableDataManagerConfig.getDataDir(), ReadMode.valueOf(tableDataManagerConfig.getReadMode()),
-            getTestSchema(), new ServerMetrics(new MetricsRegistry()));
+            tableDataManagerConfig.getDataDir(), new IndexLoadingConfig(null, tableConfig), getTestSchema(),
+            new ServerMetrics(new MetricsRegistry()));
 
     final long start = System.currentTimeMillis();
     TimerService.timer.scheduleAtFixedRate(new TimerTask() {
@@ -262,9 +250,9 @@ public class RealtimeTableDataManagerTest {
   }
 
   private static InstanceZKMetadata getInstanceZKMetadata() {
-    ZNRecord record = new ZNRecord("Server_lva1-app0120.corp.linkedin.com_8001");
-    Map<String, String> groupIdMap = new HashMap<String, String>();
-    Map<String, String> partitionMap = new HashMap<String, String>();
+    ZNRecord record = new ZNRecord("Server_localhost_1234");
+    Map<String, String> groupIdMap = new HashMap<>();
+    Map<String, String> partitionMap = new HashMap<>();
 
     groupIdMap.put("mirror", "groupId_testTable_" + String.valueOf(System.currentTimeMillis()));
     partitionMap.put("testTable_R", "0");

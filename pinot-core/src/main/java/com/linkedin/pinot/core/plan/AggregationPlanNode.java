@@ -17,68 +17,51 @@ package com.linkedin.pinot.core.plan;
 
 import com.linkedin.pinot.common.request.AggregationInfo;
 import com.linkedin.pinot.common.request.BrokerRequest;
+import com.linkedin.pinot.common.segment.SegmentMetadata;
 import com.linkedin.pinot.core.common.Operator;
 import com.linkedin.pinot.core.indexsegment.IndexSegment;
-import com.linkedin.pinot.core.operator.MProjectionOperator;
-import com.linkedin.pinot.core.operator.aggregation.AggregationOperator;
-import com.linkedin.pinot.core.query.aggregation.AggregationFunctionUtils;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.HashSet;
+import com.linkedin.pinot.core.operator.query.AggregationOperator;
+import com.linkedin.pinot.core.operator.transform.TransformExpressionOperator;
+import com.linkedin.pinot.core.query.aggregation.function.AggregationFunctionUtils;
 import java.util.List;
-import java.util.Set;
+import javax.annotation.Nonnull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 
+/**
+ * The <code>AggregationPlanNode</code> class provides the execution plan for aggregation only query on a single
+ * segment.
+ */
 public class AggregationPlanNode implements PlanNode {
-  private static final Logger LOGGER = LoggerFactory.getLogger("QueryPlanLog");
+  private static final Logger LOGGER = LoggerFactory.getLogger(AggregationPlanNode.class);
 
   private final IndexSegment _indexSegment;
-  private final BrokerRequest _brokerRequest;
-  private final List<AggregationFunctionPlanNode> _aggregationFunctionPlanNodes =
-      new ArrayList<AggregationFunctionPlanNode>();
-  private final ProjectionPlanNode _projectionPlanNode;
+  private final List<AggregationInfo> _aggregationInfos;
+  private final TransformPlanNode _transformPlanNode;
 
-  public AggregationPlanNode(IndexSegment indexSegment, BrokerRequest query) {
+  public AggregationPlanNode(@Nonnull IndexSegment indexSegment, @Nonnull BrokerRequest brokerRequest) {
     _indexSegment = indexSegment;
-    _brokerRequest = query;
-    _projectionPlanNode = new ProjectionPlanNode(_indexSegment, getAggregationRelatedColumns(),
-        new DocIdSetPlanNode(_indexSegment, _brokerRequest));
-    for (int i = 0; i < _brokerRequest.getAggregationsInfo().size(); ++i) {
-      AggregationInfo aggregationInfo = _brokerRequest.getAggregationsInfo().get(i);
-      AggregationFunctionUtils.ensureAggregationColumnsAreSingleValued(aggregationInfo, _indexSegment);
-      boolean hasDictionary = AggregationFunctionUtils.isAggregationFunctionWithDictionary(aggregationInfo, _indexSegment);
-      _aggregationFunctionPlanNodes.add(new AggregationFunctionPlanNode(aggregationInfo, _projectionPlanNode, hasDictionary));
-    }
-  }
-
-  private String[] getAggregationRelatedColumns() {
-    Set<String> aggregationRelatedColumns = new HashSet<String>();
-    for (AggregationInfo aggregationInfo : _brokerRequest.getAggregationsInfo()) {
-      if (!aggregationInfo.getAggregationType().equalsIgnoreCase("count")) {
-        String columns = aggregationInfo.getAggregationParams().get("column").trim();
-        aggregationRelatedColumns.addAll(Arrays.asList(columns.split(",")));
-      }
-    }
-    return aggregationRelatedColumns.toArray(new String[0]);
+    _aggregationInfos = brokerRequest.getAggregationsInfo();
+    _transformPlanNode = new TransformPlanNode(_indexSegment, brokerRequest);
   }
 
   @Override
   public Operator run() {
-    MProjectionOperator projectionOperator = (MProjectionOperator) _projectionPlanNode.run();
-    return new AggregationOperator(_indexSegment, _brokerRequest.getAggregationsInfo(), projectionOperator);
+    TransformExpressionOperator transformOperator = (TransformExpressionOperator) _transformPlanNode.run();
+    SegmentMetadata segmentMetadata = _indexSegment.getSegmentMetadata();
+    return new AggregationOperator(
+        AggregationFunctionUtils.getAggregationFunctionContexts(_aggregationInfos, segmentMetadata), transformOperator,
+        segmentMetadata.getTotalRawDocs());
   }
 
   @Override
   public void showTree(String prefix) {
-    LOGGER.debug(prefix + "Inner-Segment Plan Node :");
-    LOGGER.debug(prefix + "Operator: MAggregationOperator");
-    LOGGER.debug(prefix + "Argument 0: Projection - ");
-    _projectionPlanNode.showTree(prefix + "    ");
-    for (int i = 0; i < _brokerRequest.getAggregationsInfo().size(); ++i) {
-      LOGGER.debug(prefix + "Argument " + (i + 1) + ": Aggregation  - ");
-      _aggregationFunctionPlanNodes.get(i).showTree(prefix + "    ");
-    }
+    LOGGER.debug(prefix + "Segment Level Inner-Segment Plan Node:");
+    LOGGER.debug(prefix + "Operator: AggregationOperator");
+    LOGGER.debug(prefix + "Argument 0: IndexSegment - " + _indexSegment.getSegmentName());
+    LOGGER.debug(prefix + "Argument 1: Aggregations - " + _aggregationInfos);
+    LOGGER.debug(prefix + "Argument 2: Transform -");
+    _transformPlanNode.showTree(prefix + "    ");
   }
 }

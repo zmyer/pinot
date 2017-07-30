@@ -27,6 +27,7 @@ optionalClause:
   | orderByClause   # OrderBy
   | topClause       # Top
   | limitClause     # Limit
+  | optionListClause   # Options
   ;
 
 outputColumns:
@@ -72,6 +73,7 @@ predicate:
   | inClause                              # InPredicate
   | betweenClause                         # BetweenPredicate
   | isClause                              # IsPredicate
+  | regexpLikeClause                      # RegexpLikePredicate
   ;
 
 inClause:
@@ -82,10 +84,13 @@ isClause:
 
 comparisonClause:
   expression comparisonOperator expression;
-comparisonOperator: '<' | '>' | '<>' | '<=' | '>=' | '=';
+comparisonOperator: '<' | '>' | '<>' | '<=' | '>=' | '=' | '!=';
 
 betweenClause:
   expression BETWEEN expression AND expression;
+
+regexpLikeClause:
+  REGEXP_LIKE '(' expression ',' literal ')';
 
 booleanOperator: OR | AND;
 
@@ -103,6 +108,9 @@ topClause: TOP INTEGER_LITERAL;
 
 limitClause: LIMIT INTEGER_LITERAL (',' INTEGER_LITERAL)?;
 
+optionListClause: OPTION '(' option (',' option)* ')';
+option: expression ('=' expression)?;
+
 // Keywords
 AND: A N D;
 AS: A S;
@@ -119,10 +127,12 @@ NULL: N U L L;
 LIMIT: L I M I T;
 NOT : N O T;
 OR: O R;
+REGEXP_LIKE: R E G E X P '_' L I K E;
 ORDER: O R D E R;
 SELECT: S E L E C T;
 TOP: T O P;
 WHERE: W H E R E;
+OPTION: O P T I O N;
 
 
 WHITESPACE: [ \t\n]+ -> skip;

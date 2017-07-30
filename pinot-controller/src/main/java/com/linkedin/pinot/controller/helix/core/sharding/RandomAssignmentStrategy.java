@@ -15,12 +15,15 @@
  */
 package com.linkedin.pinot.controller.helix.core.sharding;
 
+import com.linkedin.pinot.common.utils.helix.HelixHelper;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Random;
 
 import org.apache.helix.HelixAdmin;
+import org.apache.helix.ZNRecord;
+import org.apache.helix.store.zk.ZkHelixPropertyStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -38,8 +41,8 @@ public class RandomAssignmentStrategy implements SegmentAssignmentStrategy {
   private static final Logger LOGGER = LoggerFactory.getLogger(RandomAssignmentStrategy.class);
 
   @Override
-  public List<String> getAssignedInstances(HelixAdmin helixAdmin, String helixClusterName,
-      SegmentMetadata segmentMetadata, int numReplicas, String tenantName) {
+  public List<String> getAssignedInstances(HelixAdmin helixAdmin, ZkHelixPropertyStore<ZNRecord> propertyStore,
+      String helixClusterName, SegmentMetadata segmentMetadata, int numReplicas, String tenantName) {
     String serverTenantName = null;
     if ("realtime".equalsIgnoreCase(segmentMetadata.getIndexType())) {
       serverTenantName = ControllerTenantNameBuilder.getRealtimeTenantNameForTenant(tenantName);
@@ -48,7 +51,7 @@ public class RandomAssignmentStrategy implements SegmentAssignmentStrategy {
     }
     final Random random = new Random(System.currentTimeMillis());
 
-    List<String> allInstanceList = helixAdmin.getInstancesInClusterWithTag(helixClusterName, serverTenantName);
+    List<String> allInstanceList = HelixHelper.getEnabledInstancesWithTag(helixAdmin, helixClusterName, serverTenantName);
     List<String> selectedInstanceList = new ArrayList<String>();
     for (int i = 0; i < numReplicas; ++i) {
       final int idx = random.nextInt(allInstanceList.size());

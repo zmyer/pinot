@@ -1,5 +1,6 @@
 package com.linkedin.thirdeye.anomaly.task;
 
+import com.linkedin.thirdeye.anomaly.classification.ClassificationTaskInfo;
 import java.io.IOException;
 
 import org.slf4j.Logger;
@@ -12,6 +13,7 @@ import com.linkedin.thirdeye.anomaly.alert.AlertTaskInfo;
 import com.linkedin.thirdeye.anomaly.detection.DetectionTaskInfo;
 import com.linkedin.thirdeye.anomaly.monitor.MonitorTaskInfo;
 import com.linkedin.thirdeye.anomaly.task.TaskConstants.TaskType;
+import com.linkedin.thirdeye.completeness.checker.DataCompletenessTaskInfo;
 
 /**
  * This class returns deserializes the task info json and returns the TaskInfo,
@@ -22,8 +24,7 @@ public class TaskInfoFactory {
   private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
   private static final Logger LOG = LoggerFactory.getLogger(TaskInfoFactory.class);
 
-  public static TaskInfo getTaskInfoFromTaskType(TaskType taskType, String taskInfoString)
-      throws JsonParseException, JsonMappingException, IOException {
+  public static TaskInfo getTaskInfoFromTaskType(TaskType taskType, String taskInfoString) throws IOException {
     TaskInfo taskInfo = null;
     try {
       switch(taskType) {
@@ -37,10 +38,17 @@ public class TaskInfoFactory {
           taskInfo = OBJECT_MAPPER.readValue(taskInfoString, MonitorTaskInfo.class);
           break;
         case ALERT:
+        case ALERT2:
           taskInfo = OBJECT_MAPPER.readValue(taskInfoString, AlertTaskInfo.class);
           break;
+        case DATA_COMPLETENESS:
+          taskInfo = OBJECT_MAPPER.readValue(taskInfoString, DataCompletenessTaskInfo.class);
+          break;
+        case CLASSIFICATION:
+          taskInfo = OBJECT_MAPPER.readValue(taskInfoString, ClassificationTaskInfo.class);
+          break;
         default:
-          LOG.error("TaskType must be one of ANOMALY_DETECTION, MONITOR, ALERT");
+          LOG.error("TaskType must be one of ANOMALY_DETECTION, MONITOR, ALERT, ALERT2, DATA_COMPLETENESS, CLASSIFICATION");
           break;
       }
     } catch (Exception e) {

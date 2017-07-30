@@ -1,15 +1,19 @@
 package com.linkedin.thirdeye.datalayer.bao;
 
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 import org.joda.time.DateTime;
 import org.testng.Assert;
+import org.testng.annotations.AfterClass;
+import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.linkedin.thirdeye.anomaly.monitor.MonitorConstants.MonitorType;
-import com.linkedin.thirdeye.anomaly.monitor.MonitorTaskInfo;
+import com.google.common.collect.Lists;
+import com.linkedin.thirdeye.anomaly.detection.DetectionTaskInfo;
 import com.linkedin.thirdeye.anomaly.task.TaskConstants.TaskStatus;
 import com.linkedin.thirdeye.anomaly.task.TaskConstants.TaskType;
 import com.linkedin.thirdeye.datalayer.dto.JobDTO;
@@ -20,6 +24,21 @@ public class TestAnomalyTaskManager extends AbstractManagerTestBase {
   private Long anomalyTaskId1;
   private Long anomalyTaskId2;
   private Long anomalyJobId;
+  private static final Set<TaskStatus> allowedOldTaskStatus = new HashSet<>();
+  static  {
+    allowedOldTaskStatus.add(TaskStatus.FAILED);
+    allowedOldTaskStatus.add(TaskStatus.WAITING);
+  }
+
+  @BeforeClass
+  void beforeClass() {
+    super.init();
+  }
+
+  @AfterClass(alwaysRun = true)
+  void afterClass() {
+    super.cleanup();
+  }
 
   @Test
   public void testCreate() throws JsonProcessingException {
@@ -32,28 +51,30 @@ public class TestAnomalyTaskManager extends AbstractManagerTestBase {
   }
 
   @Test(dependsOnMethods = {"testCreate"})
-  public void testFindAll() {
+  public void testFindAll() throws Exception {
     List<TaskDTO> anomalyTasks = taskDAO.findAll();
     Assert.assertEquals(anomalyTasks.size(), 2);
   }
 
   @Test(dependsOnMethods = { "testFindAll" })
   public void testUpdateStatusAndWorkerId() {
-    TaskStatus oldStatus = TaskStatus.WAITING;
     TaskStatus newStatus = TaskStatus.RUNNING;
     Long workerId = 1L;
-
-    boolean status  = taskDAO.updateStatusAndWorkerId(workerId, anomalyTaskId1, oldStatus, newStatus);
+    TaskDTO taskDTO = taskDAO.findById(anomalyTaskId1);
+    boolean status =
+        taskDAO.updateStatusAndWorkerId(workerId, anomalyTaskId1, allowedOldTaskStatus, newStatus, taskDTO.getVersion());
     TaskDTO anomalyTask = taskDAO.findById(anomalyTaskId1);
     Assert.assertTrue(status);
     Assert.assertEquals(anomalyTask.getStatus(), newStatus);
     Assert.assertEquals(anomalyTask.getWorkerId(), workerId);
+    Assert.assertEquals(anomalyTask.getVersion(), taskDTO.getVersion() + 1);
+
   }
 
   @Test(dependsOnMethods = {"testUpdateStatusAndWorkerId"})
   public void testFindByStatusOrderByCreationTimeAsc() {
     List<TaskDTO> anomalyTasks =
-        taskDAO.findByStatusOrderByCreateTimeAsc(TaskStatus.WAITING, Integer.MAX_VALUE);
+        taskDAO.findByStatusOrderByCreateTime(TaskStatus.WAITING, Integer.MAX_VALUE, true);
     Assert.assertEquals(anomalyTasks.size(), 1);
   }
 
@@ -86,18 +107,18 @@ public class TestAnomalyTaskManager extends AbstractManagerTestBase {
     TaskDTO jobSpec = new TaskDTO();
     jobSpec.setJobName("Test_Anomaly_Task");
     jobSpec.setStatus(TaskStatus.WAITING);
-    jobSpec.setTaskType(TaskType.MONITOR);
+    jobSpec.setTaskType(TaskType.ANOMALY_DETECTION);
     jobSpec.setStartTime(new DateTime().minusDays(20).getMillis());
     jobSpec.setEndTime(new DateTime().minusDays(10).getMillis());
-    jobSpec.setTaskInfo(new ObjectMapper().writeValueAsString(getTestMonitorTaskInfo()));
-    jobSpec.setJob(anomalyJobSpec);
+    jobSpec.setTaskInfo(new ObjectMapper().writeValueAsString(getTestDetectionTaskInfo()));
+    jobSpec.setJobId(anomalyJobSpec.getId());
     return jobSpec;
   }
 
-  static MonitorTaskInfo getTestMonitorTaskInfo() {
-    MonitorTaskInfo taskInfo = new MonitorTaskInfo();
-    taskInfo.setJobExecutionId(1L);
-    taskInfo.setMonitorType(MonitorType.UPDATE);
+  static DetectionTaskInfo getTestDetectionTaskInfo() {
+    DetectionTaskInfo taskInfo = new DetectionTaskInfo();
+    taskInfo.setWindowStartTime(Lists.newArrayList(new DateTime(), new DateTime().minusHours(1)));
+    taskInfo.setWindowEndTime(Lists.newArrayList(new DateTime(), new DateTime().minusHours(1)));
     return taskInfo;
   }
 }

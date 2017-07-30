@@ -15,6 +15,8 @@
  */
 package com.linkedin.pinot.pql.parsers;
 
+import com.linkedin.pinot.common.request.AggregationInfo;
+import com.linkedin.pinot.common.request.BrokerRequest;
 import com.linkedin.pinot.pql.parsers.pql2.ast.AstNode;
 import com.linkedin.pinot.pql.parsers.pql2.ast.BetweenPredicateAstNode;
 import com.linkedin.pinot.pql.parsers.pql2.ast.BinaryMathOpAstNode;
@@ -30,12 +32,15 @@ import com.linkedin.pinot.pql.parsers.pql2.ast.InPredicateAstNode;
 import com.linkedin.pinot.pql.parsers.pql2.ast.IntegerLiteralAstNode;
 import com.linkedin.pinot.pql.parsers.pql2.ast.IsPredicateAstNode;
 import com.linkedin.pinot.pql.parsers.pql2.ast.LimitAstNode;
+import com.linkedin.pinot.pql.parsers.pql2.ast.OptionAstNode;
+import com.linkedin.pinot.pql.parsers.pql2.ast.OptionsAstNode;
 import com.linkedin.pinot.pql.parsers.pql2.ast.OrderByAstNode;
 import com.linkedin.pinot.pql.parsers.pql2.ast.OrderByExpressionAstNode;
 import com.linkedin.pinot.pql.parsers.pql2.ast.OutputColumnAstNode;
 import com.linkedin.pinot.pql.parsers.pql2.ast.OutputColumnListAstNode;
 import com.linkedin.pinot.pql.parsers.pql2.ast.PredicateListAstNode;
 import com.linkedin.pinot.pql.parsers.pql2.ast.PredicateParenthesisGroupAstNode;
+import com.linkedin.pinot.pql.parsers.pql2.ast.RegexpLikePredicateAstNode;
 import com.linkedin.pinot.pql.parsers.pql2.ast.SelectAstNode;
 import com.linkedin.pinot.pql.parsers.pql2.ast.StarColumnListAstNode;
 import com.linkedin.pinot.pql.parsers.pql2.ast.StarExpressionAstNode;
@@ -53,6 +58,11 @@ import org.antlr.v4.runtime.misc.NotNull;
 public class Pql2AstListener extends PQL2BaseListener {
   Stack<AstNode> _nodeStack = new Stack<>();
   AstNode _rootNode = null;
+  private String _expression;
+
+  public Pql2AstListener(String expression) {
+    _expression = expression; // Original expression being parsed.
+  }
 
   private void pushNode(AstNode node) {
     if (_rootNode == null) {
@@ -196,7 +206,8 @@ public class Pql2AstListener extends PQL2BaseListener {
 
   @Override
   public void enterFunctionCall(@NotNull PQL2Parser.FunctionCallContext ctx) {
-    pushNode(new FunctionCallAstNode(ctx.getChild(0).getText()));
+    String expression = _expression.substring(ctx.getStart().getStartIndex(), ctx.getStop().getStopIndex() + 1);
+    pushNode(new FunctionCallAstNode(ctx.getChild(0).getText(), expression));
   }
 
   @Override
@@ -265,6 +276,16 @@ public class Pql2AstListener extends PQL2BaseListener {
 
   @Override
   public void exitInPredicate(@NotNull PQL2Parser.InPredicateContext ctx) {
+    popNode();
+  }
+
+  @Override
+  public void enterRegexpLikePredicate(@NotNull PQL2Parser.RegexpLikePredicateContext ctx) {
+    pushNode(new RegexpLikePredicateAstNode());
+  }
+
+  @Override
+  public void exitRegexpLikePredicate(@NotNull PQL2Parser.RegexpLikePredicateContext ctx) {
     popNode();
   }
 
@@ -377,6 +398,26 @@ public class Pql2AstListener extends PQL2BaseListener {
 
   @Override
   public void exitBooleanOperator(@NotNull PQL2Parser.BooleanOperatorContext ctx) {
+    popNode();
+  }
+
+  @Override
+  public void enterOption(PQL2Parser.OptionContext ctx) {
+    pushNode(new OptionAstNode());
+  }
+
+  @Override
+  public void exitOption(PQL2Parser.OptionContext ctx) {
+    popNode();
+  }
+
+  @Override
+  public void enterOptions(PQL2Parser.OptionsContext ctx) {
+    pushNode(new OptionsAstNode());
+  }
+
+  @Override
+  public void exitOptions(PQL2Parser.OptionsContext ctx) {
     popNode();
   }
 }

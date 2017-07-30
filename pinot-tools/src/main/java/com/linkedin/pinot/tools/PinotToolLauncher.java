@@ -15,8 +15,9 @@
  */
 package com.linkedin.pinot.tools;
 
+import com.linkedin.pinot.tools.perf.PerfBenchmarkRunner;
+import com.linkedin.pinot.tools.perf.QueryRunner;
 import java.lang.reflect.Field;
-
 import org.kohsuke.args4j.Argument;
 import org.kohsuke.args4j.CmdLineException;
 import org.kohsuke.args4j.CmdLineParser;
@@ -35,6 +36,10 @@ public class PinotToolLauncher {
   @Argument(handler = SubCommandHandler.class, metaVar = "<subCommand>")
   @SubCommands({
       @SubCommand(name = "UpdateSegmentState", impl = UpdateSegmentState.class),
+      @SubCommand(name = "AutoAddInvertedIndex", impl = AutoAddInvertedIndexTool.class),
+      @SubCommand(name = "ValidateTableRetention", impl = ValidateTableRetention.class),
+      @SubCommand(name = "PerfBenchmarkRunner", impl = PerfBenchmarkRunner.class),
+      @SubCommand(name = "QueryRunner", impl = QueryRunner.class)
   })
   Command _subCommand;
   // @formatter:on

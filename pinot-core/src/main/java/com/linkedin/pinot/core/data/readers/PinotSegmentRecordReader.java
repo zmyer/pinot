@@ -75,7 +75,7 @@ public class PinotSegmentRecordReader extends BaseRecordReader {
   private Map<String, Dictionary> pinotDictionaryBufferMap;
 
   private Map<String, DataType> columnDataTypeMap;
-  private Map<String, Object> multiValueArrayMap;
+  private Map<String, int[]> multiValueArrayMap;
 
   private Map<String, Boolean> isSingleValueMap;
   private Map<String, Boolean> isSortedMap;
@@ -119,7 +119,7 @@ public class PinotSegmentRecordReader extends BaseRecordReader {
       } else if (columnMetadataFor.isSingleValue() && columnMetadataFor.isSorted()) {
         PinotDataBuffer dataBuffer = reader.getIndexFor(column, ColumnIndexType.FORWARD_INDEX);
         FixedByteSingleValueMultiColReader indexReader = new FixedByteSingleValueMultiColReader(
-            dataBuffer, columnMetadataFor.getCardinality(), 2, new int[] {
+            dataBuffer, columnMetadataFor.getCardinality(), new int[] {
             4, 4
         });
         SortedForwardIndexReader fwdIndexReader = new SortedForwardIndexReader(indexReader, totalDocs);
@@ -231,44 +231,35 @@ public class PinotSegmentRecordReader extends BaseRecordReader {
 
   @Override
   public GenericRow next() {
-    Map<String, Object> fields = new HashMap<>();
+    return next(new GenericRow());
+  }
 
+  @Override
+  public GenericRow next(GenericRow row) {
     for (String column : columns) {
+      Dictionary dictionary = pinotDictionaryBufferMap.get(column);
 
-      if (isSingleValueMap.get(column)) { // Single value
-        Dictionary dictionary = null;
-        int dictionaryId;
-
+      if (isSingleValueMap.get(column)) {
+        // Single-value column.
         if (!isSortedMap.get(column)) {
-          SingleColumnSingleValueReader singleValueReader = singleValueReaderMap.get(column);
-          dictionary = pinotDictionaryBufferMap.get(column);
-          dictionaryId = singleValueReader.getInt(docNumber);
+          row.putField(column, dictionary.get(singleValueReaderMap.get(column).getInt(docNumber)));
         } else {
-          SortedForwardIndexReader svSortedReader = singleValueSortedReaderMap.get(column);
-          dictionary = pinotDictionaryBufferMap.get(column);
-          dictionaryId = svSortedReader.getInt(docNumber);
+          row.putField(column, dictionary.get(singleValueSortedReaderMap.get(column).getInt(docNumber)));
         }
-        if (dictionary == null) {
-          throw new IllegalStateException("Dictionary not found for " + column);
-        }
-        fields.put(column, dictionary.get(dictionaryId));
+      } else {
+        // Multi-value column.
+        int[] dictionaryIdArray = multiValueArrayMap.get(column);
+        int numValues = multiValueReaderMap.get(column).getIntArray(docNumber, dictionaryIdArray);
 
-      } else { // Multi value
-        SingleColumnMultiValueReader mvReader = multiValueReaderMap.get(column);
-        int[] dictionaryIdArray = (int[]) multiValueArrayMap.get(column);
-        mvReader.getIntArray(docNumber, dictionaryIdArray);
-        Dictionary dictionary = pinotDictionaryBufferMap.get(column);
-
-        Object[] objectArray = new Object[dictionaryIdArray.length];
-        for (int i = 0; i < dictionaryIdArray.length; i ++) {
+        Object[] objectArray = new Object[numValues];
+        for (int i = 0; i < numValues; i++) {
           objectArray[i] = dictionary.get(dictionaryIdArray[i]);
         }
-        fields.put(column, objectArray);
+        row.putField(column, objectArray);
       }
     }
-    GenericRow row = new GenericRow();
-    row.init(fields);
-    docNumber ++;
+
+    docNumber++;
 
     return row;
   }

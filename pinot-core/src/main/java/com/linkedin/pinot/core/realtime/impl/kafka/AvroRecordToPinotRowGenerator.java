@@ -15,95 +15,77 @@
  */
 package com.linkedin.pinot.core.realtime.impl.kafka;
 
-import java.util.HashMap;
-import java.util.Map;
-
-import org.apache.avro.generic.GenericData;
-import org.apache.avro.generic.GenericData.Array;
-import org.apache.avro.generic.GenericRecord;
-import org.apache.avro.util.Utf8;
-
+import com.google.common.base.Preconditions;
 import com.linkedin.pinot.common.data.FieldSpec;
 import com.linkedin.pinot.common.data.FieldSpec.DataType;
 import com.linkedin.pinot.common.data.Schema;
+import com.linkedin.pinot.common.data.TimeFieldSpec;
 import com.linkedin.pinot.core.data.GenericRow;
 import com.linkedin.pinot.core.data.readers.AvroRecordReader;
+import javax.annotation.Nonnull;
+import org.apache.avro.generic.GenericData;
+import org.apache.avro.generic.GenericData.Array;
 
 
 public class AvroRecordToPinotRowGenerator {
-  private final Schema indexingSchema;
+  private final Schema _schema;
+  private final FieldSpec _incomingTimeFieldSpec;
 
-  public AvroRecordToPinotRowGenerator(Schema indexingSchema) {
-    this.indexingSchema = indexingSchema;
+  public AvroRecordToPinotRowGenerator(@Nonnull Schema schema) {
+    _schema = schema;
+
+    // For time field, we use the incoming time field spec
+    TimeFieldSpec timeFieldSpec = schema.getTimeFieldSpec();
+    Preconditions.checkNotNull(timeFieldSpec);
+    _incomingTimeFieldSpec = new TimeFieldSpec(timeFieldSpec.getIncomingGranularitySpec());
   }
 
-  public GenericRow transform(GenericData.Record record, org.apache.avro.Schema schema) {
-    Map<String, Object> rowEntries = new HashMap<String, Object>();
-    for (String column : indexingSchema.getColumnNames()) {
-      Object entry = record.get(column);
-      FieldSpec fieldSpec = indexingSchema.getFieldSpecFor(column);
+  @Nonnull
+  public GenericRow transform(@Nonnull GenericData.Record avroRecord, @Nonnull GenericRow destination) {
+    FieldSpec incomingFieldSpec;
+    for (FieldSpec fieldSpec : _schema.getAllFieldSpecs()) {
+      switch (fieldSpec.getFieldType()) {
+        case TIME:
+          incomingFieldSpec = _incomingTimeFieldSpec;
+          break;
+        default:
+          incomingFieldSpec = fieldSpec;
+          break;
+      }
+      String columnName = incomingFieldSpec.getName();
 
+      Object entry = avroRecord.get(columnName);
       if (entry != null) {
+        // Entry is not null
         if (entry instanceof Array) {
-          entry = AvroRecordReader.transformAvroArrayToObjectArray((Array) entry, fieldSpec);
-          if (fieldSpec.getDataType() == DataType.STRING || fieldSpec.getDataType() == DataType.STRING_ARRAY) {
-            for (int i = 0; i < ((Object[]) entry).length; ++i) {
-              if (((Object[]) entry)[i] != null) {
-                ((Object[]) entry)[i] = ((Object[]) entry)[i].toString();
+          Object[] entryArray = AvroRecordReader.transformAvroArrayToObjectArray((Array) entry, incomingFieldSpec);
+          if (incomingFieldSpec.getDataType() == DataType.STRING) {
+            int length = entryArray.length;
+            for (int i = 0; i < length; i++) {
+              if (entryArray[i] != null) {
+                entryArray[i] = entryArray[i].toString();
               }
             }
           }
+          entry = entryArray;
         } else {
-          if (entry instanceof Utf8) {
-            entry = ((Utf8) entry).toString();
-          }
-          if (fieldSpec.getDataType() == DataType.STRING) {
+          if (incomingFieldSpec.getDataType() == DataType.STRING) {
             entry = entry.toString();
           }
         }
       } else {
-        // entry was null.
-        if (fieldSpec.isSingleValueField()) {
-          entry = AvroRecordReader.getDefaultNullValue(fieldSpec);
+        // Entry is null
+        if (incomingFieldSpec.isSingleValueField()) {
+          // Single-value field
+          entry = AvroRecordReader.getDefaultNullValue(incomingFieldSpec);
         } else {
-          // A multi-value field, and null. Any of the instanceof checks above will not match, so we need to repeat some
-          // of the logic above here.
-          entry = AvroRecordReader.transformAvroArrayToObjectArray((Array) entry, fieldSpec);
-          if (fieldSpec.getDataType() == DataType.STRING || fieldSpec.getDataType() == DataType.STRING_ARRAY) {
-            for (int i = 0; i < ((Object[]) entry).length; ++i) {
-              if (((Object[]) entry)[i] != null) {
-                ((Object[]) entry)[i] = ((Object[]) entry)[i].toString();
-              }
-            }
-          }
+          // Multi-value field
+          entry = new Object[]{AvroRecordReader.getDefaultNullValue(incomingFieldSpec)};
         }
       }
-      rowEntries.put(column, entry);
+      destination.putField(columnName, entry);
     }
 
-    GenericRow row = new GenericRow();
-    row.init(rowEntries);
-    return row;
-  }
-
-  public GenericRow transform(GenericRecord avroRecord) {
-    Map<String, Object> rowEntries = new HashMap<String, Object>();
-    for (String column : indexingSchema.getColumnNames()) {
-      Object entry = avroRecord.get(column);
-      if (entry instanceof Utf8) {
-        entry = ((Utf8) entry).toString();
-      }
-      if (entry instanceof Array) {
-        entry = AvroRecordReader.transformAvroArrayToObjectArray((Array) entry, indexingSchema.getFieldSpecFor(column));
-      }
-      if (entry == null && indexingSchema.getFieldSpecFor(column).isSingleValueField()) {
-        entry = AvroRecordReader.getDefaultNullValue(indexingSchema.getFieldSpecFor(column));
-      }
-      rowEntries.put(column, entry);
-    }
-
-    GenericRow row = new GenericRow();
-    row.init(rowEntries);
-    return row;
+    return destination;
   }
 }

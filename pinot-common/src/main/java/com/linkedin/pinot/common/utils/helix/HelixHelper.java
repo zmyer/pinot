@@ -15,6 +15,12 @@
  */
 package com.linkedin.pinot.common.utils.helix;
 
+import com.google.common.base.Function;
+import com.linkedin.pinot.common.utils.CommonConstants;
+import com.linkedin.pinot.common.utils.CommonConstants.Helix.DataSource.SegmentAssignmentStrategyType;
+import com.linkedin.pinot.common.utils.EqualityUtils;
+import com.linkedin.pinot.common.utils.retry.RetryPolicies;
+import com.linkedin.pinot.common.utils.retry.RetryPolicy;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -22,7 +28,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Callable;
-
+import javax.annotation.Nullable;
 import org.apache.helix.AccessOption;
 import org.apache.helix.BaseDataAccessor;
 import org.apache.helix.HelixAdmin;
@@ -31,20 +37,15 @@ import org.apache.helix.HelixManager;
 import org.apache.helix.PropertyKey;
 import org.apache.helix.PropertyKey.Builder;
 import org.apache.helix.ZNRecord;
+import org.apache.helix.manager.zk.ZNRecordSerializer;
 import org.apache.helix.model.ExternalView;
 import org.apache.helix.model.HelixConfigScope;
 import org.apache.helix.model.HelixConfigScope.ConfigScopeProperty;
 import org.apache.helix.model.IdealState;
+import org.apache.helix.model.InstanceConfig;
 import org.apache.helix.model.builder.HelixConfigScopeBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import com.google.common.base.Function;
-import com.linkedin.pinot.common.utils.CommonConstants;
-import com.linkedin.pinot.common.utils.CommonConstants.Helix.DataSource.SegmentAssignmentStrategyType;
-import com.linkedin.pinot.common.utils.EqualityUtils;
-import com.linkedin.pinot.common.utils.retry.RetryPolicies;
-import com.linkedin.pinot.common.utils.retry.RetryPolicy;
 
 
 public class HelixHelper {
@@ -81,7 +82,9 @@ public class HelixHelper {
         String path = key.getPath();
         // Make a copy of the the idealState above to pass it to the updater, instead of querying again,
         // as the state my change between the queries.
-        IdealState idealStateCopy = new IdealState(idealState.getRecord());
+        ZNRecordSerializer znRecordSerializer = new ZNRecordSerializer();
+        IdealState idealStateCopy = new IdealState(
+            (ZNRecord) znRecordSerializer.deserialize(znRecordSerializer.serialize(idealState.getRecord())));
         IdealState updatedIdealState;
 
         try {
@@ -318,17 +321,37 @@ public class HelixHelper {
     Function<IdealState, IdealState> updater = new Function<IdealState, IdealState>() {
       @Override
       public IdealState apply(IdealState idealState) {
-        final Set<String> currentInstanceSet = idealState.getInstanceSet(segmentName);
-
-        if (!currentInstanceSet.isEmpty() && idealState.getPartitionSet().contains(segmentName)) {
-          idealState.getPartitionSet().remove(segmentName);
+        if (idealState == null) {
           return idealState;
-        } else {
-          return null;
         }
+        // partitionSet is never null but let's be defensive anyway
+        Set<String> partitionSet = idealState.getPartitionSet();
+        if (partitionSet != null) {
+          partitionSet.remove(segmentName);
+        }
+        return idealState;
       }
     };
 
+    updateIdealState(helixManager, tableName, updater, DEFAULT_RETRY_POLICY);
+  }
+
+  public static void removeSegmentsFromIdealState(HelixManager helixManager, String tableName, final List<String> segments) {
+    Function<IdealState, IdealState> updater = new Function<IdealState, IdealState>() {
+      @Nullable
+      @Override
+      public IdealState apply(@Nullable IdealState idealState) {
+        if (idealState == null) {
+          return idealState;
+        }
+        // partitionSet is never null but let's be defensive anyway
+        Set<String> partitionSet = idealState.getPartitionSet();
+        if (partitionSet != null) {
+          partitionSet.removeAll(segments);
+        }
+        return idealState;
+      }
+    };
     updateIdealState(helixManager, tableName, updater, DEFAULT_RETRY_POLICY);
   }
 
@@ -350,7 +373,7 @@ public class HelixHelper {
         try {
           targetInstances = getInstancesForSegment.call();
         } catch (Exception e) {
-          LOGGER.error("Unable to get new instances for uploading segment {}, table {}", segmentName, tableName);
+          LOGGER.error("Unable to get new instances for uploading segment {}, table {}", segmentName, tableName, e);
           return null;
         }
 
@@ -368,5 +391,21 @@ public class HelixHelper {
     };
 
     updateIdealState(helixManager, tableName, updater, DEFAULT_RETRY_POLICY);
+  }
+
+  public static List<String> getEnabledInstancesWithTag(HelixAdmin helixAdmin, String helixClusterName, String instanceTag) {
+    List<String> instances = helixAdmin.getInstancesInCluster(helixClusterName);
+    List<String> enabledInstances = new ArrayList<>();
+    for (String instance : instances) {
+      InstanceConfig instanceConfig = helixAdmin.getInstanceConfig(helixClusterName, instance);
+      if (instanceConfig == null) {
+        LOGGER.warn("InstanceConfig not found for instance: {}", instance);
+        continue;
+      }
+      if (instanceConfig.containsTag(instanceTag) && instanceConfig.getInstanceEnabled()) {
+        enabledInstances.add(instance);
+      }
+    }
+    return enabledInstances;
   }
 }

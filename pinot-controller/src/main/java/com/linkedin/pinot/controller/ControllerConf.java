@@ -15,6 +15,8 @@
  */
 package com.linkedin.pinot.controller;
 
+import com.linkedin.pinot.common.protocols.SegmentCompletionProtocol;
+import com.linkedin.pinot.common.utils.StringUtil;
 import java.io.File;
 import java.io.UnsupportedEncodingException;
 import java.net.URLEncoder;
@@ -22,8 +24,6 @@ import java.util.ArrayList;
 import java.util.List;
 import org.apache.commons.configuration.ConfigurationException;
 import org.apache.commons.configuration.PropertiesConfiguration;
-import com.linkedin.pinot.common.protocols.SegmentCompletionProtocol;
-import com.linkedin.pinot.common.utils.StringUtil;
 
 public class ControllerConf extends PropertiesConfiguration {
   private static final String CONTROLLER_VIP_HOST = "controller.vip.host";
@@ -41,14 +41,24 @@ public class ControllerConf extends PropertiesConfiguration {
   private static final String RETENTION_MANAGER_FREQUENCY_IN_SECONDS = "controller.retention.frequencyInSeconds";
   private static final String VALIDATION_MANAGER_FREQUENCY_IN_SECONDS = "controller.validation.frequencyInSeconds";
   private static final String STATUS_CHECKER_FREQUENCY_IN_SECONDS = "controller.statuschecker.frequencyInSeconds";
+  private static final String STATUS_CHECKER_WAIT_FOR_PUSH_TIME_IN_SECONDS = "controller.statuschecker.waitForPushTimeInSeconds";
   private static final String SERVER_ADMIN_REQUEST_TIMEOUT_SECONDS = "server.request.timeoutSeconds";
   private static final String SEGMENT_COMMIT_TIMEOUT_SECONDS = "controller.realtime.segment.commit.timeoutSeconds";
+  private static final String DELETED_SEGMENTS_RETENTION_IN_DAYS = "controller.deleted.segments.retentionInDays";
+  private static final String TASK_MANAGER_FREQUENCY_IN_SECONDS = "controller.task.frequencyInSeconds";
+  private static final String TABLE_MIN_REPLICAS = "table.minReplicas";
+  private static final String ENABLE_SPLIT_COMMIT = "controller.enable.split.commit";
 
   private static final int DEFAULT_RETENTION_CONTROLLER_FREQUENCY_IN_SECONDS = 6 * 60 * 60; // 6 Hours.
   private static final int DEFAULT_VALIDATION_CONTROLLER_FREQUENCY_IN_SECONDS = 60 * 60; // 1 Hour.
   private static final int DEFAULT_STATUS_CONTROLLER_FREQUENCY_IN_SECONDS = 5 * 60; // 5 minutes
+  private static final int DEFAULT_STATUS_CONTROLLER_WAIT_FOR_PUSH_TIME_IN_SECONDS = 10 * 60; // 10 minutes
   private static final long DEFAULT_EXTERNAL_VIEW_ONLINE_TO_OFFLINE_TIMEOUT_MILLIS = 120_000L; // 2 minutes
   private static final int DEFAULT_SERVER_ADMIN_REQUEST_TIMEOUT_SECONDS = 30;
+  private static final int DEFAULT_DELETED_SEGMENTS_RETENTION_IN_DAYS = 7;
+  private static final int DEFAULT_TASK_MANAGER_FREQUENCY_IN_SECONDS = -1; // Disabled
+  private static final int DEFAULT_TABLE_MIN_REPLICAS = 1;
+  private static final boolean DEFAULT_ENABLE_SPLIT_COMMIT = false;
 
   public ControllerConf(File file) throws ConfigurationException {
     super(file);
@@ -65,6 +75,10 @@ public class ControllerConf extends PropertiesConfiguration {
       // Shouldn't happen
       throw new AssertionError("UTF-8 encoding should always be supported", e);
     }
+  }
+
+  public void setSplitCommit(boolean isSplitCommit) {
+    setProperty(ENABLE_SPLIT_COMMIT, isSplitCommit);
   }
 
   public void setQueryConsolePath(String path) {
@@ -106,8 +120,8 @@ public class ControllerConf extends PropertiesConfiguration {
     setProperty(DATA_DIR, dataDir);
   }
 
-  public void setRealtimeSegmentCommitTimeoutSeconds(int timoeutSec) {
-    setProperty(SEGMENT_COMMIT_TIMEOUT_SECONDS, Integer.toString(timoeutSec));
+  public void setRealtimeSegmentCommitTimeoutSeconds(int timeoutSec) {
+    setProperty(SEGMENT_COMMIT_TIMEOUT_SECONDS, Integer.toString(timeoutSec));
   }
 
   public void setUpdateSegmentStateModel(String updateStateModel) {
@@ -138,7 +152,7 @@ public class ControllerConf extends PropertiesConfiguration {
     if (containsKey(SEGMENT_COMMIT_TIMEOUT_SECONDS)) {
       return Integer.parseInt((String)getProperty(SEGMENT_COMMIT_TIMEOUT_SECONDS));
     }
-    return SegmentCompletionProtocol.getDefaultMaxSegmentCommitTimeSec();
+    return SegmentCompletionProtocol.getDefaultMaxSegmentCommitTimeSeconds();
   }
 
   public boolean isUpdateSegmentStateModel() {
@@ -173,6 +187,10 @@ public class ControllerConf extends PropertiesConfiguration {
     return super.toString();
   }
 
+  public boolean getAcceptSplitCommit() {
+    return getBoolean(ENABLE_SPLIT_COMMIT, DEFAULT_ENABLE_SPLIT_COMMIT);
+  }
+
   public String getControllerVipHost() {
     if (containsKey(CONTROLLER_VIP_HOST) && ((String) getProperty(CONTROLLER_VIP_HOST)).length() > 0) {
       return (String) getProperty(CONTROLLER_VIP_HOST);
@@ -186,7 +204,7 @@ public class ControllerConf extends PropertiesConfiguration {
     }
     return (String) getProperty(CONTROLLER_PORT);
   }
-  
+
   public String getControllerVipProtocol() {
     if (containsKey(CONTROLLER_VIP_PROTOCOL) && ((String) getProperty(CONTROLLER_VIP_PROTOCOL)).equals("https")) {
       return "https";
@@ -216,7 +234,7 @@ public class ControllerConf extends PropertiesConfiguration {
     setProperty(VALIDATION_MANAGER_FREQUENCY_IN_SECONDS, Integer.toString(validationFrequencyInSeconds));
   }
 
-  public int getStatusControllerFrequencyInSeconds() {
+  public int getStatusCheckerFrequencyInSeconds() {
     if (containsKey(STATUS_CHECKER_FREQUENCY_IN_SECONDS)) {
       return Integer.parseInt((String) getProperty(STATUS_CHECKER_FREQUENCY_IN_SECONDS));
     }
@@ -226,6 +244,18 @@ public class ControllerConf extends PropertiesConfiguration {
   public void setStatusCheckerFrequencyInSeconds(int statusCheckerFrequencyInSeconds) {
     setProperty(STATUS_CHECKER_FREQUENCY_IN_SECONDS, Integer.toString(statusCheckerFrequencyInSeconds));
   }
+
+  public int getStatusCheckerWaitForPushTimeInSeconds() {
+    if (containsKey(STATUS_CHECKER_WAIT_FOR_PUSH_TIME_IN_SECONDS)) {
+      return Integer.parseInt((String) getProperty(STATUS_CHECKER_WAIT_FOR_PUSH_TIME_IN_SECONDS));
+    }
+    return DEFAULT_STATUS_CONTROLLER_WAIT_FOR_PUSH_TIME_IN_SECONDS;
+  }
+
+  public void setStatusCheckerWaitForPushTimeInSeconds(int statusCheckerWaitForPushTimeInSeconds) {
+    setProperty(STATUS_CHECKER_WAIT_FOR_PUSH_TIME_IN_SECONDS, Integer.toString(statusCheckerWaitForPushTimeInSeconds));
+  }
+
 
   public long getExternalViewOnlineToOfflineTimeout() {
     if (containsKey(EXTERNAL_VIEW_ONLINE_TO_OFFLINE_TIMEOUT)) {
@@ -254,9 +284,30 @@ public class ControllerConf extends PropertiesConfiguration {
   }
 
   public int getServerAdminRequestTimeoutSeconds() {
-    if (containsKey(SERVER_ADMIN_REQUEST_TIMEOUT_SECONDS)) {
-      getInt(SERVER_ADMIN_REQUEST_TIMEOUT_SECONDS);
-    }
-    return DEFAULT_SERVER_ADMIN_REQUEST_TIMEOUT_SECONDS;
+    return getInt(SERVER_ADMIN_REQUEST_TIMEOUT_SECONDS, DEFAULT_SERVER_ADMIN_REQUEST_TIMEOUT_SECONDS);
+  }
+
+  public int getDeletedSegmentsRetentionInDays() {
+    return getInt(DELETED_SEGMENTS_RETENTION_IN_DAYS, DEFAULT_DELETED_SEGMENTS_RETENTION_IN_DAYS);
+  }
+
+  public void setDeletedSegmentsRetentionInDays(int retentionInDays) {
+    setProperty(DELETED_SEGMENTS_RETENTION_IN_DAYS, retentionInDays);
+  }
+
+  public int getTaskManagerFrequencyInSeconds() {
+    return getInt(TASK_MANAGER_FREQUENCY_IN_SECONDS, DEFAULT_TASK_MANAGER_FREQUENCY_IN_SECONDS);
+  }
+
+  public void setTaskManagerFrequencyInSeconds(int frequencyInSeconds) {
+    setProperty(TASK_MANAGER_FREQUENCY_IN_SECONDS, Integer.toString(frequencyInSeconds));
+  }
+
+  public int getDefaultTableMinReplicas() {
+    return getInt(TABLE_MIN_REPLICAS, DEFAULT_TABLE_MIN_REPLICAS);
+  }
+
+  public void setTableMinReplicas(int minReplicas) {
+    setProperty(TABLE_MIN_REPLICAS, minReplicas);
   }
 }
