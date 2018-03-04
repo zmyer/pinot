@@ -61,6 +61,7 @@ public abstract class ControllerTest {
 
   protected ZkClient _zkClient;
   protected ControllerStarter _controllerStarter;
+  protected PinotHelixResourceManager _helixResourceManager;
   protected HelixManager _helixManager;
   protected HelixAdmin _helixAdmin;
   protected ZkHelixPropertyStore<ZNRecord> _propertyStore;
@@ -121,10 +122,10 @@ public abstract class ControllerTest {
     _controllerStarter = new ControllerStarter(config);
     _controllerStarter.start();
 
-    PinotHelixResourceManager helixResourceManager = _controllerStarter.getHelixResourceManager();
-    _helixManager = helixResourceManager.getHelixZkManager();
-    _helixAdmin = helixResourceManager.getHelixAdmin();
-    _propertyStore = helixResourceManager.getPropertyStore();
+    _helixResourceManager = _controllerStarter.getHelixResourceManager();
+    _helixManager = _helixResourceManager.getHelixZkManager();
+    _helixAdmin = _helixResourceManager.getHelixAdmin();
+    _propertyStore = _helixResourceManager.getPropertyStore();
   }
 
   protected void stopController() {
@@ -141,15 +142,19 @@ public abstract class ControllerTest {
   }
 
   public static String sendPostRequest(String urlString, String payload) throws IOException {
-    URLConnection urlConnection = new URL(urlString).openConnection();
-    urlConnection.setDoOutput(true);
+    HttpURLConnection httpConnection = (HttpURLConnection) new URL(urlString).openConnection();
+    httpConnection.setRequestMethod("POST");
 
-    try (BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(urlConnection.getOutputStream(), "UTF-8"))) {
-      writer.write(payload, 0, payload.length());
-      writer.flush();
+    if (payload != null && !payload.isEmpty()) {
+      httpConnection.setDoOutput(true);
+      try (BufferedWriter writer = new BufferedWriter(
+          new OutputStreamWriter(httpConnection.getOutputStream(), "UTF-8"))) {
+        writer.write(payload, 0, payload.length());
+        writer.flush();
+      }
     }
 
-    return constructResponse(urlConnection.getInputStream());
+    return constructResponse(httpConnection.getInputStream());
   }
 
   public static String sendPutRequest(String urlString, String payload) throws IOException {

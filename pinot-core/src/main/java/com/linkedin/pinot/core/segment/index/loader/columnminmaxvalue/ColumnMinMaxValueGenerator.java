@@ -19,7 +19,6 @@ import com.clearspring.analytics.util.Preconditions;
 import com.linkedin.pinot.common.data.FieldSpec;
 import com.linkedin.pinot.common.data.Schema;
 import com.linkedin.pinot.core.segment.creator.impl.SegmentColumnarIndexCreator;
-import com.linkedin.pinot.core.segment.creator.impl.V1Constants;
 import com.linkedin.pinot.core.segment.index.ColumnMetadata;
 import com.linkedin.pinot.core.segment.index.SegmentMetadataImpl;
 import com.linkedin.pinot.core.segment.index.readers.DoubleDictionary;
@@ -30,12 +29,10 @@ import com.linkedin.pinot.core.segment.index.readers.StringDictionary;
 import com.linkedin.pinot.core.segment.memory.PinotDataBuffer;
 import com.linkedin.pinot.core.segment.store.ColumnIndexType;
 import com.linkedin.pinot.core.segment.store.SegmentDirectory;
-import java.io.File;
 import org.apache.commons.configuration.PropertiesConfiguration;
 
 
 public class ColumnMinMaxValueGenerator {
-  private final File _indexDir;
   private final SegmentMetadataImpl _segmentMetadata;
   private final PropertiesConfiguration _segmentProperties;
   private final SegmentDirectory.Writer _segmentWriter;
@@ -43,17 +40,15 @@ public class ColumnMinMaxValueGenerator {
 
   private boolean _minMaxValueAdded;
 
-  public ColumnMinMaxValueGenerator(File indexDir, SegmentMetadataImpl segmentMetadata,
-      SegmentDirectory.Writer segmentWriter, ColumnMinMaxValueGeneratorMode columnMinMaxValueGeneratorMode) {
-    _indexDir = indexDir;
+  public ColumnMinMaxValueGenerator(SegmentMetadataImpl segmentMetadata, SegmentDirectory.Writer segmentWriter,
+      ColumnMinMaxValueGeneratorMode columnMinMaxValueGeneratorMode) {
     _segmentMetadata = segmentMetadata;
     _segmentProperties = segmentMetadata.getSegmentMetadataPropertiesConfiguration();
     _segmentWriter = segmentWriter;
     _columnMinMaxValueGeneratorMode = columnMinMaxValueGeneratorMode;
   }
 
-  public void addColumnMinMaxValue()
-      throws Exception {
+  public void addColumnMinMaxValue() throws Exception {
     Preconditions.checkState(_columnMinMaxValueGeneratorMode != ColumnMinMaxValueGeneratorMode.NONE);
 
     Schema schema = _segmentMetadata.getSchema();
@@ -84,8 +79,7 @@ public class ColumnMinMaxValueGenerator {
     saveMetadata();
   }
 
-  private void addColumnMinMaxValueForColumn(String columnName)
-      throws Exception {
+  private void addColumnMinMaxValueForColumn(String columnName) throws Exception {
     // Skip column without dictionary or with min/max value already set
     ColumnMetadata columnMetadata = _segmentMetadata.getColumnMetadataFor(columnName);
     if ((!columnMetadata.hasDictionary()) || (columnMetadata.getMinValue() != null)) {
@@ -94,31 +88,38 @@ public class ColumnMinMaxValueGenerator {
 
     PinotDataBuffer dictionaryBuffer = _segmentWriter.getIndexFor(columnName, ColumnIndexType.DICTIONARY);
     FieldSpec.DataType dataType = columnMetadata.getDataType();
+    int length = columnMetadata.getCardinality();
     switch (dataType) {
       case INT:
-        IntDictionary intDictionary = new IntDictionary(dictionaryBuffer, columnMetadata);
-        SegmentColumnarIndexCreator.addColumnMinMaxValueInfo(_segmentProperties, columnName,
-            intDictionary.getStringValue(0), intDictionary.getStringValue(intDictionary.length() - 1));
+        try (IntDictionary intDictionary = new IntDictionary(dictionaryBuffer, length)) {
+          SegmentColumnarIndexCreator.addColumnMinMaxValueInfo(_segmentProperties, columnName,
+              intDictionary.getStringValue(0), intDictionary.getStringValue(length - 1));
+        }
         break;
       case LONG:
-        LongDictionary longDictionary = new LongDictionary(dictionaryBuffer, columnMetadata);
-        SegmentColumnarIndexCreator.addColumnMinMaxValueInfo(_segmentProperties, columnName,
-            longDictionary.getStringValue(0), longDictionary.getStringValue(longDictionary.length() - 1));
+        try (LongDictionary longDictionary = new LongDictionary(dictionaryBuffer, length)) {
+          SegmentColumnarIndexCreator.addColumnMinMaxValueInfo(_segmentProperties, columnName,
+              longDictionary.getStringValue(0), longDictionary.getStringValue(length - 1));
+        }
         break;
       case FLOAT:
-        FloatDictionary floatDictionary = new FloatDictionary(dictionaryBuffer, columnMetadata);
-        SegmentColumnarIndexCreator.addColumnMinMaxValueInfo(_segmentProperties, columnName,
-            floatDictionary.getStringValue(0), floatDictionary.getStringValue(floatDictionary.length() - 1));
+        try (FloatDictionary floatDictionary = new FloatDictionary(dictionaryBuffer, length)) {
+          SegmentColumnarIndexCreator.addColumnMinMaxValueInfo(_segmentProperties, columnName,
+              floatDictionary.getStringValue(0), floatDictionary.getStringValue(length - 1));
+        }
         break;
       case DOUBLE:
-        DoubleDictionary doubleDictionary = new DoubleDictionary(dictionaryBuffer, columnMetadata);
-        SegmentColumnarIndexCreator.addColumnMinMaxValueInfo(_segmentProperties, columnName,
-            doubleDictionary.getStringValue(0), doubleDictionary.getStringValue(doubleDictionary.length() - 1));
+        try (DoubleDictionary doubleDictionary = new DoubleDictionary(dictionaryBuffer, length)) {
+          SegmentColumnarIndexCreator.addColumnMinMaxValueInfo(_segmentProperties, columnName,
+              doubleDictionary.getStringValue(0), doubleDictionary.getStringValue(length - 1));
+        }
         break;
       case STRING:
-        StringDictionary stringDictionary = new StringDictionary(dictionaryBuffer, columnMetadata);
-        SegmentColumnarIndexCreator.addColumnMinMaxValueInfo(_segmentProperties, columnName, stringDictionary.get(0),
-            stringDictionary.get(stringDictionary.length() - 1));
+        try (StringDictionary stringDictionary = new StringDictionary(dictionaryBuffer, length,
+            columnMetadata.getStringColumnMaxLength(), (byte) columnMetadata.getPaddingCharacter())) {
+          SegmentColumnarIndexCreator.addColumnMinMaxValueInfo(_segmentProperties, columnName, stringDictionary.get(0),
+              stringDictionary.get(length - 1));
+        }
         break;
       default:
         throw new IllegalStateException("Unsupported data type: " + dataType + " for column: " + columnName);
@@ -127,11 +128,9 @@ public class ColumnMinMaxValueGenerator {
     _minMaxValueAdded = true;
   }
 
-  private void saveMetadata()
-      throws Exception {
+  private void saveMetadata() throws Exception {
     if (_minMaxValueAdded) {
-      File metadataFile = new File(_indexDir, V1Constants.MetadataKeys.METADATA_FILE_NAME);
-      _segmentProperties.save(metadataFile);
+      _segmentProperties.save();
     }
   }
 }

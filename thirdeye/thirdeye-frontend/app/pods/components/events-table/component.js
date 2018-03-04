@@ -1,6 +1,8 @@
-import Ember from 'ember';
+import { later } from '@ember/runloop';
+import { computed } from '@ember/object';
+import Component from '@ember/component';
 
-export default Ember.Component.extend({
+export default Component.extend({
   events: [],
   selectedTab: 'all',
 
@@ -10,7 +12,7 @@ export default Ember.Component.extend({
   /**
    * Returns event based on the selected tab
    */
-  filteredEvents: Ember.computed(
+  filteredEvents: computed(
     'eventsInRange.@each.type',
     'selectedTab',
     function() {
@@ -20,14 +22,15 @@ export default Ember.Component.extend({
       if (selectedTab === 'all') { return events; }
       return events
         .filter(event => (event.eventType === selectedTab))
-        .sortBy('score');
+        .sortBy('score')
+        .reverse();
     }
   ),
 
   /**
    * Returns events in a range
    */
-  eventsInRange: Ember.computed(
+  eventsInRange: computed(
     'events',
     'start',
     'end',
@@ -39,15 +42,18 @@ export default Ember.Component.extend({
       if (!(start && end)) { return events; }
 
       return events.filter((event) => {
-        return (event.end && ((event.end > start) && (event.end < end)))
-          || ((event.start < end) && (event.start > start));
+        const {
+          displayStart,
+          displayEnd } = event;
+
+        return (displayStart <= end) && (displayEnd >= start);
       });
     }
   ),
 
   // Require to display a loader for long rendering
   didUpdateAttrs(...args) {
-    Ember.run.later(() => {
+    later(() => {
       this._super(args);
     });
   },
@@ -60,10 +66,11 @@ export default Ember.Component.extend({
       template: 'custom/checkbox',
       useFilter: false,
       mayBeHidden: false,
-      className: 'events-table__column--flush'
+      className: 'events-table__column--checkbox'
     },
     {
-      propertyName: 'label',
+      propertyName: 'displayLabel',
+      template: 'custom/eventLabel',
       title: 'Event Name',
       className: 'events-table__column'
     },
@@ -72,18 +79,27 @@ export default Ember.Component.extend({
       title: 'Type',
       filterWithSelect: true,
       sortFilterOptions: true,
-      className: 'events-table__column'
+      className: 'events-table__column--compact'
     },
     {
-      template: 'custom/date-cell',
-      title: 'Start Date - End Date',
-      className: 'events-table__column'
+      propertyName: 'humanRelStart',
+      title: 'Start',
+      className: 'events-table__column--compact',
+      sortedBy: 'relStart',
+      disableFiltering: true
+    },
+    {
+      propertyName: 'humanDuration',
+      title: 'Duration',
+      className: 'events-table__column--compact',
+      sortedBy: 'duration',
+      disableFiltering: true
     }
     // {
     //   propertyName: 'score',
     //   title: 'Score',
     //   disableFiltering: true,
-    //   className: 'events-table__column',
+    //   className: 'events-table__column--compact',
     //   sortDirection: 'desc'
     // }
   ],

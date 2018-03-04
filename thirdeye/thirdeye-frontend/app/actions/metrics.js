@@ -1,15 +1,21 @@
+import { hash } from 'rsvp';
 import { type } from './utils';
 import fetch from 'fetch';
-import Ember from 'ember';
 import moment from 'moment';
 import _ from 'lodash';
+import {
+  COMPARE_MODE_MAPPING,
+  colors,
+  ROOTCAUSE_ANALYSIS_DURATION_MAX,
+  ROOTCAUSE_ANOMALY_DURATION_MAX
+} from './constants';
 
-import { COMPARE_MODE_MAPPING, colors } from './constants';
 /**
  * Define the metric action types
  */
 export const ActionTypes = {
   LOADING: type('[Metric] Loading'),
+  LOADED: type('[Metric] Loaded'),
   REQUEST_FAIL: type('[Metric] Request Fail'),
   LOAD_IDS: type('[Metric] Load related Metric Ids'),
   LOAD_DATA: type('[Metric] Load related Metric Data'),
@@ -17,6 +23,7 @@ export const ActionTypes = {
   LOAD_PRIMARY_METRIC: type('[Metric] Load Primary Metric'),
   UPDATE_COMPARE_MODE: type('[Metric] Update Compare Mode'),
   UPDATE_DATE: type('[Metric] Update Date'),
+  SET_DATE: type('[Metric] Set new region dates'),
   SELECT_METRIC: type('[Metric] Set Selected Metric'),
   RESET: type('[Metric] Reset Data')
 };
@@ -37,6 +44,15 @@ const filterMetric = (metric) => {
 function loading() {
   return {
     type: ActionTypes.LOADING
+  };
+}
+
+/**
+ * Set Metrics Status to loaded
+ */
+function loaded() {
+  return {
+    type: ActionTypes.LOADED
   };
 }
 
@@ -94,6 +110,12 @@ function resetData() {
   };
 }
 
+function setDate(dates) {
+  return {
+    type: ActionTypes.SET_DATE,
+    payload: dates
+  };
+}
 
 /**
  * Get all related metric's id for the primary metric
@@ -105,32 +127,42 @@ function fetchRelatedMetricIds() {
 
     let {
       primaryMetricId: metricId,
-      currentStart: startDate,
-      currentEnd: endDate
+      currentStart: analysisStartRaw,
+      currentEnd: analysisEndRaw,
+      regionStart: anomalyStartRaw,
+      regionEnd: anomalyEndRaw
     } = metrics;
 
     const {
-      compareMode
+      compareMode,
+      filters: filterJson
     } = primaryMetric;
 
-    // TODO use actual anomaly period only
-    const anomalyEnd = endDate || moment().subtract(1, 'day').endOf('day').valueOf();
-    const anomalyStart = startDate || moment(endDate).subtract(1, 'week').valueOf();
+    const analysisDurationSafe = Math.min(analysisEndRaw - analysisStartRaw, ROOTCAUSE_ANALYSIS_DURATION_MAX);
+    const analysisStart = Math.max(analysisStartRaw, analysisEndRaw - analysisDurationSafe);
+    const analysisEnd = analysisEndRaw;
+
+    const anomalyDurationSafe = Math.min(anomalyEndRaw - anomalyStartRaw, ROOTCAUSE_ANOMALY_DURATION_MAX);
+    const anomalyStart = anomalyStartRaw;
+    const anomalyEnd = anomalyStartRaw + anomalyDurationSafe;
 
     const offset = COMPARE_MODE_MAPPING[compareMode] || 1;
     const baselineStart = moment(anomalyStart).subtract(offset, 'week').valueOf();
     const baselineEnd = moment(anomalyEnd).subtract(offset, 'week').valueOf();
 
-    // TODO use currentStart/currentEnd when anomaly period separated
-    const analysisStart = anomalyStart;
-    const analysisEnd = anomalyEnd;
-
     if (!metricId) {
       return Promise.reject(new Error("Must provide a metricId"));
     }
 
-    return fetch(`/rootcause/query?framework=relatedMetrics&anomalyStart=${anomalyStart}&anomalyEnd=${anomalyEnd}&baselineStart=${baselineStart}&baselineEnd=${baselineEnd}&analysisStart=${analysisStart}&analysisEnd=${analysisEnd}&urns=thirdeye:metric:${metricId}`)
+    const filters = JSON.parse(filterJson);
+    const filterUrns = Object.keys(filters).map(key => 'thirdeye:dimension:' + key + ':' + filters[key] + ':provided');
+    const primaryUrn = `thirdeye:metric:${metricId}`;
+
+    const urns = [primaryUrn].concat(filterUrns).join(',');
+
+    return fetch(`/rootcause/query?framework=relatedMetrics&anomalyStart=${anomalyStart}&anomalyEnd=${anomalyEnd}&baselineStart=${baselineStart}&baselineEnd=${baselineEnd}&analysisStart=${analysisStart}&analysisEnd=${analysisEnd}&urns=${urns}`)
       .then(res => res.json())
+      .then(res => res.filter(metric => metric.urn != primaryUrn))
       .then(res => dispatch(loadRelatedMetricIds(res)));
   };
 }
@@ -162,7 +194,7 @@ function fetchRegions() {
 
     const metricIds = [primaryMetricId, ...relatedMetricIds].join(',');
 
-    return fetch(`/data/anomalies/ranges?metricIds=${metricIds}&start=${currentStart}&end=${currentEnd}&filters=${filters}`)
+    return fetch(`/data/anomalies/ranges?metricIds=${metricIds}&start=${currentStart}&end=${currentEnd}&filters=${encodeURIComponent(filters)}`)
       .then(res => res.json())
       .then(res => dispatch(loadRegions(res)));
   };
@@ -191,13 +223,13 @@ function fetchRelatedMetricData() {
 
     if (!metricIds.length) { return; }
     const promiseHash = metricIds.reduce((hash, id) => {
-      const url = `/timeseries/compare/${id}/${currentStart}/${currentEnd}/${baselineStart}/${baselineEnd}?dimension=All&granularity=${granularity}&filters=${filters}`;
+      const url = `/timeseries/compare/${id}/${currentStart}/${currentEnd}/${baselineStart}/${baselineEnd}?dimension=All&granularity=${granularity}&filters=${encodeURIComponent(filters)}`;
       hash[id] = fetch(url).then(res => res.json());
 
       return hash;
     }, {});
 
-    return Ember.RSVP.hash(promiseHash)
+    return hash(promiseHash)
       .then((metrics) => {
         const filteredMetrics = _.pickBy(metrics, filterMetric);
 
@@ -216,8 +248,8 @@ function fetchRelatedMetricData() {
 
 /**
  * Updates the date range for the correlated metrics
- * @param {Number} start The start time in unix ms
- * @param {Number} end The end time in unix ms
+ * @param {Number} startDate The start time in unix ms
+ * @param {Number} endDate The end time in unix ms
  */
 function updateMetricDate(startDate, endDate) {
   return (dispatch, getState) => {
@@ -246,6 +278,18 @@ function updateMetricDate(startDate, endDate) {
   };
 }
 
+/**
+ * Updates the date range for the dimensions and refetches the data
+ * @param {Number} start The start time in unix ms
+ * @param {Number} end The end time in unix ms
+ */
+function updateDates(start, end) {
+  return (dispatch) => {
+
+    return dispatch(setDate([start, end]));
+  };
+}
+
 // Resets the store to its initial state
 function reset() {
   return (dispatch) => {
@@ -256,6 +300,7 @@ function reset() {
 
 export const Actions = {
   loading,
+  loaded,
   requestFail,
   fetchRelatedMetricData,
   fetchRelatedMetricIds,
@@ -263,6 +308,7 @@ export const Actions = {
   setPrimaryMetric,
   updateCompareMode,
   updateMetricDate,
-  reset
+  reset,
+  updateDates
 };
 

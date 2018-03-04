@@ -24,7 +24,9 @@ import com.linkedin.pinot.common.metrics.ServerMetrics;
 import com.linkedin.pinot.common.protocols.SegmentCompletionProtocol;
 import com.linkedin.pinot.common.utils.CommonConstants;
 import com.linkedin.pinot.common.utils.LLCSegmentName;
+import com.linkedin.pinot.core.data.manager.config.InstanceDataManagerConfig;
 import com.linkedin.pinot.core.realtime.impl.RealtimeSegmentImpl;
+import com.linkedin.pinot.core.realtime.impl.RealtimeSegmentStatsHistory;
 import com.linkedin.pinot.core.realtime.impl.kafka.KafkaLowLevelStreamProviderConfig;
 import com.linkedin.pinot.core.realtime.impl.kafka.SimpleConsumerWrapper;
 import com.linkedin.pinot.core.segment.index.loader.IndexLoadingConfig;
@@ -45,8 +47,7 @@ import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
 
 import static org.mockito.Matchers.any;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.*;
 
 
 // TODO Write more tests for other parts of the class
@@ -117,6 +118,11 @@ public class LLRealtimeSegmentDataManagerTest {
     SegmentBuildTimeLeaseExtender.create(instanceId);
     RealtimeTableDataManager tableDataManager = mock(RealtimeTableDataManager.class);
     when(tableDataManager.getServerInstance()).thenReturn(instanceId);
+    RealtimeSegmentStatsHistory statsHistory = mock(RealtimeSegmentStatsHistory.class);
+    when(statsHistory.getEstimatedCardinality(any(String.class))).thenReturn(200);
+    when(statsHistory.getEstimatedAvgColSize(any(String.class))).thenReturn(32);
+    when(tableDataManager.getStatsHistory()).thenReturn(statsHistory);
+    when(tableDataManager.getServerMetrics()).thenReturn(new ServerMetrics(new MetricsRegistry()));
     return tableDataManager;
   }
 
@@ -245,6 +251,25 @@ public class LLRealtimeSegmentDataManagerTest {
     Assert.assertTrue(segmentDataManager._commitSegmentCalled);
     Assert.assertEquals(segmentDataManager._state.get(segmentDataManager), LLRealtimeSegmentDataManager.State.COMMITTED);
   }
+
+  @Test
+  public void testSegmentBuildException() throws Exception {
+    FakeLLRealtimeSegmentDataManager segmentDataManager = createFakeSegmentManager();
+    LLRealtimeSegmentDataManager.PartitionConsumer consumer = segmentDataManager.createPartitionConsumer();
+    final long endOffset = _startOffset + 500;
+    // We should consume initially...
+    segmentDataManager._consumeOffsets.add(endOffset);
+    final SegmentCompletionProtocol.Response commitResponse = new SegmentCompletionProtocol.Response(
+        new SegmentCompletionProtocol.Response.Params().withOffset(endOffset).withStatus(
+            SegmentCompletionProtocol.ControllerResponseStatus.COMMIT));
+    segmentDataManager._responses.add(commitResponse);
+    segmentDataManager._failSegmentBuild = true;
+
+    consumer.run();
+    Assert.assertTrue(segmentDataManager._buildSegmentCalled);
+    Assert.assertEquals(segmentDataManager._state.get(segmentDataManager), LLRealtimeSegmentDataManager.State.ERROR);
+  }
+
 
   // Test hold, catchup. hold, commit
   @Test
@@ -466,9 +491,9 @@ public class LLRealtimeSegmentDataManagerTest {
       FakeLLRealtimeSegmentDataManager segmentDataManager = createFakeSegmentManager();
       segmentDataManager._state.set(segmentDataManager, LLRealtimeSegmentDataManager.State.INITIAL_CONSUMING);
       Assert.assertFalse(segmentDataManager.invokeEndCriteriaReached());
-      segmentDataManager.setNumRowsConsumed(maxRowsInSegment - 1);
+      segmentDataManager.setNumRowsIndexed(maxRowsInSegment - 1);
       Assert.assertFalse(segmentDataManager.invokeEndCriteriaReached());
-      segmentDataManager.setNumRowsConsumed(maxRowsInSegment);
+      segmentDataManager.setNumRowsIndexed(maxRowsInSegment);
       Assert.assertTrue(segmentDataManager.invokeEndCriteriaReached());
       Assert.assertEquals(segmentDataManager.getStopReason(), SegmentCompletionProtocol.REASON_ROW_LIMIT);
     }
@@ -542,7 +567,7 @@ public class LLRealtimeSegmentDataManagerTest {
   // Replace the realtime segment with a mock that returns numDocs for raw doc count.
   private void replaceRealtimeSegment(FakeLLRealtimeSegmentDataManager segmentDataManager, int numDocs) throws Exception {
     RealtimeSegmentImpl mockSegmentImpl = mock(RealtimeSegmentImpl.class);
-    when(mockSegmentImpl.getRawDocumentCount()).thenReturn(numDocs);
+    when(mockSegmentImpl.getNumDocsIndexed()).thenReturn(numDocs);
     Field segmentImpl = LLRealtimeSegmentDataManager.class.getDeclaredField("_realtimeSegment");
     segmentImpl.setAccessible(true);
     segmentImpl.set(segmentDataManager, mockSegmentImpl);
@@ -621,18 +646,30 @@ public class LLRealtimeSegmentDataManagerTest {
     public LinkedList<SegmentCompletionProtocol.Response> _responses = new LinkedList<>();
     public boolean _commitSegmentCalled = false;
     public boolean _buildSegmentCalled = false;
+    public boolean _failSegmentBuild = false;
     public boolean _buildAndReplaceCalled = false;
     public int _stopWaitTimeMs = 100;
     private boolean _downloadAndReplaceCalled = false;
     public boolean _throwExceptionFromConsume = false;
     public boolean _postConsumeStoppedCalled = false;
 
+    private static InstanceDataManagerConfig makeInstanceDataManagerConfig() {
+      InstanceDataManagerConfig dataManagerConfig = mock(InstanceDataManagerConfig.class);
+      when(dataManagerConfig.getReadMode()).thenReturn(null);
+      when(dataManagerConfig.getAvgMultiValueCount()).thenReturn(null);
+      when(dataManagerConfig.getSegmentFormatVersion()).thenReturn(null);
+      when(dataManagerConfig.isEnableDefaultColumns()).thenReturn(false);
+      when(dataManagerConfig.isEnableSplitCommit()).thenReturn(false);
+      when(dataManagerConfig.isRealtimeOffHeapAllocation()).thenReturn(false);
+      return dataManagerConfig;
+    }
+
     public FakeLLRealtimeSegmentDataManager(RealtimeSegmentZKMetadata segmentZKMetadata, TableConfig tableConfig,
         InstanceZKMetadata instanceZKMetadata, RealtimeTableDataManager realtimeTableDataManager,
         String resourceDataDir, Schema schema, ServerMetrics serverMetrics)
         throws Exception {
       super(segmentZKMetadata, tableConfig, instanceZKMetadata, realtimeTableDataManager, resourceDataDir,
-          new IndexLoadingConfig(null, tableConfig), schema, serverMetrics);
+          new IndexLoadingConfig(makeInstanceDataManagerConfig(), tableConfig), schema, serverMetrics);
       _state = LLRealtimeSegmentDataManager.class.getDeclaredField("_state");
       _state.setAccessible(true);
       _shouldStop = LLRealtimeSegmentDataManager.class.getDeclaredField("_shouldStop");
@@ -743,6 +780,9 @@ public class LLRealtimeSegmentDataManagerTest {
     @Override
     protected String buildSegmentInternal(boolean forCommit) {
       _buildSegmentCalled = true;
+      if (_failSegmentBuild) {
+        return null;
+      }
       if (!forCommit) {
         return _segmentDir;
       }
@@ -782,6 +822,10 @@ public class LLRealtimeSegmentDataManagerTest {
 
     public void setNumRowsConsumed(int numRows) {
       setInt(numRows, "_numRowsConsumed");
+    }
+
+    public  void setNumRowsIndexed(int numRows) {
+      setInt(numRows, "_numRowsIndexed");
     }
 
     public void setFinalOffset(long offset) {

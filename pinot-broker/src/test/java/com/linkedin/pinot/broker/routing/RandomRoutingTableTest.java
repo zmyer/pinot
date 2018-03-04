@@ -15,16 +15,17 @@
  */
 package com.linkedin.pinot.broker.routing;
 
+import com.linkedin.pinot.common.config.TableConfig;
+import com.linkedin.pinot.common.config.TableConfig.Builder;
+import com.linkedin.pinot.common.config.TableNameBuilder;
+import com.linkedin.pinot.common.utils.CommonConstants.Helix.TableType;
 import java.io.FileInputStream;
-import java.io.InputStream;
 import java.net.URL;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.TreeSet;
 import org.apache.commons.configuration.BaseConfiguration;
 import org.apache.commons.io.IOUtils;
 import org.apache.helix.ZNRecord;
@@ -34,98 +35,63 @@ import org.apache.helix.model.InstanceConfig;
 import org.testng.Assert;
 import org.testng.annotations.Test;
 
-import com.linkedin.pinot.broker.routing.HelixExternalViewBasedRouting;
-import com.linkedin.pinot.broker.routing.PercentageBasedRoutingTableSelector;
-import com.linkedin.pinot.broker.routing.RoutingTableLookupRequest;
-import com.linkedin.pinot.broker.routing.builder.BalancedRandomRoutingTableBuilder;
-import com.linkedin.pinot.broker.routing.builder.RoutingTableBuilder;
-import com.linkedin.pinot.common.config.TableConfig;
-import com.linkedin.pinot.common.config.TableNameBuilder;
-import com.linkedin.pinot.common.config.TableConfig.Builder;
-import com.linkedin.pinot.common.response.ServerInstance;
-import com.linkedin.pinot.common.utils.CommonConstants.Helix.TableType;
-import com.linkedin.pinot.transport.common.SegmentIdSet;
-
 
 public class RandomRoutingTableTest {
+  private static final int NUM_ROUNDS = 100;
+  private static final int MIN_NUM_SEGMENTS_PER_SERVER = 28;
+  private static final int MAX_NUM_SEGMENTS_PER_SERVER = 31;
 
   @Test
-  public void testHelixExternalViewBasedRoutingTable()
-      throws Exception {
+  public void testHelixExternalViewBasedRoutingTable() throws Exception {
     URL resourceUrl = getClass().getClassLoader().getResource("SampleExternalView.json");
     Assert.assertNotNull(resourceUrl);
     String fileName = resourceUrl.getFile();
-    String tableName = "testTable_OFFLINE";
-    InputStream evInputStream = new FileInputStream(fileName);
-    ZNRecordSerializer znRecordSerializer = new ZNRecordSerializer();
-    ZNRecord externalViewRecord = (ZNRecord) znRecordSerializer.deserialize(IOUtils.toByteArray(evInputStream));
-    int totalRuns = 10000;
-    RoutingTableBuilder routingStrategy = new BalancedRandomRoutingTableBuilder(10);
-    HelixExternalViewBasedRouting routingTable =
-        new HelixExternalViewBasedRouting(null, new PercentageBasedRoutingTableSelector(), null,
-            new BaseConfiguration());
 
-    //routingTable.setSmallClusterRoutingTableBuilder(routingStrategy);
+    byte[] externalViewBytes = IOUtils.toByteArray(new FileInputStream(fileName));
+    ExternalView externalView = new ExternalView((ZNRecord) new ZNRecordSerializer().deserialize(externalViewBytes));
+    String tableName = externalView.getResourceName();
+    List<InstanceConfig> instanceConfigs = getInstanceConfigs(externalView);
+    int numSegmentsInEV = externalView.getPartitionSet().size();
+    int numServersInEV = instanceConfigs.size();
 
-    ExternalView externalView = new ExternalView(externalViewRecord);
+    HelixExternalViewBasedRouting routing = new HelixExternalViewBasedRouting(null, null, new BaseConfiguration());
+    routing.markDataResourceOnline(generateTableConfig(tableName), externalView, instanceConfigs);
 
-    routingTable.markDataResourceOnline(generateTableConfig(tableName), externalView, getInstanceConfigs(externalView));
-
-    double[] globalArrays = new double[9];
-
-    for (int numRun = 0; numRun < totalRuns; ++numRun) {
-      RoutingTableLookupRequest request = new RoutingTableLookupRequest(tableName, Collections.<String>emptyList(), null);
-      Map<ServerInstance, SegmentIdSet> serversMap = routingTable.findServers(request);
-      TreeSet<ServerInstance> serverInstances = new TreeSet<ServerInstance>(serversMap.keySet());
-
-      int i = 0;
-
-      double[] arrays = new double[9];
-      for (ServerInstance serverInstance : serverInstances) {
-        globalArrays[i] += serversMap.get(serverInstance).getSegments().size();
-        arrays[i++] = serversMap.get(serverInstance).getSegments().size();
+    for (int i = 0; i < NUM_ROUNDS; i++) {
+      Map<String, List<String>> routingTable = routing.getRoutingTable(new RoutingTableLookupRequest(tableName));
+      Assert.assertEquals(routingTable.size(), numServersInEV);
+      int numSegments = 0;
+      for (List<String> segmentsForServer : routingTable.values()) {
+        int numSegmentsForServer = segmentsForServer.size();
+        Assert.assertTrue(
+            numSegmentsForServer >= MIN_NUM_SEGMENTS_PER_SERVER && numSegmentsForServer <= MAX_NUM_SEGMENTS_PER_SERVER);
+        numSegments += numSegmentsForServer;
       }
-      for (int j = 0; i < arrays.length; ++j) {
-        Assert.assertTrue(arrays[j] / totalRuns <= 31);
-        Assert.assertTrue(arrays[j] / totalRuns >= 28);
-      }
-//      System.out.println(Arrays.toString(arrays) + " : " + new StandardDeviation().evaluate(arrays) + " : " + new Mean().evaluate(arrays));
+      Assert.assertEquals(numSegments, numSegmentsInEV);
     }
-    for (int i = 0; i < globalArrays.length; ++i) {
-      Assert.assertTrue(globalArrays[i] / totalRuns <= 31);
-      Assert.assertTrue(globalArrays[i] / totalRuns >= 28);
-    }
-//    System.out.println(Arrays.toString(globalArrays) + " : " + new StandardDeviation().evaluate(globalArrays) + " : "
-//        + new Mean().evaluate(globalArrays));
   }
 
-  /**
-   * Returns a list of configs containing all instances in the external view.
-   * @param externalView From which to extract the instance list from.
-   * @return Instance Config list
-   */
   private List<InstanceConfig> getInstanceConfigs(ExternalView externalView) {
-    List<InstanceConfig> instanceConfigList = new ArrayList<>();
-    Set<String> instanceSet = new HashSet<>();
+    List<InstanceConfig> instanceConfigs = new ArrayList<>();
+    Set<String> instances = new HashSet<>();
 
     // Collect all unique instances
     for (String partitionName : externalView.getPartitionSet()) {
       for (String instance : externalView.getStateMap(partitionName).keySet()) {
-        if (!instanceSet.contains(instance)) {
-          instanceConfigList.add(new InstanceConfig(instance));
-          instanceSet.add(instance);
+        if (!instances.contains(instance)) {
+          instanceConfigs.add(new InstanceConfig(instance));
+          instances.add(instance);
         }
       }
     }
 
-    return instanceConfigList;
+    return instanceConfigs;
   }
-  
+
   private TableConfig generateTableConfig(String tableName) throws Exception {
     TableType tableType = TableNameBuilder.getTableTypeFromTableName(tableName);
     Builder builder = new TableConfig.Builder(tableType);
     builder.setTableName(tableName);
     return builder.build();
   }
-
 }

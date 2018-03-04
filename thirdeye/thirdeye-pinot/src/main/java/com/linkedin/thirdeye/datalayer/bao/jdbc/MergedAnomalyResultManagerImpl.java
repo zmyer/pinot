@@ -16,7 +16,6 @@ import java.util.List;
 import java.util.Map;
 import com.linkedin.thirdeye.datalayer.bao.MergedAnomalyResultManager;
 import com.linkedin.thirdeye.datalayer.dto.MergedAnomalyResultDTO;
-import com.linkedin.thirdeye.datalayer.pojo.EmailConfigurationBean;
 import com.linkedin.thirdeye.datalayer.pojo.MergedAnomalyResultBean;
 import com.linkedin.thirdeye.datalayer.util.Predicate;
 import java.util.concurrent.Callable;
@@ -129,27 +128,6 @@ public class MergedAnomalyResultManagerImpl extends AbstractManagerImpl<MergedAn
 
   public List<MergedAnomalyResultDTO> findByIdList(List<Long> idList) {
     return findByIdList(idList, true);
-  }
-
-  @Override
-  public List<MergedAnomalyResultDTO> getAllByTimeEmailIdAndNotifiedFalse(long startTime,
-      long endTime, long emailConfigId, boolean loadRawAnomalies) {
-    EmailConfigurationBean emailConfigurationBean =
-        genericPojoDao.get(emailConfigId, EmailConfigurationBean.class);
-    List<Long> functionIds = emailConfigurationBean.getFunctionIds();
-    if (functionIds == null || functionIds.isEmpty()) {
-      return Collections.emptyList();
-    }
-    Long[] functionIdArray = functionIds.toArray(new Long[] {});
-    Predicate predicate = Predicate.AND(//
-        Predicate.LT("startTime", endTime), //
-        Predicate.GT("endTime", startTime), //
-        Predicate.IN("functionId", functionIdArray), //
-        Predicate.EQ("notified", false)//
-    );
-    List<MergedAnomalyResultBean> list =
-        genericPojoDao.get(predicate, MergedAnomalyResultBean.class);
-    return convertMergedAnomalyBean2DTO(list, loadRawAnomalies);
   }
 
   @Override
@@ -271,6 +249,18 @@ public class MergedAnomalyResultManagerImpl extends AbstractManagerImpl<MergedAn
             Predicate.EQ("notified", false), Predicate.GT("endTime", System.currentTimeMillis() - TimeUnit.DAYS.toMillis(1)));
     List<MergedAnomalyResultBean> list = genericPojoDao.get(predicate, MergedAnomalyResultBean.class);
     return convertMergedAnomalyBean2DTO(list, loadRawAnomalies);
+  }
+
+  @Override
+  public List<MergedAnomalyResultDTO> findNotifiedByTime(long startTime, long endTime, boolean loadRawAnomalies) {
+    List<MergedAnomalyResultDTO> anomaliesByTime = findByTime(startTime, endTime, loadRawAnomalies);
+    List<MergedAnomalyResultDTO> notifiedAnomalies = new ArrayList<>();
+    for (MergedAnomalyResultDTO anomaly : anomaliesByTime) {
+      if (anomaly.isNotified()) {
+        notifiedAnomalies.add(anomaly);
+      }
+    }
+    return notifiedAnomalies;
   }
 
   @Override
@@ -494,4 +484,13 @@ public class MergedAnomalyResultManagerImpl extends AbstractManagerImpl<MergedAn
     return mergedAnomalyResultDTOList;
   }
 
+  @Override
+  public List<MergedAnomalyResultDTO> findByPredicate(Predicate predicate) {
+    List<MergedAnomalyResultDTO> dtoList = super.findByPredicate(predicate);
+    List<MergedAnomalyResultBean> beanList = new ArrayList<>();
+    for (MergedAnomalyResultDTO mergedAnomalyResultDTO :  dtoList) {
+      beanList.add(mergedAnomalyResultDTO);
+    }
+    return convertMergedAnomalyBean2DTO(beanList, true);
+  }
 }

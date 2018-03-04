@@ -1,4 +1,5 @@
-import Ember from 'ember';
+import { inject as service } from '@ember/service';
+import Route from '@ember/routing/route';
 import RSVP from 'rsvp';
 import moment from 'moment';
 import fetch from 'fetch';
@@ -14,7 +15,11 @@ const queryParamsConfig = {
   replace: false
 };
 
-export default Ember.Route.extend({
+const replaceConfig = {
+  replace: true
+};
+
+export default Route.extend({
   // queryParams for rca
   queryParams: {
     startDate: queryParamsConfig,
@@ -22,18 +27,20 @@ export default Ember.Route.extend({
     granularity: queryParamsConfig,
     filters: queryParamsConfig,
     compareMode: queryParamsConfig,
-    analysisStart: {replace: true},
-    analysisEnd: {replace: true}
+    analysisStart: replaceConfig,
+    analysisEnd: replaceConfig,
+    displayStart: replaceConfig,
+    displayEnd: replaceConfig
   },
 
-  redux: Ember.inject.service(),
+  redux: service(),
 
   // resets all redux stores' state
   beforeModel(transition) {
     const redux = this.get('redux');
 
     if (transition.targetName === 'rca.details.index') {
-      this.replaceWith('rca.details.events');
+      this.replaceWith('rca.details.dimensions');
     }
 
     return redux.dispatch(Actions.reset())
@@ -61,33 +68,60 @@ export default Ember.Route.extend({
 
     const {
       startDate,
-      endDate = moment().subtract(1, 'day').endOf('day').valueOf(),
+      endDate = moment().valueOf(),
       analysisStart,
       analysisEnd,
+      displayStart,
+      displayEnd,
       granularity = model.granularities[0],
       filters = JSON.stringify({}),
       compareMode = 'WoW'
     } = transition.queryParams;
 
+    const newEndDate = maxTime.isValid() && maxTime.isBefore(moment(+endDate))
+      ? maxTime
+      : moment(+endDate);
 
     if (granularity === 'DAYS') {
-      start = moment().subtract(29, 'days').startOf('day');
+      start = newEndDate.clone().subtract(29, 'days').startOf('day');
+    } else if (granularity === 'HOURS') {
+      start = newEndDate.clone().subtract(1, 'week').startOf('day');
     } else {
-      start = moment().subtract(24, 'hours').startOf('hour');
+      start = newEndDate.clone().subtract(24, 'hours').startOf('hour');
+    }
+    const momentEndDate = moment(+newEndDate);
+    let initStart = 0;
+    let initEnd = 0;
+    let subchartStart = 0;
+    let subchartEnd = momentEndDate.clone();
+
+    if (granularity === 'DAYS') {
+      initEnd = momentEndDate.clone().startOf('day');
+      initStart = initEnd.clone().subtract('1', 'day');
+      subchartStart = subchartEnd.clone().subtract(1, 'week').startOf('day');
+    } else if (granularity === 'HOURS') {
+      initEnd = momentEndDate.clone().startOf('hour');
+      initStart = initEnd.clone().subtract('1', 'hour');
+      subchartStart = subchartEnd.clone().subtract(1, 'day').startOf('day');
+    } else {
+      initEnd =  momentEndDate.clone().startOf('hour');
+      initStart = initEnd.clone().subtract('1', 'hour');
+      subchartStart = subchartEnd.clone().subtract(3, 'hours').startOf('hour');
     }
 
-
     const params = {
-      startDate: startDate || start,
-      endDate: maxTime.isValid() ? maxTime.valueOf() : endDate,
+      startDate: startDate || start.valueOf(),
+      endDate: newEndDate.valueOf(),
       granularity: granularity,
       filters,
       id: model.id,
-      analysisStart,
-      analysisEnd,
-      graphStart: analysisStart,
-      graphEnd: analysisEnd,
-      compareMode
+      analysisStart: analysisStart || initStart.valueOf(),
+      analysisEnd: analysisEnd || initEnd.valueOf(),
+      compareMode,
+      subchartStart: displayStart || subchartStart.valueOf(),
+      subchartEnd: displayEnd || subchartEnd.valueOf(),
+      displayStart: displayStart || subchartStart.valueOf(),
+      displayEnd: displayEnd || subchartEnd.valueOf()
     };
 
     Object.assign(model, params);
@@ -97,6 +131,27 @@ export default Ember.Route.extend({
       .then((res) => redux.dispatch(Actions.fetchRelatedMetricData(res)));
 
     return {};
+  },
+
+  resetController(controller, isExiting) {
+    this._super(...arguments);
+
+    if (isExiting) {
+      controller.setProperties({
+        model: null,
+        filters: {},
+        analysisStart: undefined,
+        analysisEnd: undefined,
+        granularity: undefined,
+        startDate: undefined,
+        endDate: undefined,
+        subchartStart: undefined,
+        subchartEnd: undefined,
+        displayStart: undefined,
+        displayEnd: undefined,
+        compareMode: 'WoW'
+      });
+    }
   },
 
   setupController(controller, model) {
@@ -109,24 +164,26 @@ export default Ember.Route.extend({
       filters,
       analysisStart,
       analysisEnd,
-      compareMode
+      compareMode,
+      subchartEnd,
+      subchartStart,
+      displayStart,
+      displayEnd
     } = model;
-
-    let diff = Math.floor((+endDate - startDate) / 4);
-    let initStart = analysisStart || (+startDate + diff);
-    let initEnd = analysisEnd || (+endDate - diff);
 
     controller.setProperties({
       model,
       filters,
-      analysisStart: initStart,
-      analysisEnd: initEnd,
-      extentStart: initStart,
-      extentEnd: initEnd,
+      analysisStart,
+      analysisEnd,
       granularity,
       startDate,
       endDate,
-      compareMode
+      compareMode,
+      subchartEnd,
+      subchartStart,
+      displayStart,
+      displayEnd
     });
   },
 
@@ -135,6 +192,14 @@ export default Ember.Route.extend({
       if (transition.targetName === 'rca.index') {
         this.refresh();
       }
+    },
+
+    /**
+     * Redirects the user from legacy to new rootcause
+     * @param {Number} metricId the metric id to redirect to
+     */
+    transitionToNewRca(metricId) {
+      this.transitionTo('rootcause', { queryParams: { metricId } });
     }
   }
 });

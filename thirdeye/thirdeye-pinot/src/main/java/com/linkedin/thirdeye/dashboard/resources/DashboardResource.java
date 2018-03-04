@@ -1,6 +1,6 @@
 package com.linkedin.thirdeye.dashboard.resources;
 
-import com.linkedin.thirdeye.constant.MetricAggFunction;
+import io.dropwizard.views.View;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -38,6 +38,7 @@ import com.google.common.base.Joiner;
 import com.google.common.cache.LoadingCache;
 import com.linkedin.thirdeye.api.TimeGranularity;
 import com.linkedin.thirdeye.api.TimeSpec;
+import com.linkedin.thirdeye.constant.MetricAggFunction;
 import com.linkedin.thirdeye.dashboard.Utils;
 import com.linkedin.thirdeye.dashboard.views.DashboardView;
 import com.linkedin.thirdeye.dashboard.views.contributor.ContributorViewHandler;
@@ -49,15 +50,12 @@ import com.linkedin.thirdeye.dashboard.views.heatmap.HeatMapViewResponse;
 import com.linkedin.thirdeye.dashboard.views.tabular.TabularViewHandler;
 import com.linkedin.thirdeye.dashboard.views.tabular.TabularViewRequest;
 import com.linkedin.thirdeye.dashboard.views.tabular.TabularViewResponse;
-import com.linkedin.thirdeye.datalayer.bao.DashboardConfigManager;
 import com.linkedin.thirdeye.datalayer.bao.MetricConfigManager;
-import com.linkedin.thirdeye.datalayer.dto.DashboardConfigDTO;
 import com.linkedin.thirdeye.datalayer.dto.DatasetConfigDTO;
 import com.linkedin.thirdeye.datalayer.dto.MetricConfigDTO;
 import com.linkedin.thirdeye.datasource.DAORegistry;
 import com.linkedin.thirdeye.datasource.MetricExpression;
 import com.linkedin.thirdeye.datasource.ThirdEyeCacheRegistry;
-import com.linkedin.thirdeye.datasource.cache.DatasetListCache;
 import com.linkedin.thirdeye.datasource.cache.QueryCache;
 import com.linkedin.thirdeye.datasource.timeseries.TimeSeriesHandler;
 import com.linkedin.thirdeye.datasource.timeseries.TimeSeriesRequest;
@@ -65,8 +63,6 @@ import com.linkedin.thirdeye.datasource.timeseries.TimeSeriesResponse;
 import com.linkedin.thirdeye.datasource.timeseries.TimeSeriesRow;
 import com.linkedin.thirdeye.datasource.timeseries.TimeSeriesRow.TimeSeriesMetric;
 import com.linkedin.thirdeye.util.ThirdEyeUtils;
-
-import io.dropwizard.views.View;
 
 @Path(value = "/dashboard")
 public class DashboardResource {
@@ -78,22 +74,16 @@ public class DashboardResource {
   private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
   private QueryCache queryCache;
-  private DatasetListCache collectionsCache;
-  private LoadingCache<String, Long> collectionMaxDataTimeCache;
-  private LoadingCache<String,String> dashboardsCache;
+  private LoadingCache<String, Long> datasetMaxDataTimeCache;
   private LoadingCache<String, String> dimensionFiltersCache;
 
   private MetricConfigManager metricConfigDAO;
-  private DashboardConfigManager dashboardConfigDAO;
 
   public DashboardResource() {
     this.queryCache = CACHE_REGISTRY_INSTANCE.getQueryCache();
-    this.collectionsCache = CACHE_REGISTRY_INSTANCE.getDatasetsCache();
-    this.collectionMaxDataTimeCache = CACHE_REGISTRY_INSTANCE.getCollectionMaxDataTimeCache();
-    this.dashboardsCache = CACHE_REGISTRY_INSTANCE.getDashboardsCache();
+    this.datasetMaxDataTimeCache = CACHE_REGISTRY_INSTANCE.getDatasetMaxDataTimeCache();
     this.dimensionFiltersCache = CACHE_REGISTRY_INSTANCE.getDimensionFiltersCache();
     this.metricConfigDAO = DAO_REGISTRY.getMetricConfigDAO();
-    this.dashboardConfigDAO = DAO_REGISTRY.getDashboardConfigDAO();
   }
 
   @GET
@@ -105,22 +95,10 @@ public class DashboardResource {
 
 
   @GET
-  @Path(value = "/data/datasets")
-  @Produces(MediaType.APPLICATION_JSON)
-  public List<String> getCollections() throws Exception {
-    try {
-      List<String> collections = collectionsCache.getDatasets();
-      return collections;
-    } catch (Exception e) {
-      LOG.error("Error while fetching datasets", e);
-      throw e;
-    }
-  }
-
-  @GET
   @Path(value = "/data/metrics")
   @Produces(MediaType.APPLICATION_JSON)
   public List<String> getMetrics(@QueryParam("dataset") String collection) throws Exception {
+    LOG.warn("Call to a deprecated end point /dashboard/data/metrics" + getClass().getName());
     try {
       List<String> metrics = new ArrayList<>();
       List<MetricConfigDTO> metricConfigs = metricConfigDAO.findActiveByDataset(collection);
@@ -139,6 +117,7 @@ public class DashboardResource {
   @Path(value = "/data/dimensions")
   @Produces(MediaType.APPLICATION_JSON)
   public String getDimensions(@QueryParam("dataset") String collection) {
+    LOG.warn("Call to a deprecated end point /dashboard/data/dimensions" + getClass().getName());
     String jsonDimensions = null;
     try {
       List<String> dimensions = Utils.getSortedDimensionNames(collection);
@@ -149,28 +128,18 @@ public class DashboardResource {
     return jsonDimensions;
   }
 
-  @GET
-  @Path(value = "/data/dashboards")
-  @Produces(MediaType.APPLICATION_JSON)
-  public String getDashboards(@QueryParam("dataset") String collection) {
-    String jsonDashboards = null;
-    try {
-      jsonDashboards = dashboardsCache.get(collection);
-    } catch (Exception e) {
-      LOG.error("Error while fetching dashboards for collection: " + collection, e);
-    }
-    return jsonDashboards;
-  }
 
   @GET
   @Path(value = "/data/info")
   @Produces(MediaType.APPLICATION_JSON)
   public String getMaxTime(@QueryParam("dataset") String collection) {
+    LOG.warn("Call to a deprecated end point /dashboard/data/info" + getClass().getName());
+
     String collectionInfo = null;
     try {
 
       HashMap<String, String> map = new HashMap<>();
-      long maxDataTime = collectionMaxDataTimeCache.get(collection);
+      long maxDataTime = datasetMaxDataTimeCache.get(collection);
       DatasetConfigDTO datasetConfig = CACHE_REGISTRY_INSTANCE.getDatasetConfigCache().get(collection);
       TimeSpec timespec = ThirdEyeUtils.getTimestampTimeSpecFromDatasetConfig(datasetConfig);
       TimeGranularity dataGranularity = timespec.getDataGranularity();
@@ -200,6 +169,7 @@ public class DashboardResource {
   @Path(value = "/data/filters")
   @Produces(MediaType.APPLICATION_JSON)
   public String getFilters(@QueryParam("dataset") String collection) {
+    LOG.warn("Call to a deprecated end point /dashboard/data/filters" + getClass().getName());
     String jsonFilters = null;
     try {
       jsonFilters = dimensionFiltersCache.get(collection);
@@ -211,72 +181,6 @@ public class DashboardResource {
 
 
   @GET
-  @Path(value = "/data/customDashboard")
-  @Produces(MediaType.APPLICATION_JSON)
-  public String getDashboardData(@QueryParam("dataset") String collection,
-      @QueryParam("dashboard") String dashboardName, @QueryParam("filters") String filterJson,
-      @QueryParam("timeZone") @DefaultValue(DEFAULT_TIMEZONE_ID) String timeZone,
-      @QueryParam("baselineStart") Long baselineStart, @QueryParam("baselineEnd") Long baselineEnd,
-      @QueryParam("currentStart") Long currentStart, @QueryParam("currentEnd") Long currentEnd,
-      @QueryParam("compareMode") String compareMode,
-      @QueryParam("aggTimeGranularity") String aggTimeGranularity) {
-    try {
-
-      TabularViewRequest request = new TabularViewRequest();
-      request.setCollection(collection);
-
-      List<MetricExpression> metricExpressions = new ArrayList<>();
-      DashboardConfigDTO dashboardConfig = dashboardConfigDAO.findByName(dashboardName);
-      List<Long> metricIds = dashboardConfig.getMetricIds();
-      for (Long metricId : metricIds) {
-        MetricConfigDTO metricConfig = metricConfigDAO.findById(metricId);
-        MetricExpression metricExpression = ThirdEyeUtils.getMetricExpressionFromMetricConfig(metricConfig);
-        metricExpressions.add(metricExpression);
-      }
-      request.setMetricExpressions(metricExpressions);
-
-      long maxDataTime = collectionMaxDataTimeCache.get(collection);
-      if (currentEnd > maxDataTime) {
-        long delta = currentEnd - maxDataTime;
-        currentEnd = currentEnd - delta;
-        baselineEnd = baselineEnd - delta;
-      }
-
-      // The input start and end time (i.e., currentStart, currentEnd, baselineStart, and
-      // baselineEnd) are given in millisecond since epoch, which is timezone insensitive. On the
-      // other hand, the start and end time of the request to be sent to backend database (e.g.,
-      // Pinot) could be converted to SimpleDateFormat, which is timezone sensitive. Therefore,
-      // we need to store user's start and end time in DateTime objects with data's timezone
-      // in order to ensure that the conversion to SimpleDateFormat is always correct regardless
-      // user and server's timezone, including daylight saving time.
-      DateTimeZone timeZoneForCollection = Utils.getDataTimeZone(collection);
-      request.setBaselineStart(new DateTime(baselineStart, timeZoneForCollection));
-      request.setBaselineEnd(new DateTime(baselineEnd, timeZoneForCollection));
-      request.setCurrentStart(new DateTime(currentStart, timeZoneForCollection));
-      request.setCurrentEnd(new DateTime(currentEnd, timeZoneForCollection));
-
-      if (filterJson != null && !filterJson.isEmpty()) {
-        filterJson = URLDecoder.decode(filterJson, "UTF-8");
-        request.setFilters(ThirdEyeUtils.convertToMultiMap(filterJson));
-      }
-
-      request.setTimeGranularity(Utils.getAggregationTimeGranularity(aggTimeGranularity, collection));
-
-      TabularViewHandler handler = new TabularViewHandler(queryCache);
-      String jsonResponse = null;
-
-      TabularViewResponse response = handler.process(request);
-      jsonResponse =
-          OBJECT_MAPPER.enable(SerializationFeature.INDENT_OUTPUT).writeValueAsString(response);
-      LOG.debug("customDashboard response {}", jsonResponse);
-      return jsonResponse;
-    } catch (Exception e) {
-      LOG.error("Exception while processing /data/tabular call", e);
-      return "{\"ERROR\": + " + e.getMessage() + "}";
-    }
-  }
-
-  @GET
   @Path(value = "/data/heatmap")
   @Produces(MediaType.APPLICATION_JSON)
   public String getHeatMap(@QueryParam("dataset") String collection,
@@ -286,6 +190,7 @@ public class DashboardResource {
       @QueryParam("currentStart") Long currentStart, @QueryParam("currentEnd") Long currentEnd,
       @QueryParam("compareMode") String compareMode, @QueryParam("metrics") String metricsJson)
       throws Exception {
+    LOG.warn("Call to a deprecated end point /dashboard/data/heatmap" + getClass().getName());
 
     HeatMapViewRequest request = new HeatMapViewRequest();
 
@@ -293,7 +198,7 @@ public class DashboardResource {
     List<MetricExpression> metricExpressions =
         Utils.convertToMetricExpressions(metricsJson, MetricAggFunction.SUM, collection);
     request.setMetricExpressions(metricExpressions);
-    long maxDataTime = collectionMaxDataTimeCache.get(collection);
+    long maxDataTime = datasetMaxDataTimeCache.get(collection);
     if (currentEnd > maxDataTime) {
       long delta = currentEnd - maxDataTime;
       currentEnd = currentEnd - delta;
@@ -338,6 +243,7 @@ public class DashboardResource {
       @QueryParam("currentStart") Long currentStart, @QueryParam("currentEnd") Long currentEnd,
       @QueryParam("aggTimeGranularity") String aggTimeGranularity,
       @QueryParam("metrics") String metricsJson) throws Exception {
+    LOG.warn("Call to a deprecated end point /dashboard/data/tabular" + getClass().getName());
 
     TabularViewRequest request = new TabularViewRequest();
     request.setCollection(collection);
@@ -345,7 +251,7 @@ public class DashboardResource {
     List<MetricExpression> metricExpressions =
         Utils.convertToMetricExpressions(metricsJson, MetricAggFunction.SUM, collection);
     request.setMetricExpressions(metricExpressions);
-    long maxDataTime = collectionMaxDataTimeCache.get(collection);
+    long maxDataTime = datasetMaxDataTimeCache.get(collection);
     if (currentEnd > maxDataTime) {
       long delta = currentEnd - maxDataTime;
       currentEnd = currentEnd - delta;
@@ -392,6 +298,7 @@ public class DashboardResource {
       @QueryParam("aggTimeGranularity") String aggTimeGranularity,
       @QueryParam("metrics") String metricsJson, @QueryParam("dimensions") String groupByDimensions)
       throws Exception {
+    LOG.warn("Call to a deprecated end point /dashboard/data/contributor" + getClass().getName());
 
     ContributorViewRequest request = new ContributorViewRequest();
     request.setCollection(collection);
@@ -399,7 +306,7 @@ public class DashboardResource {
     List<MetricExpression> metricExpressions =
         Utils.convertToMetricExpressions(metricsJson, MetricAggFunction.SUM, collection);
     request.setMetricExpressions(metricExpressions);
-    long maxDataTime = collectionMaxDataTimeCache.get(collection);
+    long maxDataTime = datasetMaxDataTimeCache.get(collection);
     if (currentEnd > maxDataTime) {
       long delta = currentEnd - maxDataTime;
       currentEnd = currentEnd - delta;
@@ -538,6 +445,8 @@ public class DashboardResource {
   @Path(value = "/thirdeye")
   @Produces(MediaType.APPLICATION_JSON)
   public String saySomethingAwesome(@QueryParam("praise") String praise) {
+    LOG.warn("Call to a deprecated end point /dashboard/thirdeye" + getClass().getName());
+
     JSONObject hello = new JSONObject();
     try {
       hello.put("thirdeye", praise);

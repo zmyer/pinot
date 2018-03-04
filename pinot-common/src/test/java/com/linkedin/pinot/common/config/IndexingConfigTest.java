@@ -45,6 +45,7 @@ public class IndexingConfigTest {
     json.put("onHeapDictionaryColumns", Arrays.asList(expectedOnHeapDictionaryColumns));
     json.put("loadMode", "MMAP");
     json.put("keyThatIsUnknown", "randomValue");
+    json.put("aggregateMetrics", "true");
 
     ObjectMapper mapper = new ObjectMapper();
     JsonNode jsonNode = mapper.readTree(json.toString());
@@ -68,6 +69,8 @@ public class IndexingConfigTest {
     for (int i = 0; i < expectedOnHeapDictionaryColumns.length; i++) {
       Assert.assertEquals(actualOnHeapDictionaryColumns.get(i), expectedOnHeapDictionaryColumns[i]);
     }
+
+    Assert.assertTrue(indexingConfig.getAggregateMetrics());
   }
 
   @Test
@@ -117,7 +120,7 @@ public class IndexingConfigTest {
     List<String> expectedDimensionSplitOrder = Arrays.asList("col1", "col2", "col3");
     expectedStarTreeSpec.setDimensionsSplitOrder(expectedDimensionSplitOrder);
 
-    Integer expectedMaxLeafRecords = random.nextInt();
+    int expectedMaxLeafRecords = random.nextInt();
     expectedStarTreeSpec.setMaxLeafRecords(expectedMaxLeafRecords);
 
     int expectedSkipMaterializationThreshold = random.nextInt();
@@ -141,9 +144,9 @@ public class IndexingConfigTest {
     Assert.assertEquals(actualStarTreeSpec.getDimensionsSplitOrder(), expectedDimensionSplitOrder);
     Assert.assertEquals(actualStarTreeSpec.getMaxLeafRecords(), expectedMaxLeafRecords);
 
-    Assert.assertEquals(actualStarTreeSpec.getskipMaterializationCardinalityThreshold(),
+    Assert.assertEquals(actualStarTreeSpec.getSkipMaterializationCardinalityThreshold(),
         expectedSkipMaterializationThreshold);
-    Assert.assertEquals(actualStarTreeSpec.getskipMaterializationForDimensions(),
+    Assert.assertEquals(actualStarTreeSpec.getSkipMaterializationForDimensions(),
         expectedSkipMaterializationDimensions);
     Assert.assertEquals(actualStarTreeSpec.getSkipStarNodeCreationForDimensions(),
         expectedSkipStarNodeCreationForDimension);

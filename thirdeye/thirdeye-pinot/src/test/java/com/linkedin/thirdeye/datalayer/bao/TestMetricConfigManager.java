@@ -1,5 +1,9 @@
 package com.linkedin.thirdeye.datalayer.bao;
 
+import com.linkedin.thirdeye.datalayer.DaoTestUtils;
+import com.linkedin.thirdeye.datasource.DAORegistry;
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
 
 import org.testng.Assert;
@@ -9,7 +13,7 @@ import org.testng.annotations.Test;
 
 import com.linkedin.thirdeye.datalayer.dto.MetricConfigDTO;
 
-public class TestMetricConfigManager extends AbstractManagerTestBase {
+public class TestMetricConfigManager {
 
   private Long metricConfigId1;
   private Long metricConfigId2;
@@ -20,28 +24,32 @@ public class TestMetricConfigManager extends AbstractManagerTestBase {
   private static String metric2 = "metric2";
   private static String derivedMetric1 = "metric3";
 
+  private DAOTestBase testDAOProvider;
+  private MetricConfigManager metricConfigDAO;
   @BeforeClass
   void beforeClass() {
-    super.init();
+    testDAOProvider = DAOTestBase.getInstance();
+    DAORegistry daoRegistry = DAORegistry.getInstance();
+    metricConfigDAO = daoRegistry.getMetricConfigDAO();
   }
 
   @AfterClass(alwaysRun = true)
   void afterClass() {
-    super.cleanup();
+    testDAOProvider.cleanup();
   }
 
   @Test
   public void testCreate() {
 
-    MetricConfigDTO metricConfig1 = getTestMetricConfig(dataset1, metric1, null);
+    MetricConfigDTO metricConfig1 = DaoTestUtils.getTestMetricConfig(dataset1, metric1, null);
     metricConfig1.setActive(false);
     metricConfigId1 = metricConfigDAO.save(metricConfig1);
     Assert.assertNotNull(metricConfigId1);
 
-    metricConfigId2 = metricConfigDAO.save(getTestMetricConfig(dataset2, metric2, null));
+    metricConfigId2 = metricConfigDAO.save(DaoTestUtils.getTestMetricConfig(dataset2, metric2, null));
     Assert.assertNotNull(metricConfigId2);
 
-    MetricConfigDTO metricConfig3 = getTestMetricConfig(dataset1, derivedMetric1, null);
+    MetricConfigDTO metricConfig3 = DaoTestUtils.getTestMetricConfig(dataset1, derivedMetric1, null);
     metricConfig3.setDerived(true);
     metricConfig3.setDerivedMetricExpression("id"+metricConfigId1+"/id"+metricConfigId2);
     derivedMetricConfigId = metricConfigDAO.save(metricConfig3);
@@ -78,7 +86,7 @@ public class TestMetricConfigManager extends AbstractManagerTestBase {
     Assert.assertEquals(metricConfigs.size(), 0);
   }
 
-  @Test(dependsOnMethods = { "testFindLike" })
+  @Test(dependsOnMethods = { "testFindLike", "testFindByAlias" })
   public void testUpdate() {
     MetricConfigDTO metricConfig = metricConfigDAO.findById(metricConfigId1);
     Assert.assertNotNull(metricConfig);
@@ -95,5 +103,16 @@ public class TestMetricConfigManager extends AbstractManagerTestBase {
     metricConfigDAO.deleteById(metricConfigId2);
     MetricConfigDTO metricConfig = metricConfigDAO.findById(metricConfigId2);
     Assert.assertNull(metricConfig);
+  }
+
+  @Test(dependsOnMethods = {"testFind"})
+  public void testFindByAlias() {
+    List<MetricConfigDTO> metricConfigs = metricConfigDAO.findWhereAliasLikeAndActive(
+        new HashSet<>(Arrays.asList("1", "3")));
+    Assert.assertEquals(metricConfigs.size(), 1);
+
+    metricConfigs = metricConfigDAO.findWhereAliasLikeAndActive(
+        new HashSet<>(Arrays.asList("etric", "m")));
+    Assert.assertEquals(metricConfigs.size(), 2);
   }
 }

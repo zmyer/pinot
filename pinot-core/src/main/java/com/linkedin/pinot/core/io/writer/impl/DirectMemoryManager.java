@@ -16,8 +16,11 @@
 
 package com.linkedin.pinot.core.io.writer.impl;
 
+import com.google.common.annotations.VisibleForTesting;
+import com.linkedin.pinot.common.metrics.ServerMetrics;
 import com.linkedin.pinot.core.io.readerwriter.RealtimeIndexOffHeapMemoryManager;
 import com.linkedin.pinot.core.segment.memory.PinotDataBuffer;
+import com.yammer.metrics.core.MetricsRegistry;
 
 
 // Allocates memory using direct allocation
@@ -26,22 +29,26 @@ public class DirectMemoryManager extends RealtimeIndexOffHeapMemoryManager {
   /**
    * @see RealtimeIndexOffHeapMemoryManager
    */
+  public DirectMemoryManager(final String segmentName, ServerMetrics serverMetrics) {
+    super(serverMetrics, segmentName);
+  }
+
+  @VisibleForTesting
   public DirectMemoryManager(final String segmentName) {
-    super(segmentName);
+    this(segmentName, new ServerMetrics(new MetricsRegistry()));
   }
 
   /**
    *
    * @param size size of memory
-   * @param columnName Name of the column for which memory is being allocated
+   * @param allocationContext String describing context of allocation (typically segment:column name).
    * @return PinotDataBuffer via direct allocation
    *
    * @see {@link RealtimeIndexOffHeapMemoryManager#allocate(long, String)}
    */
   @Override
-  protected PinotDataBuffer allocateInternal(long size, String columnName) {
-    PinotDataBuffer buffer = PinotDataBuffer.allocateDirect(size, getSegmentName() + "." + columnName);
-    return buffer;
+  protected PinotDataBuffer allocateInternal(long size, String allocationContext) {
+    return PinotDataBuffer.allocateDirect(size, allocationContext);
   }
 
   @Override

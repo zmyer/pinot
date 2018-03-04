@@ -16,7 +16,7 @@
 package com.linkedin.pinot.core.realtime.impl.dictionary;
 
 import com.linkedin.pinot.common.data.FieldSpec;
-import com.linkedin.pinot.core.io.readerwriter.RealtimeIndexOffHeapMemoryManager;
+import com.linkedin.pinot.core.io.readerwriter.PinotDataBufferMemoryManager;
 import com.linkedin.pinot.core.io.writer.impl.DirectMemoryManager;
 import java.util.HashMap;
 import java.util.Map;
@@ -45,7 +45,7 @@ public class MutableDictionaryTest {
   private static final Random RANDOM = new Random(RANDOM_SEED);
 
   private final ExecutorService _executorService = Executors.newFixedThreadPool(NUM_READERS + 1);
-  private final RealtimeIndexOffHeapMemoryManager _memoryManager =
+  private final PinotDataBufferMemoryManager _memoryManager =
       new DirectMemoryManager(MutableDictionaryTest.class.getName());
 
   @Test
@@ -64,7 +64,7 @@ public class MutableDictionaryTest {
       }
       {
         MutableDictionary dictionary =
-            new StringOffHeapMutableDictionary(EST_CARDINALITY, 2000, _memoryManager, "stringColumn");
+            new StringOffHeapMutableDictionary(EST_CARDINALITY, 2000, _memoryManager, "stringColumn", 32);
         testSingleReaderSingleWriter(dictionary, FieldSpec.DataType.STRING);
         dictionary.close();
       }
@@ -98,7 +98,7 @@ public class MutableDictionaryTest {
       }
       {
         MutableDictionary dictionary =
-            new StringOffHeapMutableDictionary(EST_CARDINALITY, 2000, _memoryManager, "stringColumn");
+            new StringOffHeapMutableDictionary(EST_CARDINALITY, 2000, _memoryManager, "stringColumn", 32);
         testMultiReadersSingleWriter(dictionary, FieldSpec.DataType.STRING);
         dictionary.close();
       }
@@ -125,7 +125,7 @@ public class MutableDictionaryTest {
   public void testOnHeapMutableDictionary() {
     try {
       for (FieldSpec.DataType dataType : DATA_TYPES) {
-        MutableDictionary dictionary = MutableDictionaryFactory.getMutableDictionary(dataType);
+        MutableDictionary dictionary = MutableDictionaryFactory.getMutableDictionary(dataType, false, null, 0, 0, null);
         testMutableDictionary(dictionary, dataType);
         dictionary.close();
       }
@@ -165,6 +165,17 @@ public class MutableDictionaryTest {
         valueToDictId.put(value, dictId);
       }
     }
+    if (dataType == FieldSpec.DataType.INT) {
+      Object value = new Integer(Integer.MIN_VALUE);
+      if (valueToDictId.containsKey(value)) {
+        Assert.assertEquals(dictionary.indexOf(value), (int) valueToDictId.get(value));
+      } else {
+        dictionary.index(value);
+        int dictId = dictionary.indexOf(value);
+        Assert.assertEquals(dictId, numEntries++);
+        valueToDictId.put(value, dictId);
+      }
+    }
   }
 
   private MutableDictionary makeOffHeapDictionary(int estCardinality, int maxOverflowSize,
@@ -179,7 +190,7 @@ public class MutableDictionaryTest {
       case DOUBLE:
         return new DoubleOffHeapMutableDictionary(estCardinality, maxOverflowSize, _memoryManager, "doubleColumn");
       case STRING:
-        return new StringOffHeapMutableDictionary(estCardinality, maxOverflowSize, _memoryManager, "stringColumn");
+        return new StringOffHeapMutableDictionary(estCardinality, maxOverflowSize, _memoryManager, "stringColumn", 32);
       default:
         throw new UnsupportedOperationException("Unsupported data type: " + dataType);
     }

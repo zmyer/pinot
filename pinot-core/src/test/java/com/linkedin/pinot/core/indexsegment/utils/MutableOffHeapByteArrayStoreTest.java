@@ -16,11 +16,11 @@
 
 package com.linkedin.pinot.core.indexsegment.utils;
 
+import com.linkedin.pinot.core.io.readerwriter.PinotDataBufferMemoryManager;
 import java.util.Arrays;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
-import com.linkedin.pinot.core.io.readerwriter.RealtimeIndexOffHeapMemoryManager;
 import com.linkedin.pinot.core.io.writer.impl.DirectMemoryManager;
 import com.linkedin.pinot.core.io.writer.impl.MutableOffHeapByteArrayStore;
 import junit.framework.Assert;
@@ -28,7 +28,7 @@ import junit.framework.Assert;
 
 public class MutableOffHeapByteArrayStoreTest {
 
-  private RealtimeIndexOffHeapMemoryManager _memoryManager;
+  private PinotDataBufferMemoryManager _memoryManager;
 
   @BeforeClass
   public void setUp() {
@@ -42,8 +42,8 @@ public class MutableOffHeapByteArrayStoreTest {
 
   @Test
   public void maxValueTest() throws Exception {
-    MutableOffHeapByteArrayStore store = new MutableOffHeapByteArrayStore(_memoryManager, "stringColumn");
-    final int arrSize = MutableOffHeapByteArrayStore.getStartSize();
+    MutableOffHeapByteArrayStore store = new MutableOffHeapByteArrayStore(_memoryManager, "stringColumn", 1024, 32);
+    final int arrSize = store.getStartSize();
     byte[] dataIn = new byte[arrSize-4];
     for (int i = 0; i < dataIn.length; i++) {
       dataIn[i] = (byte)(i % Byte.MAX_VALUE);
@@ -56,8 +56,8 @@ public class MutableOffHeapByteArrayStoreTest {
 
   @Test
   public void overflowTest() throws Exception {
-    MutableOffHeapByteArrayStore store = new MutableOffHeapByteArrayStore(_memoryManager, "stringColumn");
-    final int maxSize = MutableOffHeapByteArrayStore.getStartSize() - 4;
+    MutableOffHeapByteArrayStore store = new MutableOffHeapByteArrayStore(_memoryManager, "stringColumn", 1024, 32);
+    final int maxSize = store.getStartSize() - 4;
 
     byte[] b1 = new byte[3];
     for (int i = 0; i < b1.length; i++) {

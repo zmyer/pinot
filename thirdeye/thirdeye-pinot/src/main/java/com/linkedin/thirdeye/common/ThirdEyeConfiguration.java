@@ -1,30 +1,62 @@
 package com.linkedin.thirdeye.common;
 
-import io.dropwizard.Configuration;
+import com.linkedin.thirdeye.anomaly.SmtpConfiguration;
+import java.net.MalformedURLException;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
 
-public abstract class ThirdEyeConfiguration extends Configuration {
+import io.dropwizard.Configuration;
+
+public class ThirdEyeConfiguration extends Configuration {
   /**
    * Root directory for all other configuration
    */
   private String rootDir = "";
+  private String dataSources = "data-sources/data-sources-config.yml";
 
-  private List<String> whitelistCollections = new ArrayList<>();
-  private List<String> blacklistCollections = new ArrayList<>();
+  private List<String> whitelistDatasets = new ArrayList<>();
 
-  private String smtpHost = "";
-  private int smtpPort = 0;
+  private String dashboardHost;
+  private SmtpConfiguration smtpConfiguration;
 
   private String phantomJsPath = "";
+  private String failureFromAddress;
+  private String failureToAddress;
 
   /**
    * allow cross request for local development
    */
   private boolean cors = false;
 
-  public String getDataSourcesPath() {
-    return getRootDir() + "/data-sources/data-sources-config.yml";
+  /**
+   * Convert relative path to absolute URL
+   *
+   * Supported cases:
+   * <pre>
+   *   file:/....myDir/data-sources-config.yml
+   *   myDir/data-sources-config.yml
+   * </pre>
+   *
+   * @return the url of the data source
+   */
+  public URL getDataSourcesAsUrl() {
+    try {
+      return new URL(this.dataSources);
+    } catch (MalformedURLException ignore) {
+      // ignore
+    }
+
+    try {
+      URL rootUrl = new URL(String.format("file:%s/", this.rootDir));
+      return new URL(rootUrl, this.dataSources);
+    } catch (MalformedURLException e) {
+      throw new IllegalArgumentException(String.format("Could not parse relative path for rootDir '%s' and datSources '%s'", this.rootDir, this.dataSources));
+    }
+  }
+
+  public String getDataSources() {
+    return dataSources;
   }
 
   public String getRootDir() {
@@ -43,20 +75,12 @@ public abstract class ThirdEyeConfiguration extends Configuration {
     this.cors = cors;
   }
 
-  public List<String> getWhitelistCollections() {
-    return whitelistCollections;
+  public List<String> getWhitelistDatasets() {
+    return whitelistDatasets;
   }
 
-  public void setWhitelistCollections(List<String> whitelistCollections) {
-    this.whitelistCollections = whitelistCollections;
-  }
-
-  public List<String> getBlacklistCollections() {
-    return blacklistCollections;
-  }
-
-  public void setBlacklistCollections(List<String> blacklistCollections) {
-    this.blacklistCollections = blacklistCollections;
+  public void setWhitelistDatasets(List<String> whitelistDatasets) {
+    this.whitelistDatasets = whitelistDatasets;
   }
 
   public String getFunctionConfigPath() {
@@ -81,20 +105,12 @@ public abstract class ThirdEyeConfiguration extends Configuration {
     return getRootDir() + "/detector-config/anomaly-functions/anomalyClassifier.properties";
   }
 
-  public String getSmtpHost() {
-    return smtpHost;
+  public void setSmtpConfiguration(SmtpConfiguration smtpConfiguration) {
+    this.smtpConfiguration = smtpConfiguration;
   }
 
-  public void setSmtpHost(String smtpHost) {
-    this.smtpHost = smtpHost;
-  }
-
-  public int getSmtpPort() {
-    return smtpPort;
-  }
-
-  public void setSmtpPort(int smtpPort) {
-    this.smtpPort = smtpPort;
+  public SmtpConfiguration getSmtpConfiguration(){
+    return this.smtpConfiguration;
   }
 
   public String getPhantomJsPath() {
@@ -105,4 +121,31 @@ public abstract class ThirdEyeConfiguration extends Configuration {
     this.phantomJsPath = phantomJsPath;
   }
 
+  public String getDashboardHost() {
+    return dashboardHost;
+  }
+
+  public void setDashboardHost(String dashboardHost) {
+    this.dashboardHost = dashboardHost;
+  }
+
+  public String getFailureFromAddress() {
+    return failureFromAddress;
+  }
+
+  public void setFailureFromAddress(String failureFromAddress) {
+    this.failureFromAddress = failureFromAddress;
+  }
+
+  public String getFailureToAddress() {
+    return failureToAddress;
+  }
+
+  public void setFailureToAddress(String failureToAddress) {
+    this.failureToAddress = failureToAddress;
+  }
+
+  public void setDataSources(String dataSources) {
+    this.dataSources = dataSources;
+  }
 }

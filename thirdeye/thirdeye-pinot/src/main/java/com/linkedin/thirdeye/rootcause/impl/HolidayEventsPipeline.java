@@ -4,16 +4,17 @@ import com.linkedin.thirdeye.anomaly.events.EventDataProviderManager;
 import com.linkedin.thirdeye.anomaly.events.EventFilter;
 import com.linkedin.thirdeye.anomaly.events.EventType;
 import com.linkedin.thirdeye.datalayer.dto.EventDTO;
+import com.linkedin.thirdeye.rootcause.Entity;
+import com.linkedin.thirdeye.rootcause.MaxScoreSet;
 import com.linkedin.thirdeye.rootcause.Pipeline;
 import com.linkedin.thirdeye.rootcause.PipelineContext;
 import com.linkedin.thirdeye.rootcause.PipelineResult;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import org.apache.commons.collections.CollectionUtils;
+import java.util.concurrent.TimeUnit;
 import org.apache.commons.collections.MapUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -28,18 +29,24 @@ import org.slf4j.LoggerFactory;
 public class HolidayEventsPipeline extends Pipeline {
   private static final Logger LOG = LoggerFactory.getLogger(HolidayEventsPipeline.class);
 
+  private static final String DIMENSION_COUNTRY_CODE = "countryCode";
+
   enum StrategyType {
     LINEAR,
     TRIANGULAR,
     QUADRATIC,
-    DIMENSION
+    HYPERBOLA,
+    DIMENSION,
+    COMPOUND
   }
 
   private static final String PROP_K = "k";
   private static final int PROP_K_DEFAULT = -1;
 
   private static final String PROP_STRATEGY = "strategy";
-  private static final String PROP_STRATEGY_DEFAULT = StrategyType.TRIANGULAR.toString();
+  private static final String PROP_STRATEGY_DEFAULT = StrategyType.COMPOUND.toString();
+
+  private static final long OVERFETCH = TimeUnit.DAYS.toMillis(1);
 
   private final StrategyType strategy;
   private final EventDataProviderManager eventDataProvider;
@@ -80,49 +87,55 @@ public class HolidayEventsPipeline extends Pipeline {
     TimeRangeEntity baseline = TimeRangeEntity.getTimeRangeBaseline(context);
     TimeRangeEntity analysis = TimeRangeEntity.getTimeRangeAnalysis(context);
 
-    ScoringStrategy strategyCurrent = makeStrategy(analysis.getStart(), anomaly.getStart(), anomaly.getEnd());
+    ScoringStrategy strategyAnomaly = makeStrategy(analysis.getStart(), anomaly.getStart(), anomaly.getEnd());
     ScoringStrategy strategyBaseline = makeStrategy(baseline.getStart(), baseline.getStart(), baseline.getEnd());
 
+    // use both provided and generated
     Set<DimensionEntity> dimensionEntities = context.filter(DimensionEntity.class);
-    Map<String, DimensionEntity> urn2entity = EntityUtils.mapEntityURNs(dimensionEntities);
+    Map<String, DimensionEntity> countryCodeLookup = new HashMap<>();
+    for (DimensionEntity dimension : dimensionEntities) {
+      if (dimension.getName().equals(DIMENSION_COUNTRY_CODE)) {
+        countryCodeLookup.put(dimension.getValue(), dimension);
+      }
+    }
 
-    Set<HolidayEventEntity> entities = new HashSet<>();
-    entities.addAll(score(strategyCurrent, this.getHolidayEvents(analysis.getStart(), anomaly.getEnd(), dimensionEntities), urn2entity, 1.0));
-    entities.addAll(score(strategyBaseline, this.getHolidayEvents(baseline.getStart(), baseline.getEnd(), dimensionEntities), urn2entity, baseline.getScore()));
+    Set<HolidayEventEntity> entities = new MaxScoreSet<>();
+    entities.addAll(EntityUtils.addRelated(score(strategyAnomaly,
+        this.getHolidayEvents(analysis.getStart(), anomaly.getEnd()), countryCodeLookup, anomaly.getScore()), anomaly));
+    entities.addAll(EntityUtils.addRelated(score(strategyBaseline,
+        this.getHolidayEvents(baseline.getStart(), baseline.getEnd()), countryCodeLookup, baseline.getScore()), baseline));
 
     return new PipelineResult(context, EntityUtils.topk(entities, this.k));
   }
 
-  private List<EventDTO> getHolidayEvents(long start, long end, Set<DimensionEntity> dimensionEntities) {
+  private List<EventDTO> getHolidayEvents(long start, long end) {
     EventFilter filter = new EventFilter();
     filter.setEventType(EventType.HOLIDAY.toString());
-    filter.setStartTime(start);
-    filter.setEndTime(end);
-
-    Map<String, List<String>> filterMap = new HashMap<>();
-    if (CollectionUtils.isNotEmpty(dimensionEntities)) {
-      for (DimensionEntity dimensionEntity : dimensionEntities) {
-        String dimensionName = dimensionEntity.getName();
-        String dimensionValue = dimensionEntity.getValue();
-        if (!filterMap.containsKey(dimensionName)) {
-          filterMap.put(dimensionName, new ArrayList<String>());
-        }
-        filterMap.get(dimensionName).add(dimensionValue);
-      }
-    }
-    filter.setTargetDimensionMap(filterMap);
-
+    // overfetch to allow for timezone discrepancies
+    filter.setStartTime(start - OVERFETCH);
+    filter.setEndTime(end + OVERFETCH);
     return eventDataProvider.getEvents(filter);
   }
 
   /* **************************************************************************
    * Entity scoring
    * *************************************************************************/
-  private List<HolidayEventEntity> score(ScoringStrategy strategy, Iterable<EventDTO> events, Map<String, DimensionEntity> urn2entity, double coefficient) {
+  private List<HolidayEventEntity> score(ScoringStrategy strategy, Iterable<EventDTO> events, Map<String, DimensionEntity> countryCodeLookup, double coefficient) {
     List<HolidayEventEntity> entities = new ArrayList<>();
     for(EventDTO dto : events) {
-      double score = strategy.score(dto, urn2entity) * coefficient;
-      entities.add(HolidayEventEntity.fromDTO(score, dto));
+      List<Entity> related = new ArrayList<>();
+
+      if (dto.getTargetDimensionMap().containsKey(DIMENSION_COUNTRY_CODE)) {
+        for (String countryCode : dto.getTargetDimensionMap().get(DIMENSION_COUNTRY_CODE)) {
+          final String countryKey = countryCode.toLowerCase();
+          if (countryCodeLookup.containsKey(countryKey)) {
+            related.add(countryCodeLookup.get(countryKey));
+          }
+        }
+      }
+
+      HolidayEventEntity entity = HolidayEventEntity.fromDTO(1.0, related, dto);
+      entities.add(entity.withScore(strategy.score(entity) * coefficient));
     }
     return entities;
   }
@@ -135,56 +148,78 @@ public class HolidayEventsPipeline extends Pipeline {
         return new ScoreWrapper(new ScoreUtils.TriangularStartTimeStrategy(lookback, start, end));
       case QUADRATIC:
         return new ScoreWrapper(new ScoreUtils.QuadraticTriangularStartTimeStrategy(lookback, start, end));
+      case HYPERBOLA:
+        return new ScoreWrapper(new ScoreUtils.HyperbolaStrategy(start, end));
       case DIMENSION:
         return new DimensionStrategy();
+      case COMPOUND:
+        return new CompoundStrategy(new ScoreWrapper(new ScoreUtils.HyperbolaStrategy(start, end)));
       default:
         throw new IllegalArgumentException(String.format("Invalid strategy type '%s'", this.strategy));
     }
   }
 
   private interface ScoringStrategy {
-    double score(EventDTO dto, Map<String, DimensionEntity> urn2entity);
+    double score(HolidayEventEntity entity);
   }
 
+  /**
+   * Wrapper for ScoreUtils time-based strategies
+   */
   private static class ScoreWrapper implements ScoringStrategy {
     private final ScoreUtils.TimeRangeStrategy delegate;
 
-    public ScoreWrapper(ScoreUtils.TimeRangeStrategy delegate) {
+    ScoreWrapper(ScoreUtils.TimeRangeStrategy delegate) {
       this.delegate = delegate;
     }
 
     @Override
-    public double score(EventDTO dto, Map<String, DimensionEntity> urn2entity) {
-      return this.delegate.score(dto.getStartTime(), dto.getEndTime());
+    public double score(HolidayEventEntity entity) {
+      return this.delegate.score(entity.getDto().getStartTime(), entity.getDto().getEndTime());
     }
   }
 
+  /**
+   * Uses the highest score of dimension entities as they relate to an event
+   */
   private static class DimensionStrategy implements ScoringStrategy {
     @Override
-    public double score(EventDTO dto, Map<String, DimensionEntity> urn2entity) {
-      return makeDimensionScore(urn2entity, dto.getTargetDimensionMap());
-    }
-
-    private static double makeDimensionScore(Map<String, DimensionEntity> urn2entity, Map<String, List<String>> dimensionFilterMap) {
-      double sum = 0.0;
-      Set<String> urns = filter2urns(dimensionFilterMap);
-      for(String urn : urns) {
-        if(urn2entity.containsKey(urn)) {
-          sum += urn2entity.get(urn).getScore();
+    public double score(HolidayEventEntity entity) {
+      double max = 0.0;
+      for(Entity r : entity.getRelated()) {
+        if(r instanceof DimensionEntity) {
+          final DimensionEntity de = (DimensionEntity) r;
+          if (de.getName().equals(DIMENSION_COUNTRY_CODE)) {
+            max = Math.max(de.getScore(), max);
+          }
         }
       }
-      return sum;
+      return max;
+    }
+  }
+
+  /**
+   * Compound strategy that considers both event time as well as the presence of related dimension entities
+   */
+  private static class CompoundStrategy implements ScoringStrategy {
+    private final ScoringStrategy delegateTime;
+    private final ScoringStrategy delegateDimension = new DimensionStrategy();
+
+    CompoundStrategy(ScoringStrategy delegateTime) {
+      this.delegateTime = delegateTime;
     }
 
-    private static Set<String> filter2urns(Map<String, List<String>> dimensionFilterMap) {
-      Set<String> urns = new HashSet<>();
-      for(Map.Entry<String, List<String>> e : dimensionFilterMap.entrySet()) {
-        for(String val : e.getValue()) {
-          urns.add(DimensionEntity.TYPE.formatURN(e.getKey(), val.toLowerCase()));
-        }
-      }
-      return urns;
-    }
+    @Override
+    public double score(HolidayEventEntity entity) {
+      double scoreTime = this.delegateTime.score(entity);
+      double scoreDimension = this.delegateDimension.score(entity);
+      double scoreHasDimension = scoreDimension > 0 ? 1 : 0;
 
+      // ignore truncated results
+      if (scoreTime <= 0)
+        return 0;
+
+      return scoreTime + scoreHasDimension + Math.min(scoreDimension, 1);
+    }
   }
 }

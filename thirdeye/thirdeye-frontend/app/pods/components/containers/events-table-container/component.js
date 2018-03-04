@@ -1,11 +1,13 @@
-import Ember from 'ember';
+import Component from '@ember/component';
 import { connect } from 'ember-redux';
 
 function select(store) {
   const {
     loading,
     loaded,
-    events
+    events,
+    eventStart,
+    eventEnd
   } = store.events;
 
   const {
@@ -15,6 +17,8 @@ function select(store) {
   return {
     loading,
     loaded,
+    eventStart,
+    eventEnd,
     events: events.map((event) => {
       event = Object.assign({}, event);
       if (selectedEvents.includes(event.urn)) {
@@ -29,5 +33,5 @@ function actions() {
   return {};
 }
 
-export default connect(select, actions)(Ember.Component.extend({
+export default connect(select, actions)(Component.extend({
 }));

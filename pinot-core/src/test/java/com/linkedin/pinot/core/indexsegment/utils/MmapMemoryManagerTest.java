@@ -16,18 +16,21 @@
 
 package com.linkedin.pinot.core.indexsegment.utils;
 
+import com.linkedin.pinot.common.utils.MmapUtils;
+import com.linkedin.pinot.core.io.readerwriter.PinotDataBufferMemoryManager;
+import com.linkedin.pinot.core.io.writer.impl.MmapMemoryManager;
+import com.linkedin.pinot.core.segment.memory.PinotDataBuffer;
 import java.io.File;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.List;
 import org.apache.commons.io.FileUtils;
+import org.apache.commons.lang3.tuple.Pair;
 import org.testng.Assert;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
-import com.linkedin.pinot.core.io.readerwriter.RealtimeIndexOffHeapMemoryManager;
-import com.linkedin.pinot.core.io.writer.impl.MmapMemoryManager;
-import com.linkedin.pinot.core.segment.memory.PinotDataBuffer;
 
 
 public class MmapMemoryManagerTest {
@@ -51,7 +54,7 @@ public class MmapMemoryManagerTest {
   @Test
   public void testLargeBlocks() throws Exception {
     final String segmentName = "someSegment";
-    RealtimeIndexOffHeapMemoryManager memoryManager = new MmapMemoryManager(_tmpDir, segmentName);
+    PinotDataBufferMemoryManager memoryManager = new MmapMemoryManager(_tmpDir, segmentName);
     final long s1 = 2 * MmapMemoryManager.getDefaultFileLength();
     final long s2 = 1000;
     final String col1 = "col1";
@@ -93,13 +96,15 @@ public class MmapMemoryManagerTest {
 
     memoryManager.close();
 
+    List<Pair<MmapUtils.AllocationContext, Integer>> allocationContexts = MmapUtils.getAllocationsAndSizes();
+    Assert.assertEquals(allocationContexts.size(), 0);
     Assert.assertEquals(new File(_tmpDir).listFiles().length, 0);
   }
 
   @Test
   public void testSmallBlocksForSameColumn() throws Exception {
     final String segmentName = "someSegment";
-    RealtimeIndexOffHeapMemoryManager memoryManager = new MmapMemoryManager(_tmpDir, segmentName);
+    PinotDataBufferMemoryManager memoryManager = new MmapMemoryManager(_tmpDir, segmentName);
     final long s1 = 500;
     final long s2 = 1000;
     final String col1 = "col1";
@@ -124,13 +129,16 @@ public class MmapMemoryManagerTest {
 
     memoryManager.close();
 
+    List<Pair<MmapUtils.AllocationContext, Integer>> allocationContexts = MmapUtils.getAllocationsAndSizes();
+    Assert.assertEquals(allocationContexts.size(), 0);
+
     Assert.assertEquals(dir.listFiles().length, 0);
   }
 
   @Test
   public void testCornerConditions() throws Exception {
     final String segmentName = "someSegment";
-    RealtimeIndexOffHeapMemoryManager memoryManager = new MmapMemoryManager(_tmpDir, segmentName);
+    PinotDataBufferMemoryManager memoryManager = new MmapMemoryManager(_tmpDir, segmentName);
     final long s1 = MmapMemoryManager.getDefaultFileLength() - 1;
     final long s2 = 1;
     final long s3 = 100*1024*1024;
@@ -168,5 +176,7 @@ public class MmapMemoryManagerTest {
     Assert.assertEquals(bb3.get(0), v3);
 
     memoryManager.close();
+    List<Pair<MmapUtils.AllocationContext, Integer>> allocationContexts = MmapUtils.getAllocationsAndSizes();
+    Assert.assertEquals(allocationContexts.size(), 0);
   }
 }

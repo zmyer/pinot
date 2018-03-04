@@ -32,7 +32,10 @@ public enum ServerGauge implements AbstractMetrics.Gauge {
   LAST_REALTIME_SEGMENT_CATCHUP_DURATION_SECONDS("seconds", false),
   LAST_REALTIME_SEGMENT_COMPLETION_DURATION_SECONDS("seconds", false),
   KAFKA_PARTITION_OFFSET_LAG("messages", false),
-  RUNNING_QUERIES("runningQueries", false);
+  REALTIME_OFFHEAP_MEMORY_USED("bytes", false),
+  RUNNING_QUERIES("runningQueries", false),
+  NUM_SEGMENTS_SEARCHED("numSegmentsSearched", false),
+  REALTIME_SEGMENT_PARTITION_WIDTH("realtimeSegmentPartitionWidth", false);
 
   private final String gaugeName;
   private final String unit;

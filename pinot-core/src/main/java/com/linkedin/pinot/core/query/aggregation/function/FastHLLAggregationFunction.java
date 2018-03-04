@@ -23,7 +23,7 @@ import com.linkedin.pinot.core.query.aggregation.AggregationResultHolder;
 import com.linkedin.pinot.core.query.aggregation.ObjectAggregationResultHolder;
 import com.linkedin.pinot.core.query.aggregation.groupby.GroupByResultHolder;
 import com.linkedin.pinot.core.query.aggregation.groupby.ObjectGroupByResultHolder;
-import com.linkedin.pinot.core.startree.hll.HllConstants;
+import com.linkedin.pinot.startree.hll.HllConstants;
 import com.linkedin.pinot.core.startree.hll.HllUtil;
 import javax.annotation.Nonnull;
 
@@ -155,6 +155,11 @@ public class FastHLLAggregationFunction implements AggregationFunction<HyperLogL
       throw new RuntimeException("Caught exception while merging HyperLogLog.", e);
     }
     return intermediateResult1;
+  }
+
+  @Override
+  public boolean isIntermediateResultComparable() {
+    return false;
   }
 
   @Nonnull

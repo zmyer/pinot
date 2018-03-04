@@ -1,6 +1,8 @@
-import Ember from 'ember';
+import { alias } from '@ember/object/computed';
+import { computed } from '@ember/object';
+import Component from '@ember/component';
 
-export default Ember.Component.extend({
+export default Component.extend({
   events: [],
   onTabChange: null,
 
@@ -11,7 +13,7 @@ export default Ember.Component.extend({
   /**
    * Holiday Events
    */
-  holidays: Ember.computed(
+  holidays: computed(
     'events.@each',
     function() {
       return this.get('events')
@@ -22,7 +24,7 @@ export default Ember.Component.extend({
   /**
    * GCN events
    */
-  gcn: Ember.computed(
+  gcn: computed(
     'events.@each',
     function() {
       return this.get('events')
@@ -30,11 +32,22 @@ export default Ember.Component.extend({
     }
   ),
 
+  /**
+   * anomaly events
+   */
+  anomaly: computed(
+    'events.@each',
+    function() {
+      return this.get('events')
+        .filter(event => event.eventType === 'anomaly');
+    }
+  ),
+
 
   /**
    * Informed events
    */
-  informed: Ember.computed(
+  informed: computed(
     'events.@each',
     function() {
       return this.get('events')
@@ -46,7 +59,7 @@ export default Ember.Component.extend({
   /**
    * Lix events
    */
-  lix: Ember.computed(
+  lix: computed(
     'events.@each',
     function() {
       return this.get('events')
@@ -57,11 +70,12 @@ export default Ember.Component.extend({
   /**
    * Count of events
    */
-  allCount: Ember.computed.alias('events.length'),
-  holidayCount: Ember.computed.alias('holidays.length'),
-  gcnCount: Ember.computed.alias('gcn.length'),
-  informedCount: Ember.computed.alias('informed.length'),
-  lixCount: Ember.computed.alias('lix.length'),
+  allCount: alias('events.length'),
+  holidayCount: alias('holidays.length'),
+  gcnCount: alias('gcn.length'),
+  informedCount: alias('informed.length'),
+  lixCount: alias('lix.length'),
+  anomalyCount: alias('anomaly.length'),
 
   actions: {
     // Handles tab change on click

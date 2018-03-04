@@ -33,8 +33,8 @@ InvestigateView.prototype = {
     const anomaly = this.investigateModel.getAnomaly();
     const wowData = this.investigateModel.getWowData();
     const currentValue = wowData.currentVal;
-    const wowResults = this.formatWowResults(wowData.compareResults, anomaly);
-    const externalUrls = anomaly.externalUrl ? JSON.parse(anomaly.externalUrl) : null;
+    const externalUrls = anomaly.externalUrl ? JSON.parse(anomaly.externalUrl) : {};
+    const wowResults = this.formatWowResults(wowData.compareResults, anomaly, externalUrls.INGRAPH);
 
     this.investigateData = {
       anomaly,
@@ -44,7 +44,7 @@ InvestigateView.prototype = {
     };
   },
 
-  formatWowResults( wowResults, args = {}){
+  formatWowResults(wowResults, args = {}, hasIngraph = false){
     const {
       anomalyStart,
       anomalyEnd,
@@ -52,16 +52,22 @@ InvestigateView.prototype = {
       timeUnit,
       currentStart,
       currentEnd,
-      anomalyFunctionDimension
+      anomalyFunctionDimension,
       } = args;
 
     const granularity = (timeUnit === 'MINUTES') ? '5_MINUTES' : timeUnit;
     const filters = {};
     const start = moment(currentStart);
     const end = moment(currentEnd);
-    const heatMapCurrentStart = moment(anomalyStart);
-    const heatMapCurrentEnd = moment(anomalyEnd);
+    const anomalyRegionStart = moment(anomalyStart);
+    const anomalyRegionEnd = moment(anomalyEnd);
 
+    const diff = anomalyRegionEnd.valueOf() - anomalyRegionStart.valueOf();
+    const currentViewStart = anomalyRegionStart.valueOf() - diff;
+    const currentViewEnd = anomalyRegionEnd.valueOf() + diff;
+    const displayStart = currentViewStart + Math.round(diff/2);
+    const displayEnd = currentViewEnd - Math.round(diff/2);
+    
     const parsedDimensions = JSON.parse(anomalyFunctionDimension);
     const dimensionKeys = Object.keys(parsedDimensions);
     const dimension = dimensionKeys.length ? dimensionKeys[0] : 'All';
@@ -72,18 +78,18 @@ InvestigateView.prototype = {
         const offset = constants.WOW_MAPPING[wow.compareMode];
         const baselineStart = start.clone().subtract(offset, 'days');
         const baselineEnd = end.clone().subtract(offset, 'days');
-        const heatMapBaselineStart = heatMapCurrentStart.clone().subtract(offset, 'days');
-        const heatMapBaselineEnd = heatMapCurrentEnd.clone().subtract(offset, 'days');
+        const heatMapBaselineStart = anomalyRegionStart.clone().subtract(offset, 'days');
+        const heatMapBaselineEnd = anomalyRegionEnd.clone().subtract(offset, 'days');
+        const tab = hasIngraph ? 'events' : 'dimensions';
         wow.change *= 100;
-        wow.url = `thirdeye#analysis?metricId=${metricId}&dimension=${dimension}&currentStart=${start.valueOf()}&currentEnd=${end.valueOf()}&` +
-            `baselineStart=${baselineStart.valueOf()}&baselineEnd=${baselineEnd.valueOf()}&` +
-            `compareMode=${wow.compareMode}&filters={}&granularity=${granularity}&` +
-            `heatMapCurrentStart=${heatMapCurrentStart.valueOf()}&` +
-            `heatMapCurrentEnd=${heatMapCurrentEnd.valueOf()}&heatMapBaselineStart=${heatMapBaselineStart.valueOf()}&` +
-            `heatMapBaselineEnd=${heatMapBaselineEnd.valueOf()}&filters=${anomalyFunctionDimension}&heatMapFilters=${anomalyFunctionDimension}`;
+        wow.newUrl = `app/#/rca/${metricId}/${tab}?analysisStart=${anomalyRegionStart.valueOf()}&analysisEnd=${anomalyRegionEnd.valueOf()}&` +
+          `displayStart=${displayStart}&displayEnd=${displayEnd}&` +
+          `startDate=${currentViewStart}&endDate=${currentViewEnd}&` +
+          `compareMode=${wow.compareMode}&filters=${anomalyFunctionDimension}&granularity=${granularity}`;
 
-        wow.newUrl = `app#/rca/${metricId}/metrics?startDate=${start.valueOf()}&endDate=${end.valueOf()}&` +
-          `compareMode=${wow.compareMode}&filters=&filters=${anomalyFunctionDimension}&granularity=${granularity}`;
+        wow.betaUrl = `app/#/rootcause?anomalyId=${this.anomalyId}`
+        wow.isLast = wow.compareMode == 'Wo3W'
+
         return wow;
       });
   },

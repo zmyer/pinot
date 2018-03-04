@@ -32,12 +32,13 @@ import com.linkedin.pinot.core.common.BlockMultiValIterator;
 import com.linkedin.pinot.core.common.BlockSingleValIterator;
 import com.linkedin.pinot.core.common.BlockValSet;
 import com.linkedin.pinot.core.common.Constants;
+import com.linkedin.pinot.core.common.DataSource;
+import com.linkedin.pinot.core.data.manager.config.InstanceDataManagerConfig;
 import com.linkedin.pinot.core.data.manager.config.TableDataManagerConfig;
 import com.linkedin.pinot.core.data.manager.realtime.HLRealtimeSegmentDataManager;
 import com.linkedin.pinot.core.data.manager.realtime.TimerService;
 import com.linkedin.pinot.core.realtime.RealtimeFileBasedReaderTest;
 import com.linkedin.pinot.core.realtime.RealtimeSegment;
-import com.linkedin.pinot.core.realtime.impl.datasource.RealtimeColumnDataSource;
 import com.linkedin.pinot.core.segment.index.loader.IndexLoadingConfig;
 import com.linkedin.pinot.segments.v1.creator.SegmentTestUtils;
 import com.yammer.metrics.core.MetricsRegistry;
@@ -55,6 +56,8 @@ import org.apache.helix.ZNRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.testng.annotations.BeforeClass;
+
+import static org.mockito.Mockito.*;
 
 
 public class RealtimeTableDataManagerTest {
@@ -115,10 +118,22 @@ public class RealtimeTableDataManagerTest {
     return tableDataManagerConfig;
   }
 
+  private InstanceDataManagerConfig makeInstanceDataManagerConfig() {
+    InstanceDataManagerConfig dataManagerConfig = mock(InstanceDataManagerConfig.class);
+    when(dataManagerConfig.getReadMode()).thenReturn(null);
+    when(dataManagerConfig.getAvgMultiValueCount()).thenReturn(null);
+    when(dataManagerConfig.getSegmentFormatVersion()).thenReturn(null);
+    when(dataManagerConfig.isEnableDefaultColumns()).thenReturn(false);
+    when(dataManagerConfig.isEnableSplitCommit()).thenReturn(false);
+    when(dataManagerConfig.isRealtimeOffHeapAllocation()).thenReturn(false);
+    return dataManagerConfig;
+  }
+
   public void testSetup() throws Exception {
+    InstanceDataManagerConfig dataManagerConfig = makeInstanceDataManagerConfig();
     final HLRealtimeSegmentDataManager manager =
         new HLRealtimeSegmentDataManager(realtimeSegmentZKMetadata, tableConfig, instanceZKMetadata, null,
-            tableDataManagerConfig.getDataDir(), new IndexLoadingConfig(null, tableConfig), getTestSchema(),
+            tableDataManagerConfig.getDataDir(), new IndexLoadingConfig(dataManagerConfig, tableConfig), getTestSchema(),
             new ServerMetrics(new MetricsRegistry()));
 
     final long start = System.currentTimeMillis();
@@ -140,7 +155,7 @@ public class RealtimeTableDataManagerTest {
         long sum = 0;
         try {
           RealtimeSegment segment = (RealtimeSegment) manager.getSegment();
-          RealtimeColumnDataSource mDs = (RealtimeColumnDataSource) segment.getDataSource("count");
+          DataSource mDs = segment.getDataSource("count");
           BlockValSet valSet = mDs.nextBlock().getBlockValueSet();
           BlockSingleValIterator valIt = (BlockSingleValIterator) valSet.iterator();
           int val = valIt.nextIntVal();
@@ -166,7 +181,7 @@ public class RealtimeTableDataManagerTest {
         long sum = 0;
         try {
           RealtimeSegment segment = (RealtimeSegment) manager.getSegment();
-          RealtimeColumnDataSource mDs = (RealtimeColumnDataSource) segment.getDataSource("viewerId");
+          DataSource mDs = segment.getDataSource("viewerId");
           BlockValSet valSet = mDs.nextBlock().getBlockValueSet();
           BlockSingleValIterator valIt = (BlockSingleValIterator) valSet.iterator();
           int val = valIt.nextIntVal();
@@ -192,7 +207,7 @@ public class RealtimeTableDataManagerTest {
         long sum = 0;
         try {
           RealtimeSegment segment = (RealtimeSegment) manager.getSegment();
-          RealtimeColumnDataSource mDs = (RealtimeColumnDataSource) segment.getDataSource("daysSinceEpoch");
+          DataSource mDs = segment.getDataSource("daysSinceEpoch");
           BlockValSet valSet = mDs.nextBlock().getBlockValueSet();
           BlockSingleValIterator valIt = (BlockSingleValIterator) valSet.iterator();
           int val = valIt.nextIntVal();
@@ -219,7 +234,7 @@ public class RealtimeTableDataManagerTest {
         float counter = 0F;
         try {
           RealtimeSegment segment = (RealtimeSegment) manager.getSegment();
-          RealtimeColumnDataSource mDs = (RealtimeColumnDataSource) segment.getDataSource("viewerCompanies");
+          DataSource mDs = segment.getDataSource("viewerCompanies");
           Block b = mDs.nextBlock();
           BlockValSet valSet = b.getBlockValueSet();
           BlockMultiValIterator valIt = (BlockMultiValIterator) valSet.iterator();

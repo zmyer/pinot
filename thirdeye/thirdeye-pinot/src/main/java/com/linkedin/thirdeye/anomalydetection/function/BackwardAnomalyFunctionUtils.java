@@ -17,6 +17,7 @@ import org.joda.time.DateTime;
 import org.joda.time.Interval;
 
 public class BackwardAnomalyFunctionUtils {
+  private static final Double NULL_DOUBLE = Double.NaN;
 
   public static List<Pair<Long, Long>> toBackwardCompatibleDataRanges(
       List<Interval> timeSeriesIntervals) {
@@ -56,8 +57,10 @@ public class BackwardAnomalyFunctionUtils {
     for (long timestamp : metricTimeSeries.getTimeWindowSet()) {
       for (TimeSeries timeSeries : timeSeriesList) {
         if (timeSeries.getTimeSeriesInterval().contains(timestamp)) {
-          double value = metricTimeSeries.get(timestamp, metricName).doubleValue();
-          timeSeries.set(timestamp, value);
+          double value = metricTimeSeries.getOrDefault(timestamp, metricName, NULL_DOUBLE).doubleValue();
+          if (Double.compare(value, NULL_DOUBLE) != 0) {
+            timeSeries.set(timestamp, value);
+          }
         }
       }
     }
@@ -118,7 +121,7 @@ public class BackwardAnomalyFunctionUtils {
     @Override public int compare(TimeSeries ts1, TimeSeries ts2) {
       long startTime1 = ts1.getTimeSeriesInterval().getStartMillis();
       long startTime2 = ts2.getTimeSeriesInterval().getStartMillis();
-      return (int) (startTime1 - startTime2);
+      return Long.compare(startTime1, startTime2);
     }
   }
 }

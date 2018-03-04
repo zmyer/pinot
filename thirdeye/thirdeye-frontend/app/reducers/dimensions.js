@@ -1,7 +1,6 @@
 import { ActionTypes } from '../actions/dimensions';
 import { colors } from '../actions/constants';
 
-import moment from 'moment';
 import _ from 'lodash';
 
 /**
@@ -29,7 +28,10 @@ const INITIAL_STATE = {
   dimensions: {},
   timeseries: [],
   selectedDimension: 'All',
-  heatmapData: {}
+  heatmapData: {},
+  heatmapLoaded: false,
+  regionStart: '',
+  regionEnd :''
 };
 
 export default function reducer(state = INITIAL_STATE, action = {}) {
@@ -57,7 +59,8 @@ export default function reducer(state = INITIAL_STATE, action = {}) {
     case ActionTypes.SET: {
       const selectedDimension = action.payload;
       return Object.assign({}, state, {
-        selectedDimension
+        selectedDimension,
+        heatmapLoaded: false
       });
     }
 
@@ -74,6 +77,9 @@ export default function reducer(state = INITIAL_STATE, action = {}) {
       const { selectedDimension } = state;
 
       const dimensions = Object.keys(subdimensionMap)
+        .filter((subdimension)=> {
+          return subdimension.length && subdimension !== 'All';
+        })
         .reduce((hash, subdimension, index) => {
           const subdimensionData = _.merge(
             {
@@ -92,6 +98,23 @@ export default function reducer(state = INITIAL_STATE, action = {}) {
       return Object.assign({}, state, {
         timeseries,
         dimensions: Object.assign({}, state.dimensions, dimensions),
+        heatmapLoaded: true,
+        loading: false,
+        failed: false
+      });
+    }
+
+    case ActionTypes.SET_DATE: {
+      const [ regionStart, regionEnd ] = action.payload;
+
+      return Object.assign({}, state, {
+        regionStart,
+        regionEnd
+      });
+    }
+
+    case ActionTypes.LOADED: {
+      return Object.assign({}, state, {
         loaded: true,
         loading: false,
         failed: false

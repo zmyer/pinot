@@ -1,4 +1,4 @@
-import Ember from 'ember';
+import Component from '@ember/component';
 import { connect } from 'ember-redux';
 import _ from 'lodash';
 
@@ -12,7 +12,9 @@ function select(store) {
     regions,
     primaryMetricId,
     compareMode,
-    granularity
+    granularity,
+    regionStart,
+    regionEnd
   } = store.metrics;
 
   const {
@@ -27,6 +29,8 @@ function select(store) {
     failed,
     compareMode,
     granularity,
+    regionStart,
+    regionEnd,
     primaryMetric: uiRelatedMetric[primaryMetricId],
     relatedMetrics: relatedMetricIds
       .map((id) => {
@@ -46,5 +50,5 @@ function actions() {
   return {};
 }
 
-export default connect(select, actions)(Ember.Component.extend({
+export default connect(select, actions)(Component.extend({
 }));

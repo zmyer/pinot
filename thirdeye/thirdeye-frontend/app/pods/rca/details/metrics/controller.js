@@ -1,25 +1,34 @@
-import Ember from 'ember';
+import { later } from '@ember/runloop';
+import Controller, { inject as controller } from '@ember/controller';
 import { task, timeout } from 'ember-concurrency';
 import moment from 'moment';
 
-export default Ember.Controller.extend({
-  detailsController: Ember.inject.controller('rca/details'),
+export default Controller.extend({
+  detailsController: controller('rca/details'),
   splitView: false,
   selectedTab: 'change',
 
   mostRecentTask: null,
   loading: false,
   splitViewLoading: false,
+  dateFormat: 'MMM D, YYYY hh:mm a',
 
+  analysisStart: 0,
+  analysisEnd: 0,
+
+  displayStart:0,
+  displayEnd: 0,
+
+  subchartStart: 0,
+  subchartEnd: 0,
   // Ember concurrency task that sets new analysis start and end
   dateChangeTask: task(function* ([start, end]) {
-    yield timeout(600);
+    yield timeout(500);
 
-    this.set('loading', true);
     let startDate = moment(start).valueOf();
     let endDate = moment(end).valueOf();
 
-    Ember.run.later(() => {
+    later(() => {
       this.setProperties({
         analysisStart: startDate,
         analysisEnd: endDate
@@ -30,6 +39,7 @@ export default Ember.Controller.extend({
   actions: {
     // Handles subgraph date change
     onDateChange(date) {
+      this.set('loading', true);
       const mostRecentTask = this.get('mostRecentTask');
       mostRecentTask && mostRecentTask.cancel();
 
@@ -38,6 +48,10 @@ export default Ember.Controller.extend({
       this.set('mostRecentTask', taskInstance);
 
       return date;
+    },
+
+    onRendering() {
+      this.set('loading', false);
     },
 
     /**
@@ -49,7 +63,7 @@ export default Ember.Controller.extend({
       if (currentTab !== tab) {
         this.set('loading', true);
 
-        Ember.run.later(() => {
+        later(() => {
           this.setProperties({
             selectedTab: tab
           });

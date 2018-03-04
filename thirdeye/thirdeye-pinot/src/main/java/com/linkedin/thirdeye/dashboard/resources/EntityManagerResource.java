@@ -2,11 +2,11 @@ package com.linkedin.thirdeye.dashboard.resources;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Strings;
+import com.linkedin.thirdeye.common.ThirdEyeConfiguration;
 import com.linkedin.thirdeye.datalayer.bao.AlertConfigManager;
 import com.linkedin.thirdeye.datalayer.bao.AnomalyFunctionManager;
 import com.linkedin.thirdeye.datalayer.bao.ApplicationManager;
 import com.linkedin.thirdeye.datalayer.bao.ClassificationConfigManager;
-import com.linkedin.thirdeye.datalayer.bao.DashboardConfigManager;
 import com.linkedin.thirdeye.datalayer.bao.DatasetConfigManager;
 import com.linkedin.thirdeye.datalayer.bao.EntityToEntityMappingManager;
 import com.linkedin.thirdeye.datalayer.bao.MetricConfigManager;
@@ -16,7 +16,6 @@ import com.linkedin.thirdeye.datalayer.dto.AlertConfigDTO;
 import com.linkedin.thirdeye.datalayer.dto.AnomalyFunctionDTO;
 import com.linkedin.thirdeye.datalayer.dto.ApplicationDTO;
 import com.linkedin.thirdeye.datalayer.dto.ClassificationConfigDTO;
-import com.linkedin.thirdeye.datalayer.dto.DashboardConfigDTO;
 import com.linkedin.thirdeye.datalayer.dto.DatasetConfigDTO;
 import com.linkedin.thirdeye.datalayer.dto.EntityToEntityMappingDTO;
 import com.linkedin.thirdeye.datalayer.dto.MetricConfigDTO;
@@ -26,6 +25,8 @@ import com.linkedin.thirdeye.datasource.DAORegistry;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 
 import javax.ws.rs.Consumes;
@@ -47,7 +48,6 @@ import org.slf4j.LoggerFactory;
 @Consumes(MediaType.APPLICATION_JSON)
 public class EntityManagerResource {
   private final AnomalyFunctionManager anomalyFunctionManager;
-  private final DashboardConfigManager dashboardConfigManager;
   private final MetricConfigManager metricConfigManager;
   private final DatasetConfigManager datasetConfigManager;
   private final OverrideConfigManager overrideConfigManager;
@@ -55,15 +55,15 @@ public class EntityManagerResource {
   private final ClassificationConfigManager classificationConfigManager;
   private final ApplicationManager applicationManager;
   private final EntityToEntityMappingManager entityToEntityMappingManager;
+  private final ThirdEyeConfiguration config;
 
   private static final DAORegistry DAO_REGISTRY = DAORegistry.getInstance();
 
   public static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
   private static final Logger LOG = LoggerFactory.getLogger(EntityManagerResource.class);
 
-  public EntityManagerResource() {
+  public EntityManagerResource(ThirdEyeConfiguration configuration) {
     this.anomalyFunctionManager = DAO_REGISTRY.getAnomalyFunctionDAO();
-    this.dashboardConfigManager = DAO_REGISTRY.getDashboardConfigDAO();
     this.metricConfigManager = DAO_REGISTRY.getMetricConfigDAO();
     this.datasetConfigManager = DAO_REGISTRY.getDatasetConfigDAO();
     this.overrideConfigManager = DAO_REGISTRY.getOverrideConfigDAO();
@@ -71,10 +71,11 @@ public class EntityManagerResource {
     this.classificationConfigManager = DAO_REGISTRY.getClassificationConfigDAO();
     this.applicationManager = DAO_REGISTRY.getApplicationDAO();
     this.entityToEntityMappingManager = DAO_REGISTRY.getEntityToEntityMappingDAO();
+    this.config = configuration;
   }
 
   private enum EntityType {
-    ANOMALY_FUNCTION, DASHBOARD_CONFIG, DATASET_CONFIG, METRIC_CONFIG,
+    ANOMALY_FUNCTION, DATASET_CONFIG, METRIC_CONFIG,
     OVERRIDE_CONFIG, ALERT_CONFIG, CLASSIFICATION_CONFIG, APPLICATION, ENTITY_MAPPING
   }
 
@@ -90,16 +91,29 @@ public class EntityManagerResource {
     List<AbstractDTO> results = new ArrayList<>();
     switch (entityType) {
     case ANOMALY_FUNCTION:
-      results.addAll(anomalyFunctionManager.findAllActiveFunctions());
-      break;
-    case DASHBOARD_CONFIG:
-      results.addAll(dashboardConfigManager.findAll());
+      results.addAll(anomalyFunctionManager.findAll());
       break;
     case DATASET_CONFIG:
-      results.addAll(datasetConfigManager.findAll());
+      List<DatasetConfigDTO> allDatasets = datasetConfigManager.findAll();
+      Collections.sort(allDatasets, new Comparator<DatasetConfigDTO>() {
+
+        @Override
+        public int compare(DatasetConfigDTO o1, DatasetConfigDTO o2) {
+          return o1.getDataset().compareTo(o2.getDataset());
+        }
+      });
+      results.addAll(allDatasets);
       break;
     case METRIC_CONFIG:
-      results.addAll(metricConfigManager.findAll());
+      List<MetricConfigDTO> allMetrics = metricConfigManager.findAll();
+      Collections.sort(allMetrics, new Comparator<MetricConfigDTO>() {
+
+        @Override
+        public int compare(MetricConfigDTO o1, MetricConfigDTO o2) {
+          return o1.getDataset().compareTo(o2.getDataset());
+        }
+      });
+      results.addAll(allMetrics);
       break;
     case OVERRIDE_CONFIG:
       results.addAll(overrideConfigManager.findAll());
@@ -132,10 +146,6 @@ public class EntityManagerResource {
       switch (entityType) {
 
       // Update Only end point for these
-      case DASHBOARD_CONFIG:
-        DashboardConfigDTO dashboardConfigDTO = OBJECT_MAPPER.readValue(jsonPayload, DashboardConfigDTO.class);
-        dashboardConfigManager.update(dashboardConfigDTO);
-        break;
       case DATASET_CONFIG:
         DatasetConfigDTO datasetConfigDTO = OBJECT_MAPPER.readValue(jsonPayload, DatasetConfigDTO.class);
         datasetConfigManager.update(datasetConfigDTO);
@@ -164,6 +174,9 @@ public class EntityManagerResource {
         break;
       case ALERT_CONFIG:
         AlertConfigDTO alertConfigDTO = OBJECT_MAPPER.readValue(jsonPayload, AlertConfigDTO.class);
+        if (Strings.isNullOrEmpty(alertConfigDTO.getFromAddress())) {
+          alertConfigDTO.setFromAddress(config.getFailureToAddress());
+        }
         if (alertConfigDTO.getId() == null) {
           alertConfigManager.save(alertConfigDTO);
         } else {

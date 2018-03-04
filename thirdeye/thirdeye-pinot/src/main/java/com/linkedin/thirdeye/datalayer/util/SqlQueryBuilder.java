@@ -40,7 +40,7 @@ public class SqlQueryBuilder {
   private static final Pattern PARAM_PATTERN =
       Pattern.compile(PARAM_REGEX, Pattern.CASE_INSENSITIVE);
   private static Set<String> AUTO_UPDATE_COLUMN_SET =
-      Sets.newHashSet("id", "last_modified", "update_time");
+      Sets.newHashSet("id", "last_modified");
 
   private EntityMappingHolder entityMappingHolder;;
 
@@ -413,7 +413,10 @@ public class SqlQueryBuilder {
     LinkedHashMap<String, ColumnInfo> columnInfo =
         entityMappingHolder.columnInfoPerTable.get(tableName);
     for (String entityFieldName : paramNames) {
-      String dbFieldName = dbNameToEntityNameMapping.inverse().get(entityFieldName);
+      String[] entityFieldNameParts = entityFieldName.split("__", 2);
+      if (entityFieldNameParts.length > 1)
+        LOG.info("Using field name decomposition: '{}' to '{}'", entityFieldName, entityFieldNameParts[0]);
+      String dbFieldName = dbNameToEntityNameMapping.inverse().get(entityFieldNameParts[0]);
 
       Object val = parameterMap.get(entityFieldName);
       if (Enum.class.isAssignableFrom(val.getClass())) {

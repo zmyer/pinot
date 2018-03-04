@@ -16,11 +16,11 @@
 
 package com.linkedin.pinot.core.realtime.impl.dictionary;
 
-import java.io.IOException;
-import java.util.Arrays;
-import com.linkedin.pinot.core.io.readerwriter.RealtimeIndexOffHeapMemoryManager;
+import com.linkedin.pinot.core.io.readerwriter.PinotDataBufferMemoryManager;
 import com.linkedin.pinot.core.io.readerwriter.impl.FixedByteSingleColumnSingleValueReaderWriter;
 import com.linkedin.pinot.core.segment.creator.impl.V1Constants;
+import java.io.IOException;
+import java.util.Arrays;
 import javax.annotation.Nonnull;
 
 
@@ -30,12 +30,12 @@ public class LongOffHeapMutableDictionary extends BaseOffHeapMutableDictionary {
 
   private final FixedByteSingleColumnSingleValueReaderWriter _dictIdToValue;
 
-  public LongOffHeapMutableDictionary(int estimatedCardinality, int overflowSize, RealtimeIndexOffHeapMemoryManager memoryManager,
-      String columnName) {
-    super(estimatedCardinality, overflowSize, memoryManager, columnName);
+  public LongOffHeapMutableDictionary(int estimatedCardinality, int overflowSize, PinotDataBufferMemoryManager memoryManager,
+      String allocationContext) {
+    super(estimatedCardinality, overflowSize, memoryManager, allocationContext);
     final int initialEntryCount = nearestPowerOf2(estimatedCardinality);
     _dictIdToValue = new FixedByteSingleColumnSingleValueReaderWriter(initialEntryCount, V1Constants.Numbers.LONG_SIZE,
-        memoryManager, columnName);
+        memoryManager, allocationContext);
   }
 
   public Object get(int dictionaryId) {
@@ -112,6 +112,7 @@ public class LongOffHeapMutableDictionary extends BaseOffHeapMutableDictionary {
 
   @Nonnull
   @Override
+  @SuppressWarnings("Duplicates")
   public long[] getSortedValues() {
     int numValues = length();
     long[] sortedValues = new long[numValues];
@@ -122,6 +123,11 @@ public class LongOffHeapMutableDictionary extends BaseOffHeapMutableDictionary {
 
     Arrays.sort(sortedValues);
     return sortedValues;
+  }
+
+  @Override
+  public int getAvgValueSize() {
+    return V1Constants.Numbers.LONG_SIZE;
   }
 
   @Override
@@ -161,5 +167,10 @@ public class LongOffHeapMutableDictionary extends BaseOffHeapMutableDictionary {
     if (value > _max) {
       _max = value;
     }
+  }
+
+  @Override
+  public long getTotalOffHeapMemUsed() {
+    return super.getTotalOffHeapMemUsed() + V1Constants.Numbers.LONG_SIZE * length();
   }
 }

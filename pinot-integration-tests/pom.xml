@@ -60,6 +60,8 @@
               </jvmSettings>
             </program>
           </programs>
+          <repositoryLayout>flat</repositoryLayout>
+          <repositoryName>lib</repositoryName>
         </configuration>
       </plugin>
     </plugins>
@@ -80,7 +82,7 @@
               <excludes>
                 <!-- Covered by FlakyConsumerRealtimeClusterIntegrationTest -->
                 <exclude>**/RealtimeClusterIntegrationTest.java</exclude>
-                <!-- Covered by MinionClusterIntegrationTest -->
+                <!-- Covered by ConvertToRawIndexMinionClusterIntegrationTest -->
                 <exclude>**/HybridClusterIntegrationTest.java</exclude>
               </excludes>
             </configuration>
@@ -190,12 +192,18 @@
     <dependency>
       <groupId>com.h2database</groupId>
       <artifactId>h2</artifactId>
-      <version>1.4.193</version>
     </dependency>
     <dependency>
       <groupId>com.github.jnr</groupId>
       <artifactId>jnr-posix</artifactId>
-      <version>3.0.12</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.hadoop</groupId>
+      <artifactId>hadoop-common</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.hadoop</groupId>
+      <artifactId>hadoop-client</artifactId>
     </dependency>
   </dependencies>
 </project>

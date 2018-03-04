@@ -18,6 +18,7 @@ import com.linkedin.thirdeye.datasource.DAORegistry;
 import com.linkedin.thirdeye.datasource.MetricExpression;
 import com.linkedin.thirdeye.datasource.ResponseParserUtils;
 import com.linkedin.thirdeye.datasource.ThirdEyeCacheRegistry;
+import com.linkedin.thirdeye.datasource.timeseries.AnomalyDetectionTimeSeriesResponseParser;
 import com.linkedin.thirdeye.datasource.timeseries.TimeSeriesHandler;
 import com.linkedin.thirdeye.datasource.timeseries.TimeSeriesRequest;
 import com.linkedin.thirdeye.datasource.timeseries.TimeSeriesResponse;
@@ -27,7 +28,6 @@ import com.linkedin.thirdeye.detector.function.AnomalyFunctionFactory;
 import com.linkedin.thirdeye.detector.function.BaseAnomalyFunction;
 import com.linkedin.thirdeye.detector.metric.transfer.ScalingFactor;
 import com.linkedin.thirdeye.util.ThirdEyeUtils;
-
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -39,7 +39,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
-
 import org.apache.commons.collections.MapUtils;
 import org.apache.commons.lang.NullArgumentException;
 import org.apache.commons.lang3.StringUtils;
@@ -346,10 +345,13 @@ public class AnomalyDetectionInputContextBuilder {
    * @return
    */
   public AnomalyDetectionInputContextBuilder fetchScalingFactors(DateTime windowStart, DateTime windowEnd) {
+    return fetchScalingFactors(anomalyFunction.getDataRangeIntervals(windowStart.getMillis(), windowEnd.getMillis()));
+  }
+  public AnomalyDetectionInputContextBuilder fetchScalingFactors(List<Pair<Long, Long>> dataRangeIntervals) {
     List<ScalingFactor> scalingFactors = OverrideConfigHelper
         .getTimeSeriesScalingFactors(DAO_REGISTRY.getOverrideConfigDAO(), anomalyFunctionSpec.getCollection(),
             anomalyFunctionSpec.getMetric(), anomalyFunctionSpec.getId(),
-            anomalyFunction.getDataRangeIntervals(windowStart.getMillis(), windowEnd.getMillis()));
+            dataRangeIntervals);
     this.anomalyDetectionInputContext.setScalingFactors(scalingFactors);
     return this;
   }
@@ -481,15 +483,9 @@ public class AnomalyDetectionInputContextBuilder {
     TimeGranularity timeGranularity = new TimeGranularity(anomalyFunctionSpec.getBucketSize(),
         anomalyFunctionSpec.getBucketUnit());
 
-    DatasetConfigDTO dataset = DAORegistry.getInstance().getDatasetConfigDAO().findByDataset(anomalyFunctionSpec.getCollection());
-    boolean doRollUp = true;
-    if (!dataset.isAdditive()) {
-      doRollUp = false;
-    }
-
     TimeSeriesResponse timeSeriesResponse =
         getTimeSeriesResponseImpl(anomalyFunctionSpec, startEndTimeRanges,
-            timeGranularity, filters, groupByDimensions, endTimeInclusive, doRollUp);
+            timeGranularity, filters, groupByDimensions, endTimeInclusive);
 
     try {
       Map<DimensionKey, MetricTimeSeries> dimensionKeyMetricTimeSeriesMap =
@@ -545,10 +541,9 @@ public class AnomalyDetectionInputContextBuilder {
       groupByDimensions = Arrays.asList(anomalyFunctionSpec.getExploreDimensions().trim().split(","));
     }
 
-    final boolean doRollUp = false;
     TimeSeriesResponse response =
         getTimeSeriesResponseImpl(anomalyFunctionSpec, startEndTimeRanges,
-            timeGranularity, filters, groupByDimensions, endTimeInclusive, doRollUp);
+            timeGranularity, filters, groupByDimensions, endTimeInclusive);
     try {
       Map<DimensionKey, MetricTimeSeries> metricTimeSeriesMap = TimeSeriesResponseConverter.toMap(response,
           Utils.getSchemaDimensionNames(anomalyFunctionSpec.getCollection()));
@@ -576,7 +571,6 @@ public class AnomalyDetectionInputContextBuilder {
     TimeGranularity timeGranularity = new TimeGranularity(anomalyFunctionSpec.getBucketSize(),
         anomalyFunctionSpec.getBucketUnit());
     DatasetConfigDTO dataset = DAORegistry.getInstance().getDatasetConfigDAO().findByDataset(anomalyFunctionSpec.getCollection());
-    boolean doRollUp = false;
 
     List<String> metricsToFetch = new ArrayList<>();
     if(StringUtils.isNotEmpty(anomalyFunctionSpec.getGlobalMetric())) {
@@ -586,7 +580,7 @@ public class AnomalyDetectionInputContextBuilder {
     }
     TimeSeriesResponse timeSeriesResponse =
         getTimeSeriesResponseImpl(anomalyFunctionSpec, metricsToFetch, startEndTimeRanges,
-            timeGranularity, filters, groupByDimensions, false, doRollUp);
+            timeGranularity, filters, groupByDimensions, false);
 
     MetricTimeSeries globalMetric = null;
     try {
@@ -654,19 +648,19 @@ public class AnomalyDetectionInputContextBuilder {
 
   private TimeSeriesResponse getTimeSeriesResponseImpl(AnomalyFunctionDTO anomalyFunctionSpec,
       List<Pair<Long, Long>> startEndTimeRanges, TimeGranularity timeGranularity, Multimap<String, String> filters,
-      List<String> groupByDimensions, boolean endTimeInclusive, boolean doRollUp)
+      List<String> groupByDimensions, boolean endTimeInclusive)
       throws JobExecutionException, ExecutionException {
     return getTimeSeriesResponseImpl(anomalyFunctionSpec, anomalyFunctionSpec.getMetrics(), startEndTimeRanges,
-        timeGranularity, filters, groupByDimensions, endTimeInclusive, doRollUp);
+        timeGranularity, filters, groupByDimensions, endTimeInclusive);
   }
 
   private TimeSeriesResponse getTimeSeriesResponseImpl(AnomalyFunctionDTO anomalyFunctionSpec, List<String> metrics,
       List<Pair<Long, Long>> startEndTimeRanges, TimeGranularity timeGranularity, Multimap<String, String> filters,
-      List<String> groupByDimensions, boolean endTimeInclusive, boolean doRollUp)
+      List<String> groupByDimensions, boolean endTimeInclusive)
       throws JobExecutionException, ExecutionException {
 
     TimeSeriesHandler timeSeriesHandler =
-        new TimeSeriesHandler(ThirdEyeCacheRegistry.getInstance().getQueryCache(), doRollUp);
+        new TimeSeriesHandler(ThirdEyeCacheRegistry.getInstance().getQueryCache());
 
     // Seed request with top-level...
     TimeSeriesRequest seedRequest = new TimeSeriesRequest();
@@ -696,7 +690,7 @@ public class AnomalyDetectionInputContextBuilder {
       request.setStart(startTime);
       request.setEnd(endTime);
 
-      Future<TimeSeriesResponse> response = timeSeriesHandler.asyncHandle(request);
+      Future<TimeSeriesResponse> response = timeSeriesHandler.asyncHandle(request, new AnomalyDetectionTimeSeriesResponseParser());
       if (response != null) {
         futureResponses.add(response);
         requests.add(request);

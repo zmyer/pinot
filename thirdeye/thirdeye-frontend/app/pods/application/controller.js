@@ -3,9 +3,14 @@
  * @module  application
  * @exports application
  */
-import Ember from 'ember';
+import { inject as service } from '@ember/service';
 
-export default Ember.Controller.extend({
+import { alias } from '@ember/object/computed';
+import Controller from '@ember/controller';
+
+export default Controller.extend({
+  showNavbar: alias('model'),
+  session: service(),
 
   /**
    * Global navbar items
@@ -13,27 +18,21 @@ export default Ember.Controller.extend({
    */
   globalNavItems: [
     {
-      className: 'home',
-      link: '/thirdeye',
-      isCustomLink: true,
-      title: 'Home'
-    },
-    {
       className: 'anomalies',
       link: '/thirdeye#anomalies',
       isCustomLink: true,
       title: 'Anomalies'
     },
     {
-      className: 'rca',
-      link: 'rca',
+      className: 'rootcause',
+      link: 'rootcause',
       title: 'Root Cause Analysis',
       isCustomLink: false
     },
     {
       className: 'manage',
-      link: 'manage',
-      title: 'Manage'
+      link: 'manage.alerts',
+      title: 'Manage Alerts'
     }
   ]
 });

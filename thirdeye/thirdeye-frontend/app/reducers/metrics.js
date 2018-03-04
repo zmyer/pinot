@@ -35,7 +35,9 @@ const INITIAL_STATE = {
   filters: {},
   granularity: 'DAYS',
   compareMode: 'WoW',
-  splitView: false
+  splitView: false,
+  regionStart: '',
+  regionEnd: ''
 };
 
 export default function reducer(state = INITIAL_STATE, action = {}) {
@@ -46,6 +48,14 @@ export default function reducer(state = INITIAL_STATE, action = {}) {
         loaded: false,
         failed: false
       });
+
+    case ActionTypes.LOADED: {
+      return Object.assign({}, state, {
+        loaded: true,
+        loading: false,
+        failed: false
+      });
+    }
 
     case ActionTypes.LOAD_PRIMARY_METRIC: {
       let {
@@ -82,7 +92,7 @@ export default function reducer(state = INITIAL_STATE, action = {}) {
     case ActionTypes.LOAD_IDS: {
       const relatedMetrics = action.payload;
       const relatedMetricIds = relatedMetrics
-        .sort((prev, next) => next.score > prev.score)
+        .sortBy('score').reverse()
         .map((metric) => Number(metric.urn.split('thirdeye:metric:').pop()));
 
       return Object.assign({}, state,  {
@@ -138,6 +148,15 @@ export default function reducer(state = INITIAL_STATE, action = {}) {
 
       return Object.assign({}, state, {
         selectedMetricIds
+      });
+    }
+
+    case ActionTypes.SET_DATE: {
+      const [ regionStart, regionEnd ] = action.payload;
+
+      return Object.assign({}, state, {
+        regionStart,
+        regionEnd
       });
     }
 

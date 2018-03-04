@@ -1,8 +1,10 @@
-import Ember from 'ember';
+import { computed } from '@ember/object';
+import { oneWay } from '@ember/object/computed';
+import Controller from '@ember/controller';
 import { task, timeout } from 'ember-concurrency';
 
-export default Ember.Controller.extend({
-  primaryMetric: Ember.computed.oneWay('model'),
+export default Controller.extend({
+  primaryMetric: oneWay('model'),
   mostRecentSearch: null,
 
   /**
@@ -11,11 +13,25 @@ export default Ember.Controller.extend({
   searchMetrics: task(function* (metric) {
     yield timeout(600);
     let url = `/data/autocomplete/metric?name=${metric}`;
-    return fetch(url)
+
+    /**
+     * Necessary headers for fetch
+     */
+    const headers = {
+      method: "GET",
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+        'Cache': 'no-cache'
+      },
+      credentials: 'include'
+    };
+
+    return fetch(url, headers)
       .then(res => res.json());
   }),
 
-  placeholder: Ember.computed(function() {
+  placeholder: computed(function() {
     'Search for a Metric';
   }),
 

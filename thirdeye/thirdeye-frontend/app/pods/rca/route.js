@@ -1,7 +1,8 @@
-import Ember from 'ember';
+import Route from '@ember/routing/route';
 import fetch from 'fetch';
+import AuthenticatedRouteMixin from 'ember-simple-auth/mixins/authenticated-route-mixin';
 
-export default Ember.Route.extend({
+export default Route.extend(AuthenticatedRouteMixin, {
 
   model(params, transition) {
     const {
@@ -9,10 +10,20 @@ export default Ember.Route.extend({
     } = transition.params;
 
     const { metricId = null } = detailsParams;
-    if (!metricId) { return; }
+
+    if (!metricId) { return {}; }
 
     return fetch(`/data/metric/${metricId}`)
       .then(res => res.json());
+  },
+
+  setupController(controller, model) {
+    this._super(...arguments);
+
+    // clears the controller's primaryMetric
+    if (!Object.keys(model).length) {
+      controller.set('primaryMetric', null);
+    }
   },
 
   actions: {

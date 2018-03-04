@@ -1,6 +1,6 @@
+import { hash } from 'rsvp';
 import { type } from './utils';
 import fetch from 'fetch';
-import Ember from 'ember';
 import moment from 'moment';
 import { COMPARE_MODE_MAPPING } from './constants';
 
@@ -16,6 +16,7 @@ export const ActionTypes = {
   LOAD_PRIMARY_METRIC: type('[Primary Metric] Load Primary Primary Metric'),
   UPDATE_COMPARE_MODE: type('[Primary Metric] Update Compare Mode'),
   UPDATE_DATES: type('[Primary Metric] Update Date'),
+  SELECT_PRIMARY: type('[Primary Metric] Toggles Primary Metric Selection'),
   SELECT_DIMENSION: type('[Primary Metric] Set Selected Dimension'),
   SELECT_EVENTS: type('[Primary Metric] Set Selected Events'),
   SELECT_METRICS: type('[Primary Metric] set Selected Metrics'),
@@ -97,6 +98,12 @@ function resetSelectedData() {
   };
 }
 
+function selectPrimary() {
+  return {
+    type: ActionTypes.SELECT_PRIMARY
+  };
+}
+
 
 /**
  * Initialize store with metric data from query params
@@ -124,8 +131,8 @@ function fetchRegions() {
     } = store.primaryMetric;
 
     const metricIds = [primaryMetricId, ...relatedMetricIds].join(',');
-     // todo: identify better way for query params
-    return fetch(`/data/anomalies/ranges?metricIds=${metricIds}&start=${currentStart}&end=${currentEnd}&filters=${filters}`)
+    // todo: identify better way for query params
+    return fetch(`/data/anomalies/ranges?metricIds=${metricIds}&start=${currentStart}&end=${currentEnd}&filters=${encodeURIComponent(filters)}`)
       .then(res => res.json())
       .then(res => dispatch(loadRegions(res)))
       .catch(() => {
@@ -158,13 +165,13 @@ function fetchRelatedMetricData() {
 
     if (!metricIds.length) { return; }
     const promiseHash = metricIds.reduce((hash, id) => {
-      const url = `/timeseries/compare/${id}/${currentStart}/${currentEnd}/${baselineStart}/${baselineEnd}?dimension=All&granularity=${granularity}&filters=${filters}`;
+      const url = `/timeseries/compare/${id}/${currentStart}/${currentEnd}/${baselineStart}/${baselineEnd}?dimension=All&granularity=${granularity}&filters=${encodeURIComponent(filters)}`;
       hash[id] = fetch(url).then(res => res.json());
 
       return hash;
     }, {});
 
-    return Ember.RSVP.hash(promiseHash)
+    return hash(promiseHash)
       .then(res => dispatch(loadRelatedMetricsData(res)))
       .catch(() => {
         dispatch(requestFail());
@@ -179,7 +186,7 @@ function fetchRelatedMetricData() {
  */
 function updateMetricDate(startDate, endDate) {
   return (dispatch) => {
-    startDate = startDate? moment(Number(startDate)) : startDate;
+    startDate = startDate ? moment(Number(startDate)) : startDate;
     endDate = endDate ? moment(Number(endDate)) : endDate;
 
     dispatch(updateDates({
@@ -249,6 +256,7 @@ export const Actions = {
   updateCompareMode,
   updateMetricDate,
   updateAnalysisDates,
+  selectPrimary,
   selectMetric,
   selectDimension,
   selectEvent,

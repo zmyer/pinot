@@ -16,11 +16,16 @@
 
 package com.linkedin.pinot.core.io.readerwriter;
 
-import java.io.Closeable;
+import com.google.common.base.Preconditions;
+import com.linkedin.pinot.common.metrics.ServerGauge;
+import com.linkedin.pinot.common.metrics.ServerMetrics;
+import com.linkedin.pinot.common.utils.HLCSegmentName;
+import com.linkedin.pinot.common.utils.LLCSegmentName;
+import com.linkedin.pinot.common.utils.SegmentName;
+import com.linkedin.pinot.core.segment.memory.PinotDataBuffer;
 import java.io.IOException;
 import java.util.LinkedList;
 import java.util.List;
-import com.linkedin.pinot.core.segment.memory.PinotDataBuffer;
 
 
 /**
@@ -32,19 +37,26 @@ import com.linkedin.pinot.core.segment.memory.PinotDataBuffer;
  *
  * Closing the RealtimeOffHeapMemoryManager also releases all the resources allocated by the OffHeapMemoryManager.
  */
-public abstract class RealtimeIndexOffHeapMemoryManager implements Closeable {
+public abstract class RealtimeIndexOffHeapMemoryManager implements PinotDataBufferMemoryManager {
   private final List<PinotDataBuffer> _buffers = new LinkedList<>();
   private final String _segmentName;
+  private final ServerMetrics _serverMetrics;
+  private long _totalAllocatedBytes = 0;
+  private final String _tableName;
 
-  protected RealtimeIndexOffHeapMemoryManager(String segmentName) {
+  protected RealtimeIndexOffHeapMemoryManager(ServerMetrics serverMetrics, String segmentName) {
+    _serverMetrics = serverMetrics;
     _segmentName = segmentName;
-  }
-
-  /**
-   * @return A string representing a context for all allocations using this policy
-   */
-  public String getSegmentName() {
-    return _segmentName;
+    if (SegmentName.isLowLevelConsumerSegmentName(segmentName)) {
+      LLCSegmentName llcSegmentName = new LLCSegmentName(segmentName);
+      _tableName = llcSegmentName.getTableName();
+    } else if (SegmentName.isHighLevelConsumerSegmentName(segmentName)) {
+      HLCSegmentName hlcSegmentName = new HLCSegmentName(segmentName);
+      _tableName = hlcSegmentName.getTableName();
+    } else {
+      // For testing only
+      _tableName = "NoSuchTable";
+    }
   }
 
   /**
@@ -55,12 +67,16 @@ public abstract class RealtimeIndexOffHeapMemoryManager implements Closeable {
    * is guaranteed to return a new block of memory.
    *
    * @param size size of memory
-   * @param columnName Name of the column for which memory is being allocated
+   * @param allocationContext Name of the column for which memory is being allocated
    * @return PinotDataBuffer
    */
-  public PinotDataBuffer allocate(long size, String columnName) {
-    PinotDataBuffer buffer = allocateInternal(size, columnName);
+  @Override
+  public PinotDataBuffer allocate(long size, String allocationContext) {
+    Preconditions.checkArgument(size > 0, "Illegal memory allocation " + size + " for segment " + _segmentName + " column " + allocationContext);
+    PinotDataBuffer buffer = allocateInternal(size, allocationContext);
+    _totalAllocatedBytes += size;
     _buffers.add(buffer);
+    _serverMetrics.addValueToTableGauge(_tableName, ServerGauge.REALTIME_OFFHEAP_MEMORY_USED, size);
     return buffer;
   }
 
@@ -83,7 +99,14 @@ public abstract class RealtimeIndexOffHeapMemoryManager implements Closeable {
     for (PinotDataBuffer buffer : _buffers) {
       buffer.close();
     }
+    _serverMetrics.addValueToTableGauge(_tableName, ServerGauge.REALTIME_OFFHEAP_MEMORY_USED, -_totalAllocatedBytes);
     doClose();
     _buffers.clear();
+    _totalAllocatedBytes = 0;
+  }
+
+  @Override
+  public long getTotalAllocatedBytes() {
+    return _totalAllocatedBytes;
   }
 }

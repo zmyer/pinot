@@ -23,10 +23,8 @@ import com.linkedin.pinot.common.utils.DataTable;
 import com.linkedin.pinot.core.common.Block;
 import com.linkedin.pinot.core.common.BlockDocIdSet;
 import com.linkedin.pinot.core.common.BlockDocIdValueSet;
-import com.linkedin.pinot.core.common.BlockId;
 import com.linkedin.pinot.core.common.BlockMetadata;
 import com.linkedin.pinot.core.common.BlockValSet;
-import com.linkedin.pinot.core.common.Predicate;
 import com.linkedin.pinot.core.common.datatable.DataTableBuilder;
 import com.linkedin.pinot.core.common.datatable.DataTableImplV2;
 import com.linkedin.pinot.core.query.aggregation.AggregationFunctionContext;
@@ -86,7 +84,7 @@ public class IntermediateResultsBlock implements Block {
    * Constructor for aggregation group-by result with {@link AggregationGroupByResult}.
    */
   public IntermediateResultsBlock(@Nonnull AggregationFunctionContext[] aggregationFunctionContexts,
-      @Nonnull AggregationGroupByResult aggregationGroupByResults) {
+      @Nullable AggregationGroupByResult aggregationGroupByResults) {
     _aggregationFunctionContexts = aggregationFunctionContexts;
     _aggregationGroupByResult = aggregationGroupByResults;
   }
@@ -284,16 +282,6 @@ public class IntermediateResultsBlock implements Block {
       }
     }
     return dataTable;
-  }
-
-  @Override
-  public BlockId getId() {
-    throw new UnsupportedOperationException();
-  }
-
-  @Override
-  public boolean applyPredicate(Predicate predicate) {
-    throw new UnsupportedOperationException();
   }
 
   @Override

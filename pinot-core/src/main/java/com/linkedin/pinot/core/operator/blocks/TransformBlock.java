@@ -18,10 +18,8 @@ package com.linkedin.pinot.core.operator.blocks;
 import com.linkedin.pinot.core.common.Block;
 import com.linkedin.pinot.core.common.BlockDocIdSet;
 import com.linkedin.pinot.core.common.BlockDocIdValueSet;
-import com.linkedin.pinot.core.common.BlockId;
 import com.linkedin.pinot.core.common.BlockMetadata;
 import com.linkedin.pinot.core.common.BlockValSet;
-import com.linkedin.pinot.core.common.Predicate;
 import java.util.Map;
 
 
@@ -36,16 +34,6 @@ public class TransformBlock implements Block {
   public TransformBlock(ProjectionBlock projectionBlock, Map<String, BlockValSet> transformBlockValSetMap) {
     _projectionBlock = projectionBlock;
     _transformBlockValSetMap = transformBlockValSetMap;
-  }
-
-  @Override
-  public boolean applyPredicate(Predicate predicate) {
-    throw new UnsupportedOperationException();
-  }
-
-  @Override
-  public BlockId getId() {
-    throw new UnsupportedOperationException();
   }
 
   @Override
@@ -75,8 +63,8 @@ public class TransformBlock implements Block {
 
   public BlockMetadata getBlockMetadata(String column) {
     BlockValSet transformBlockValSet = (_transformBlockValSetMap != null) ? _transformBlockValSetMap.get(column) : null;
-    return (transformBlockValSet != null) ? new TransformBlockMetadata(transformBlockValSet.getNumDocs(),
-        transformBlockValSet.getValueType()) : _projectionBlock.getMetadata(column);
+    return (transformBlockValSet != null) ? new BlockMetadataImpl(transformBlockValSet.getNumDocs(), true, 0,
+        transformBlockValSet.getValueType(), null) : _projectionBlock.getMetadata(column);
   }
 
   public DocIdSetBlock getDocIdSetBlock() {

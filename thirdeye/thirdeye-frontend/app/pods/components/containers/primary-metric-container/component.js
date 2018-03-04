@@ -1,4 +1,4 @@
-import Ember from 'ember';
+import Component from '@ember/component';
 import { connect } from 'ember-redux';
 import { Actions } from 'thirdeye-frontend/actions/primary-metric';
 import _ from 'lodash';
@@ -19,7 +19,9 @@ function select(store) {
     graphEnd,
     selectedDimensions,
     selectedEvents,
-    selectedMetricIds
+    selectedMetricIds,
+    color,
+    isSelected
   } = store.primaryMetric;
 
   const {
@@ -34,8 +36,6 @@ function select(store) {
   const {
     events = []
   } = store.events;
-
-  const isSelected = true;
 
   const uiMainMetric = _.merge({}, metricData, regions);
   const uiRelatedMetric = _.merge({}, relatedMetricEntities, regions);
@@ -60,7 +60,7 @@ function select(store) {
           dimension,
           { isSelected });
       }).filter(dimension => dimension),
-    primaryMetric: uiMainMetric[primaryMetricId],
+    primaryMetric: Object.assign({}, uiMainMetric[primaryMetricId], {color}, {isSelected}),
     selectedMetrics: selectedMetricIds
       .map((id) => {
 
@@ -100,6 +100,13 @@ function actions(dispatch) {
     },
 
     /**
+     * Handles primary selection
+     */
+    onPrimaryClick() {
+      dispatch(Actions.selectPrimary());
+    },
+
+    /**
      * Handles dimension selection
      */
     onSelection(name) {
@@ -120,6 +127,7 @@ function actions(dispatch) {
       dispatch(Actions.selectMetric(metric));
     },
 
+
     /**
      * Handles deselection of an entity
      */
@@ -138,5 +146,5 @@ function actions(dispatch) {
   };
 }
 
-export default connect(select, actions)(Ember.Component.extend({
+export default connect(select, actions)(Component.extend({
 }));

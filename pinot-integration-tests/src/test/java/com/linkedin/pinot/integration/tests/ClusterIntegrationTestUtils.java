@@ -21,9 +21,9 @@ import com.linkedin.pinot.client.ResultSetGroup;
 import com.linkedin.pinot.common.utils.StringUtil;
 import com.linkedin.pinot.common.utils.TarGzCompressionUtils;
 import com.linkedin.pinot.core.indexsegment.generator.SegmentGeneratorConfig;
-import com.linkedin.pinot.core.indexsegment.utils.AvroUtils;
 import com.linkedin.pinot.core.segment.creator.SegmentIndexCreationDriver;
 import com.linkedin.pinot.core.segment.creator.impl.SegmentIndexCreationDriverImpl;
+import com.linkedin.pinot.core.util.AvroUtils;
 import com.linkedin.pinot.server.util.SegmentTestUtils;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -249,7 +249,9 @@ public class ClusterIntegrationTestUtils {
             // Test segment with space and special character in the file name
             segmentGeneratorConfig.setSegmentNamePostfix(segmentIndex + " %");
 
-            segmentGeneratorConfig.setEnableStarTreeIndex(createStarTreeIndex);
+            if (createStarTreeIndex) {
+              segmentGeneratorConfig.enableStarTreeIndex(null);
+            }
 
             if (rawIndexColumns != null) {
               segmentGeneratorConfig.setRawIndexCreationColumns(rawIndexColumns);
@@ -581,6 +583,12 @@ public class ClusterIntegrationTestUtils {
             if (pinotNumGroups != 0) {
               String failureMessage = "No group returned in H2 but " + pinotNumGroups + " groups returned in Pinot";
               failure(pqlQuery, sqlQueries, failureMessage);
+            }
+
+            // If the query has a HAVING clause and both H2 and Pinot have no groups, that is expected, so we don't need
+            // to compare the number of docs scanned
+            if (pqlQuery.contains("HAVING")) {
+              return;
             }
 
             if (pinotNumRecordsSelected != 0) {

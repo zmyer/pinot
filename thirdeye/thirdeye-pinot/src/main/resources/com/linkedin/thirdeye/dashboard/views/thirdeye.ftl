@@ -2,7 +2,8 @@
 
 <head>
 
-
+<!-- Favicon -->
+<link rel="icon" href="assets/img/favicon.ico" type="image/x-icon">
 
 <!-- CSS -->
 
@@ -169,26 +170,41 @@
       <div class="">
         <nav class="navbar navbar-inverse" role="navigation">
           <div class="container thirdeye-nav">
-            <div class="row">
+            <div class="row te-nav__row">
               <div id="global-navbar" class="navbar-header">
                 <div class="te-nav__logo">
-                    <a class="navbar-brand logo" href="#anomalies" id="thirdeye-home">ThirdEye</a>
+                    <a class="navbar-brand logo" href="#anomalies" id="thirdeye-home">
+                      ThirdEye
+                      <sup class="te-nav__beta-badge">(Beta)</sup>
+                    </a>
                 </div>
               </div>
 
               <ul class="nav navbar-nav thirdeye-nav__tabs" id="main-tabs">
-                <li class="te-nav__link"><a href="#anomalies">Home</a></li>
                 <li class="te-nav__link"><a href="#anomalies">Anomalies</a></li>
                 <li class="hidden"><a href="#investigate">Investigate</a></li>
               </ul>
 
               <ul class="nav navbar-nav thirdeye-nav__tabs">
-                <li class="te-nav__link"><a href="app/#/rca">Root Cause Analysis</a></li>
-                <li class="te-nav__link"><a href="app/#/manage/alerts">Manage</a></li>
+                <li class="te-nav__link">
+                  <a href="app/#/rootcause">Root Cause Analysis</a>
+                </li>
+                <li class="te-nav__link"><a href="app/#/manage/alerts">Manage Alerts</a></li>
               </ul>
 
               <div class="te-nav__user" role="menu">
                 <a class="te-nav__button" href="/app/#/self-serve/create-alert">Create Alert</a>
+                <div class="te-nav__user-dropdown">
+                  <a id="nav-help" class="dropdown-toggle te-nav__dropdown-link" data-toggle="dropdown" role="button" aria-haspopup="true" aria-expanded="false" title="help center">
+                    <span class="te-nav__help-icon"><i class="te-icon glyphicon glyphicon-question-sign"></i></span>
+                    <span><i id="chevron-icon" class="te-icon glyphicon glyphicon-menu-down"></i> </span>
+                  </a>
+                  <div id="help-menu" class="te-nav__dropdown-wrapper hidden">
+                    <a class="te-nav__dropdown-item" href="mailto:ask_thirdeye@linkedin.com?Subject=TE-Feedback" target="_blank">Submit Feedback</a>
+                    <a class="te-nav__dropdown-item" href="https://iwww.corp.linkedin.com/wiki/cf/display/PRT/ThirdEye+Help+Page" target="_blank">Help page</a>
+                    <a class="te-nav__dropdown-item" href="app/#/logout">Logout</a>
+                  </div>
+                </div>
               </div>
 
               <!--- <div class="thirdeye-nav__oldui">
@@ -226,8 +242,8 @@
     </div>
 
     <div class="tab-pane" id="investigate">
-      <div id='investigate-spin-area'></div>
-      <div id="investigate-place-holder""></div>
+      <div id="investigate-spin-area"></div>
+      <div id="investigate-place-holder"></div>
     </div>
 
     <div class="tab-pane" id="analysis">

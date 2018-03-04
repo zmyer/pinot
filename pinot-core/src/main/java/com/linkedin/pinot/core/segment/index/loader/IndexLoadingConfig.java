@@ -15,13 +15,13 @@
  */
 package com.linkedin.pinot.core.segment.index.loader;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.linkedin.pinot.common.config.IndexingConfig;
 import com.linkedin.pinot.common.config.TableConfig;
 import com.linkedin.pinot.common.segment.ReadMode;
 import com.linkedin.pinot.core.data.manager.config.InstanceDataManagerConfig;
 import com.linkedin.pinot.core.indexsegment.generator.SegmentVersion;
 import com.linkedin.pinot.core.segment.index.loader.columnminmaxvalue.ColumnMinMaxValueGeneratorMode;
-import com.linkedin.pinot.core.startree.StarTreeFormatVersion;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
@@ -41,80 +41,81 @@ public class IndexLoadingConfig {
   private Set<String> _invertedIndexColumns = new HashSet<>();
   private Set<String> _noDictionaryColumns = new HashSet<>();
   private Set<String> _onHeapDictionaryColumns = new HashSet<>();
-  private SegmentVersion _segmentVersion = SegmentVersion.DEFAULT_VERSION;
-  private StarTreeFormatVersion _starTreeVersion = StarTreeFormatVersion.DEFAULT_VERSION;
+  private SegmentVersion _segmentVersion;
+  // This value will remain true only when the empty constructor is invoked.
   private boolean _enableDefaultColumns = true;
   private ColumnMinMaxValueGeneratorMode _columnMinMaxValueGeneratorMode = ColumnMinMaxValueGeneratorMode.DEFAULT_MODE;
   private int _realtimeAvgMultiValueCount = DEFAULT_REALTIME_AVG_MULTI_VALUE_COUNT;
-  private boolean _enableSplitCommit = false;
+  private boolean _enableSplitCommit;
+  private boolean _isRealtimeOffheapAllocation;
+  private boolean _isDirectRealtimeOffheapAllocation;
 
-  public IndexLoadingConfig(@Nullable InstanceDataManagerConfig instanceDataManagerConfig,
-      @Nullable TableConfig tableConfig) {
-    // Extract config from instance config
-    if (instanceDataManagerConfig != null) {
-      ReadMode instanceReadMode = instanceDataManagerConfig.getReadMode();
-      if (instanceReadMode != null) {
-        _readMode = instanceReadMode;
-      }
+  public IndexLoadingConfig(@Nonnull InstanceDataManagerConfig instanceDataManagerConfig,
+      @Nonnull TableConfig tableConfig) {
+    extractFromInstanceConfig(instanceDataManagerConfig);
+    extractFromTableConfig(tableConfig);
+  }
 
-      String instanceSegmentVersion = instanceDataManagerConfig.getSegmentFormatVersion();
-      if (instanceSegmentVersion != null) {
-        _segmentVersion = SegmentVersion.valueOf(instanceSegmentVersion.toLowerCase());
-      }
-
-      _enableDefaultColumns = instanceDataManagerConfig.isEnableDefaultColumns();
-
-      _enableSplitCommit = instanceDataManagerConfig.isEnableSplitCommit();
-
-      String avgMultiValueCount = instanceDataManagerConfig.getAvgMultiValueCount();
-      if (avgMultiValueCount != null) {
-        _realtimeAvgMultiValueCount = Integer.valueOf(avgMultiValueCount);
-      }
+  private void extractFromTableConfig(@Nonnull TableConfig tableConfig) {
+    IndexingConfig indexingConfig = tableConfig.getIndexingConfig();
+    String tableReadMode = indexingConfig.getLoadMode();
+    if (tableReadMode != null) {
+      _readMode = ReadMode.getEnum(tableReadMode);
     }
 
-    // Extract config from table indexing config
-    if (tableConfig != null) {
-      IndexingConfig indexingConfig = tableConfig.getIndexingConfig();
-      String tableReadMode = indexingConfig.getLoadMode();
-      if (tableReadMode != null) {
-        _readMode = ReadMode.getEnum(tableReadMode);
-      }
+    List<String> sortedColumns = indexingConfig.getSortedColumn();
+    if (sortedColumns != null) {
+      _sortedColumns = sortedColumns;
+    }
 
-      List<String> sortedColumns = indexingConfig.getSortedColumn();
-      if (sortedColumns != null) {
-        _sortedColumns = sortedColumns;
-      }
+    List<String> invertedIndexColumns = indexingConfig.getInvertedIndexColumns();
+    if (invertedIndexColumns != null) {
+      _invertedIndexColumns.addAll(invertedIndexColumns);
+    }
 
-      List<String> invertedIndexColumns = indexingConfig.getInvertedIndexColumns();
-      if (invertedIndexColumns != null) {
-        _invertedIndexColumns.addAll(invertedIndexColumns);
-      }
+    List<String> noDictionaryColumns = indexingConfig.getNoDictionaryColumns();
+    if (noDictionaryColumns != null) {
+      _noDictionaryColumns.addAll(noDictionaryColumns);
+    }
 
-      List<String> noDictionaryColumns = indexingConfig.getNoDictionaryColumns();
-      if (noDictionaryColumns != null) {
-        _noDictionaryColumns.addAll(noDictionaryColumns);
-      }
+    List<String> onHeapDictionaryColumns = indexingConfig.getOnHeapDictionaryColumns();
+    if (onHeapDictionaryColumns != null) {
+      _onHeapDictionaryColumns.addAll(onHeapDictionaryColumns);
+    }
 
-      List<String> onHeapDictionaryColumns = indexingConfig.getOnHeapDictionaryColumns();
-      if (onHeapDictionaryColumns != null) {
-        _onHeapDictionaryColumns.addAll(onHeapDictionaryColumns);
-      }
+    String tableSegmentVersion = indexingConfig.getSegmentFormatVersion();
+    if (tableSegmentVersion != null) {
+      _segmentVersion = SegmentVersion.valueOf(tableSegmentVersion.toLowerCase());
+    }
 
-      String tableSegmentVersion = indexingConfig.getSegmentFormatVersion();
-      if (tableSegmentVersion != null) {
-        _segmentVersion = SegmentVersion.valueOf(tableSegmentVersion.toLowerCase());
-      }
+    String columnMinMaxValueGeneratorMode = indexingConfig.getColumnMinMaxValueGeneratorMode();
+    if (columnMinMaxValueGeneratorMode != null) {
+      _columnMinMaxValueGeneratorMode =
+          ColumnMinMaxValueGeneratorMode.valueOf(columnMinMaxValueGeneratorMode.toUpperCase());
+    }
+  }
 
-      String starTreeFormat = indexingConfig.getStarTreeFormat();
-      if (starTreeFormat != null) {
-        _starTreeVersion = StarTreeFormatVersion.valueOf(starTreeFormat.toUpperCase());
-      }
+  private void extractFromInstanceConfig(@Nonnull InstanceDataManagerConfig instanceDataManagerConfig) {
+    ReadMode instanceReadMode = instanceDataManagerConfig.getReadMode();
+    if (instanceReadMode != null) {
+      _readMode = instanceReadMode;
+    }
 
-      String columnMinMaxValueGeneratorMode = indexingConfig.getColumnMinMaxValueGeneratorMode();
-      if (columnMinMaxValueGeneratorMode != null) {
-        _columnMinMaxValueGeneratorMode =
-            ColumnMinMaxValueGeneratorMode.valueOf(columnMinMaxValueGeneratorMode.toUpperCase());
-      }
+    String instanceSegmentVersion = instanceDataManagerConfig.getSegmentFormatVersion();
+    if (instanceSegmentVersion != null) {
+      _segmentVersion = SegmentVersion.valueOf(instanceSegmentVersion.toLowerCase());
+    }
+
+    _enableDefaultColumns = instanceDataManagerConfig.isEnableDefaultColumns();
+
+    _enableSplitCommit = instanceDataManagerConfig.isEnableSplitCommit();
+
+    _isRealtimeOffheapAllocation = instanceDataManagerConfig.isRealtimeOffHeapAllocation();
+    _isDirectRealtimeOffheapAllocation = instanceDataManagerConfig.isDirectRealtimeOffheapAllocation();
+
+    String avgMultiValueCount = instanceDataManagerConfig.getAvgMultiValueCount();
+    if (avgMultiValueCount != null) {
+      _realtimeAvgMultiValueCount = Integer.valueOf(avgMultiValueCount);
     }
   }
 
@@ -149,8 +150,14 @@ public class IndexLoadingConfig {
   /**
    * For tests only.
    */
+  @VisibleForTesting
   public void setInvertedIndexColumns(@Nonnull Set<String> invertedIndexColumns) {
     _invertedIndexColumns = invertedIndexColumns;
+  }
+
+  @VisibleForTesting
+  public void setOnHeapDictionaryColumns(@Nonnull Set<String> onHeapDictionaryColumns) {
+    _onHeapDictionaryColumns = onHeapDictionaryColumns;
   }
 
   @Nonnull
@@ -163,7 +170,7 @@ public class IndexLoadingConfig {
     return _onHeapDictionaryColumns;
   }
 
-  @Nonnull
+  @Nullable
   public SegmentVersion getSegmentVersion() {
     return _segmentVersion;
   }
@@ -175,24 +182,20 @@ public class IndexLoadingConfig {
     _segmentVersion = segmentVersion;
   }
 
-  @Nonnull
-  public StarTreeFormatVersion getStarTreeVersion() {
-    return _starTreeVersion;
-  }
-
-  /**
-   * For tests only.
-   */
-  public void setStarTreeVersion(@Nonnull StarTreeFormatVersion starTreeVersion) {
-    _starTreeVersion = starTreeVersion;
-  }
-
   public boolean isEnableDefaultColumns() {
     return _enableDefaultColumns;
   }
 
   public boolean isEnableSplitCommit() {
     return _enableSplitCommit;
+  }
+
+  public boolean isRealtimeOffheapAllocation() {
+    return _isRealtimeOffheapAllocation;
+  }
+
+  public boolean isDirectRealtimeOffheapAllocation() {
+    return _isDirectRealtimeOffheapAllocation;
   }
 
   @Nonnull

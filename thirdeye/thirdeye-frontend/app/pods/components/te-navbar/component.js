@@ -3,10 +3,10 @@
  * @module  components/te-navbar
  * @exports anomaly-navbar
  */
-import Ember from 'ember';
+import Component from '@ember/component';
 import config from '../../../config/environment';
 
-export default Ember.Component.extend({
+export default Component.extend({
 
   /**
    * Component's tag name
@@ -14,7 +14,7 @@ export default Ember.Component.extend({
   tagName: 'nav',
 
   /**
-   * Apply property-based class name
+   * Apply property-based class namete
    */
   classNameBindings: ['navClass'],
 
@@ -26,5 +26,20 @@ export default Ember.Component.extend({
   /**
    * App name from environment settings (string)
    */
-  webappName: config.appName
+  webappName: config.appName,
+
+  /**
+   * Expanded flag for the help icon
+   * @type {boolean}
+   */
+  isExpanded: false,
+
+  actions: {
+    /**
+     * Toggles the isExpanded property on click
+     */
+    onToggleExpanded() {
+      this.toggleProperty('isExpanded');
+    }
+  }
 });

@@ -1,6 +1,8 @@
 package com.linkedin.thirdeye.dashboard.resources;
 
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import javax.ws.rs.GET;
 import javax.ws.rs.POST;
@@ -9,22 +11,22 @@ import javax.ws.rs.Produces;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import com.google.common.cache.LoadingCache;
-import com.linkedin.thirdeye.datalayer.dto.DashboardConfigDTO;
 import com.linkedin.thirdeye.datalayer.dto.DatasetConfigDTO;
 import com.linkedin.thirdeye.datalayer.dto.MetricConfigDTO;
 import com.linkedin.thirdeye.datasource.DAORegistry;
 import com.linkedin.thirdeye.datasource.ThirdEyeCacheRegistry;
 import com.linkedin.thirdeye.datasource.cache.MetricDataset;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 
 @Path("/cache")
 @Produces(MediaType.APPLICATION_JSON)
 public class CacheResource {
+  private static final Logger LOG = LoggerFactory.getLogger(CacheResource.class);
 
-  private static final Logger LOGGER = LoggerFactory.getLogger(CacheResource.class);
+  private static final ExecutorService EXECUTOR_SERVICE = Executors.newFixedThreadPool(20);
   private ThirdEyeCacheRegistry CACHE_INSTANCE = ThirdEyeCacheRegistry.getInstance();
   private DAORegistry DAO_REGISTRY = DAORegistry.getInstance();
 
@@ -32,6 +34,9 @@ public class CacheResource {
   @Path(value = "/")
   @Produces(MediaType.TEXT_HTML)
   public String getCaches() {
+    LOG.warn("Call to a deprecated end point " + "/cache/ " + getClass().getName());
+
+
     return "usage";
   }
 
@@ -43,11 +48,9 @@ public class CacheResource {
 
     refreshDatasetConfigCache();
     refreshMetricConfigCache();
-    refreshDashoardConfigsCache();
 
     refreshMaxDataTimeCache();
     refreshDimensionFiltersCache();
-    refreshDashboardsCache();
 
     return Response.ok().build();
   }
@@ -56,10 +59,16 @@ public class CacheResource {
   @POST
   @Path("/refresh/maxDataTime")
   public Response refreshMaxDataTimeCache() {
-    List<String> collections = CACHE_INSTANCE.getDatasetsCache().getDatasets();
-    LoadingCache<String,Long> cache = CACHE_INSTANCE.getCollectionMaxDataTimeCache();
-    for (String collection : collections) {
-      cache.refresh(collection);
+    List<String> datasets = CACHE_INSTANCE.getDatasetsCache().getDatasets();
+    final LoadingCache<String,Long> cache = CACHE_INSTANCE.getDatasetMaxDataTimeCache();
+    for (final String dataset : datasets) {
+      EXECUTOR_SERVICE.submit(new Runnable() {
+
+        @Override
+        public void run() {
+          cache.refresh(dataset);
+        }
+      });
     }
     return Response.ok().build();
   }
@@ -67,10 +76,16 @@ public class CacheResource {
   @POST
   @Path("/refresh/datasetConfig")
   public Response refreshDatasetConfigCache() {
-    List<String> collections = CACHE_INSTANCE.getDatasetsCache().getDatasets();
-    LoadingCache<String,DatasetConfigDTO> cache = CACHE_INSTANCE.getDatasetConfigCache();
-    for (String collection : collections) {
-      cache.refresh(collection);
+    List<String> datasets = CACHE_INSTANCE.getDatasetsCache().getDatasets();
+    final LoadingCache<String,DatasetConfigDTO> cache = CACHE_INSTANCE.getDatasetConfigCache();
+    for (final String dataset : datasets) {
+      EXECUTOR_SERVICE.submit(new Runnable() {
+
+        @Override
+        public void run() {
+          cache.refresh(dataset);
+        }
+      });
     }
     return Response.ok().build();
   }
@@ -78,24 +93,20 @@ public class CacheResource {
   @POST
   @Path("/refresh/metricConfig")
   public Response refreshMetricConfigCache() {
-    LoadingCache<MetricDataset, MetricConfigDTO> cache = CACHE_INSTANCE.getMetricConfigCache();
-    List<String> collections = CACHE_INSTANCE.getDatasetsCache().getDatasets();
-    for (String collection : collections) {
-      List<MetricConfigDTO> metricConfigs = DAO_REGISTRY.getMetricConfigDAO().findByDataset(collection);
-      for (MetricConfigDTO metricConfig : metricConfigs) {
-        cache.refresh(new MetricDataset(metricConfig.getName(), metricConfig.getDataset()));
-      }
-    }
-    return Response.ok().build();
-  }
+    final LoadingCache<MetricDataset, MetricConfigDTO> cache = CACHE_INSTANCE.getMetricConfigCache();
+    List<String> datasets = CACHE_INSTANCE.getDatasetsCache().getDatasets();
+    for (final String dataset : datasets) {
+      EXECUTOR_SERVICE.submit(new Runnable() {
 
-  @POST
-  @Path("/refresh/dashboardConfigs")
-  public Response refreshDashoardConfigsCache() {
-    List<String> collections = CACHE_INSTANCE.getDatasetsCache().getDatasets();
-    LoadingCache<String,List<DashboardConfigDTO>> cache = CACHE_INSTANCE.getDashboardConfigsCache();
-    for (String collection : collections) {
-      cache.refresh(collection);
+        @Override
+        public void run() {
+          List<MetricConfigDTO> metricConfigs = DAO_REGISTRY.getMetricConfigDAO().findByDataset(dataset);
+          for (MetricConfigDTO metricConfig : metricConfigs) {
+            cache.refresh(new MetricDataset(metricConfig.getName(), metricConfig.getDataset()));
+          }
+
+        }
+      });
     }
     return Response.ok().build();
   }
@@ -104,24 +115,20 @@ public class CacheResource {
   @POST
   @Path("/refresh/filters")
   public Response refreshDimensionFiltersCache() {
-    List<String> collections = CACHE_INSTANCE.getDatasetsCache().getDatasets();
-    LoadingCache<String,String> cache = CACHE_INSTANCE.getDimensionFiltersCache();
-    for (String collection : collections) {
-      cache.refresh(collection);
+    List<String> datasets = CACHE_INSTANCE.getDatasetsCache().getDatasets();
+    final LoadingCache<String,String> cache = CACHE_INSTANCE.getDimensionFiltersCache();
+    for (final String dataset : datasets) {
+      EXECUTOR_SERVICE.submit(new Runnable() {
+
+        @Override
+        public void run() {
+          cache.refresh(dataset);
+        }
+      });
     }
     return Response.ok().build();
   }
 
-  @POST
-  @Path("/refresh/dashboards")
-  public Response refreshDashboardsCache() {
-    List<String> collections = CACHE_INSTANCE.getDatasetsCache().getDatasets();
-    LoadingCache<String,String> cache = CACHE_INSTANCE.getDashboardsCache();
-    for (String collection : collections) {
-      cache.refresh(collection);
-    }
-    return Response.ok().build();
-  }
 
   @POST
   @Path("/refresh/collections")

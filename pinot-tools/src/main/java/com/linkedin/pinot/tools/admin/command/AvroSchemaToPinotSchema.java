@@ -17,18 +17,17 @@ package com.linkedin.pinot.tools.admin.command;
 
 import com.linkedin.pinot.common.data.FieldSpec;
 import com.linkedin.pinot.common.data.Schema;
-import com.linkedin.pinot.core.indexsegment.utils.AvroUtils;
+import com.linkedin.pinot.core.util.AvroUtils;
 import com.linkedin.pinot.tools.Command;
-import org.codehaus.jackson.map.ObjectMapper;
-import org.kohsuke.args4j.Option;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.io.File;
 import java.io.PrintWriter;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import org.codehaus.jackson.map.ObjectMapper;
+import org.kohsuke.args4j.Option;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Class for command to convert avro schema to pinot schema. Given that it is not always possible to
@@ -49,10 +48,10 @@ public class AvroSchemaToPinotSchema extends AbstractBaseAdminCommand implements
   @Option(name = "-pinotSchemaFileName", required = false, metaVar = "<string>", usage = "Path to pinot schema file.")
   String _pinotSchemaFileName;
 
-  @Option(name = "-dimensions", required = false, metaVar = "<string>", usage = "Comma seperated dimension columns.")
+  @Option(name = "-dimensions", required = false, metaVar = "<string>", usage = "Comma separated dimension columns.")
   String _dimensions;
 
-  @Option(name = "-metrics", required = false, metaVar = "<string>", usage = "Comma seperated metric columns.")
+  @Option(name = "-metrics", required = false, metaVar = "<string>", usage = "Comma separated metric columns.")
   String _metrics;
 
   @Option(name = "-timeColumnName", required = false, metaVar = "<string>", usage = "Name of Time Column.")
@@ -68,6 +67,11 @@ public class AvroSchemaToPinotSchema extends AbstractBaseAdminCommand implements
   @Override
   public boolean execute() throws Exception {
     Schema schema = null;
+
+    if (_dimensions == null && _metrics == null) {
+      LOGGER.error("Error: Missing required argument, please specify -dimensions, -metrics, or both");
+      return false;
+    }
 
     if (_avroSchemaFileName != null) {
       schema = AvroUtils.getPinotSchemaFromAvroSchemaFile(_avroSchemaFileName, buildFieldTypesMap(), _timeUnit);

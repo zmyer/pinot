@@ -16,8 +16,11 @@
 
 package com.linkedin.pinot.core.io.writer.impl;
 
+import com.linkedin.pinot.common.metrics.ServerMetrics;
+import com.yammer.metrics.core.MetricsRegistry;
 import java.io.File;
 import java.io.FileNotFoundException;
+import java.io.FilenameFilter;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.channels.FileChannel;
@@ -47,6 +50,8 @@ public class MmapMemoryManager extends RealtimeIndexOffHeapMemoryManager {
   private static final long DEFAULT_FILE_LENGTH = 512 * 1024 * 1024L; // 0.5G per segment
 
   private final String _dirPathName;
+  private final String _segmentName;
+
   // It is possible that one thread stops consumption, and another thread takes over consumption, in LLC.
   // So we should make numFiles as a volatile, in case buffer expansion happens in a different thread.
   private volatile int _numFiles = 0;
@@ -57,6 +62,7 @@ public class MmapMemoryManager extends RealtimeIndexOffHeapMemoryManager {
   private long _availableOffset = DEFAULT_FILE_LENGTH; // Available offset in this file.
   private long _curFileLen = -1;
   private final List<String> _paths = new LinkedList<>();
+  private final List<PinotDataBuffer> _memMappedBuffers = new LinkedList<>();
   PinotDataBuffer _currentBuffer;
 
   @VisibleForTesting
@@ -68,18 +74,45 @@ public class MmapMemoryManager extends RealtimeIndexOffHeapMemoryManager {
    * @param dirPathName directory under which all mmap files are created.
    * @param segmentName Name of the segment for which this memory manager allocates memory
    *
+   * @param serverMetrics Server metrics
    * @see RealtimeIndexOffHeapMemoryManager
    */
-  public MmapMemoryManager(String dirPathName, String segmentName) {
-    super(segmentName);
+  public MmapMemoryManager(String dirPathName, String segmentName, ServerMetrics serverMetrics) {
+    super(serverMetrics, segmentName);
     _dirPathName = dirPathName;
+    _segmentName = segmentName;
+    File dirFile = new File(_dirPathName);
+    if (dirFile.exists()) {
+      File[] segmentFiles = dirFile.listFiles(new FilenameFilter() {
+        @Override
+        public boolean accept(File dir, String name) {
+          return name.startsWith(getFilePrefix());
+        }
+      });
+      for (File file : segmentFiles) {
+        if (file.delete()) {
+          LOGGER.info("Deleted old file {}", file.getAbsolutePath());
+        } else {
+          LOGGER.error("Cannot delete file {}", file.getAbsolutePath());
+        }
+      }
+    }
+  }
+
+  @VisibleForTesting
+  public MmapMemoryManager(String dirPathName, String segmentName) {
+    this(dirPathName, segmentName, new ServerMetrics(new MetricsRegistry()));
+  }
+
+  private String getFilePrefix() {
+    return _segmentName + ".";
   }
 
   private void addFileIfNecessary(long len) {
     if (len + _availableOffset <= _curFileLen) {
       return;
     }
-    String thisContext = getSegmentName() + "." + _numFiles++;
+    String thisContext = getFilePrefix() + _numFiles++;
     String filePath;
     filePath = _dirPathName + "/" + thisContext;
     final File file = new File(filePath);
@@ -98,6 +131,8 @@ public class MmapMemoryManager extends RealtimeIndexOffHeapMemoryManager {
       raf.setLength(fileLen);
       raf.close();
       _currentBuffer = PinotDataBuffer.fromFile(file, ReadMode.mmap, FileChannel.MapMode.READ_WRITE, thisContext);
+      LOGGER.info("Mapped file {} for segment {} into buffer {}", file.getAbsolutePath(), _segmentName, _currentBuffer);
+      _memMappedBuffers.add(_currentBuffer);
     }  catch (IOException e) {
       throw new RuntimeException(e);
     }
@@ -116,19 +151,27 @@ public class MmapMemoryManager extends RealtimeIndexOffHeapMemoryManager {
   @Override
   protected PinotDataBuffer allocateInternal(long size, String columnName) {
     addFileIfNecessary(size);
-    PinotDataBuffer buffer = _currentBuffer.view(_availableOffset, _availableOffset+size);
+    PinotDataBuffer buffer = _currentBuffer.view(_availableOffset, _availableOffset + size);
     _availableOffset += size;
     return buffer;
   }
 
   @Override
   protected void doClose() {
+    for (PinotDataBuffer buffer : _memMappedBuffers) {
+      LOGGER.info("Closing buffer {}", buffer);
+      buffer.close();
+    }
     for (String path: _paths) {
       try {
         File file = new File(path);
-        file.delete();
+        if (file.delete()) {
+          LOGGER.info("Deleted file {}", path);
+        } else {
+          throw new RuntimeException("Unable to delete file: " + file);
+        }
       } catch (Exception e) {
-        LOGGER.warn("Exception closing entry {}", path, e);
+        LOGGER.warn("Exception trying to delete file {}", path, e);
       }
     }
   }

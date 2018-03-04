@@ -15,7 +15,6 @@
  */
 package com.linkedin.pinot.core.io.reader.impl.v1;
 
-import com.linkedin.pinot.core.io.compression.ChunkDecompressor;
 import com.linkedin.pinot.core.io.reader.impl.ChunkReaderContext;
 import com.linkedin.pinot.core.io.writer.impl.v1.VarByteChunkSingleValueWriter;
 import com.linkedin.pinot.core.segment.memory.PinotDataBuffer;
@@ -44,12 +43,11 @@ public class VarByteChunkSingleValueReader extends BaseChunkSingleValueReader {
    * Constructor for the class.
    *
    * @param pinotDataBuffer Data buffer to read from
-   * @param uncompressor Chunk uncompressor
    * @throws IOException
    */
-  public VarByteChunkSingleValueReader(PinotDataBuffer pinotDataBuffer, ChunkDecompressor uncompressor)
+  public VarByteChunkSingleValueReader(PinotDataBuffer pinotDataBuffer)
       throws IOException {
-    super(pinotDataBuffer, uncompressor);
+    super(pinotDataBuffer);
 
     int chunkHeaderSize = _numDocsPerChunk * INT_SIZE;
     _maxChunkSize = chunkHeaderSize + (_lengthOfLongestEntry * _numDocsPerChunk);
@@ -75,11 +73,10 @@ public class VarByteChunkSingleValueReader extends BaseChunkSingleValueReader {
     }
 
     int length = nextRowOffset - rowOffset;
-    ByteBuffer byteBuffer = chunkBuffer.duplicate();
-    byteBuffer.position(rowOffset);
+    chunkBuffer.position(rowOffset);
 
     byte[] bytes = _reusableBytes.get();
-    byteBuffer.get(bytes, 0, length);
+    chunkBuffer.get(bytes, 0, length);
     return new String(bytes, 0, length, UTF_8);
   }
 

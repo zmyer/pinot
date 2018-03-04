@@ -1,16 +1,19 @@
-import Ember from 'ember';
+import $ from 'jquery';
+import { computed } from '@ember/object';
+import { alias } from '@ember/object/computed';
+import Component from '@ember/component';
 import d3 from 'd3';
 
-export default Ember.Component.extend({
+export default Component.extend({
   heatMapData: {},
-  dimensions: Ember.computed.alias('heatMapData.dimensions'),
-  metricName: Ember.computed.alias('heatMapData.metrics.firstObject'),
-  inverseMetric:Ember.computed.alias('heatMapData.inverseMetric'),
+  dimensions: alias('heatMapData.dimensions'),
+  metricName: alias('heatMapData.metrics.firstObject'),
+  inverseMetric:alias('heatMapData.inverseMetric'),
   classNames: ['dimension-heatmap'],
-  heatmapMode: 'Percentage Change',
+  heatmapMode: 'Change in Contribution',
 
   // Copy pasted code from all Thirdeye UI
-  treeMapData: Ember.computed(
+  treeMapData: computed(
     'dimensions',
     'dimensions.@each',
     'heatMapData',
@@ -44,11 +47,13 @@ export default Ember.Component.extend({
               baselineValue: record[baselineValueIndex],
               currentContribution: record[currentContributionIndex],
               baselineContribution: record[baselineContributionIndex],
-              percentageChange: record[percentageChangeIndex],
               contributionChange: record[contributionChangeIndex],
+              percentageChange: record[percentageChangeIndex],
               contributionToOverallChange: record[contributionToOverallChangeIndex]
             };
-            row.children.push(item);
+            if (item.t) {
+              row.children.push(item);
+            }
           }
         }
         treeMapData.push(row);
@@ -81,7 +86,7 @@ export default Ember.Component.extend({
       if (heatmapMode === 'Change in Contribution') {
         factor = dataRow.contributionChange;
       }
-      if (heatmapMode === 'Contribution To Overall Change') {
+      if (heatmapMode === 'Contribution to Overall Change') {
         factor = dataRow.contributionToOverallChange;
       }
       return factor;
@@ -108,27 +113,31 @@ export default Ember.Component.extend({
     const dimensions = this.get('dimensions');
     const treeMapData = this.get('treeMapData');
 
+    if (!dimensions) { return; }
+
     for (var i = 0; i < dimensions.length; i++) {
       var data = treeMapData[i];
       var dimension = dimensions[i];
       var dimensionPlaceHolderId = '#' + dimension + '-heatmap-placeholder';
-      var height = Ember.$(dimensionPlaceHolderId).height();
-      var width = Ember.$(dimensionPlaceHolderId).width();
+      var height = $(dimensionPlaceHolderId).height();
+      var width = $(dimensionPlaceHolderId).width();
       var treeMap = d3.layout.treemap().size([ width, height ]).sort(function(a, b) {
         return a.value - b.value;
       });
 
       var div = d3.select(dimensionPlaceHolderId).attr("class", "heatmap")
-          .append("svg:svg").attr("width", width).attr("height", height).append("svg:g").attr("transform", "translate(.5,.5)");
+        .append("svg:svg").attr("width", width).attr("height", height).append("svg:g").attr("transform", "translate(.5,.5)");
 
       var nodes = treeMap.nodes(data).filter(function(d) {
         return !d.children;
       });
       var cell = div.selectAll("g").data(nodes).enter().append("svg:g").attr("class", "cell").attr("transform", function(d) {
         return "translate(" + d.x + "," + d.y + ")";
-      }).on("click", function(d) {
+      // }).on("click", function(d) {
         // return zoom(node == d.parent ? root : d.parent);
       }).on("mousemove", function(d) {
+
+        if (!d.percentageChange) { return; }
         const tooltipWidth = 200;
         const xPosition = d3.event.pageX - (tooltipWidth + 20);
         const yPosition = d3.event.pageY + 5;
@@ -155,9 +164,9 @@ export default Ember.Component.extend({
       });
 
       cell.append("svg:rect").attr("width", function(d) {
-        return d.dx - 1;
+        return Math.max(d.dx - 1, 0);
       }).attr("height", function(d) {
-        return d.dy - 1;
+        return Math.max(d.dy - 1, 0);
       }).style("fill", function(d) {
         var factor = getChangeFactor(d);
         return getBackgroundColor(factor);
@@ -185,9 +194,6 @@ export default Ember.Component.extend({
         var factor = getChangeFactor(d);
         return getTextColor(factor);
       });
-
     }
-    // anchor page to dimension tree map if exists
-    Ember.$('.contribution-table').get(0).scrollIntoView();
   }
 });

@@ -1,5 +1,4 @@
 import { ActionTypes } from '../actions/events';
-import moment from 'moment';
 
 /**
  * Define the schema
@@ -24,8 +23,8 @@ const INITIAL_STATE = {
   /**
    * Lost of related Metric
    */
-  analysisStart: '',
-  analysisEnd: '',
+  eventStart: '',
+  eventEnd: '',
   events: []
 };
 
@@ -56,9 +55,19 @@ export default function reducer(state = INITIAL_STATE, action = {}) {
       });
     }
 
+    case ActionTypes.SET_DATE: {
+      const [ eventStart, eventEnd ] = action.payload;
+
+      return Object.assign({}, state, {
+        eventStart,
+        eventEnd
+      });
+    }
+
     case ActionTypes.RESET: {
       state = undefined;
     }
+
   }
   return state || INITIAL_STATE;
 }

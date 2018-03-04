@@ -19,6 +19,7 @@ import com.google.common.base.Preconditions;
 import com.linkedin.pinot.common.data.Schema;
 import com.linkedin.pinot.common.segment.ReadMode;
 import com.linkedin.pinot.core.indexsegment.generator.SegmentVersion;
+import com.linkedin.pinot.core.segment.index.ColumnMetadata;
 import com.linkedin.pinot.core.segment.index.IndexSegmentImpl;
 import com.linkedin.pinot.core.segment.index.SegmentMetadataImpl;
 import com.linkedin.pinot.core.segment.index.column.ColumnIndexContainer;
@@ -26,8 +27,8 @@ import com.linkedin.pinot.core.segment.index.converter.SegmentFormatConverter;
 import com.linkedin.pinot.core.segment.index.converter.SegmentFormatConverterFactory;
 import com.linkedin.pinot.core.segment.store.SegmentDirectory;
 import com.linkedin.pinot.core.segment.store.SegmentDirectoryPaths;
-import com.linkedin.pinot.core.startree.StarTreeInterf;
-import com.linkedin.pinot.core.startree.StarTreeSerDe;
+import com.linkedin.pinot.core.startree.OffHeapStarTree;
+import com.linkedin.pinot.core.startree.StarTree;
 import java.io.File;
 import java.util.HashMap;
 import java.util.Map;
@@ -46,8 +47,7 @@ public class Loaders {
      * For tests only.
      */
     public static com.linkedin.pinot.core.indexsegment.IndexSegment load(@Nonnull File indexDir,
-        @Nonnull ReadMode readMode)
-        throws Exception {
+        @Nonnull ReadMode readMode) throws Exception {
       IndexLoadingConfig defaultIndexLoadingConfig = new IndexLoadingConfig();
       defaultIndexLoadingConfig.setReadMode(readMode);
       return load(indexDir, defaultIndexLoadingConfig, null);
@@ -57,24 +57,22 @@ public class Loaders {
      * For tests only.
      */
     public static com.linkedin.pinot.core.indexsegment.IndexSegment load(@Nonnull File indexDir,
-        @Nonnull IndexLoadingConfig indexLoadingConfig)
-        throws Exception {
+        @Nonnull IndexLoadingConfig indexLoadingConfig) throws Exception {
       return load(indexDir, indexLoadingConfig, null);
     }
 
     public static com.linkedin.pinot.core.indexsegment.IndexSegment load(@Nonnull File indexDir,
-        @Nonnull IndexLoadingConfig indexLoadingConfig, @Nullable Schema schema)
-        throws Exception {
+        @Nonnull IndexLoadingConfig indexLoadingConfig, @Nullable Schema schema) throws Exception {
       Preconditions.checkNotNull(indexDir);
       Preconditions.checkArgument(indexDir.exists(), "Index directory: {} does not exist", indexDir);
       Preconditions.checkArgument(indexDir.isDirectory(), "Index directory: {} is not a directory", indexDir);
 
-      ReadMode readMode = indexLoadingConfig.getReadMode();
-      SegmentVersion segmentVersionToLoad = indexLoadingConfig.getSegmentVersion();
-      StarTreeSerDe.convertStarTreeFormatIfNeeded(indexDir, indexLoadingConfig.getStarTreeVersion());
-
+      // Convert segment version if necessary
+      // NOTE: this step may modify the segment metadata
       String segmentName = indexDir.getName();
-      if (!targetFormatAlreadyExists(indexDir, segmentVersionToLoad)) {
+      SegmentVersion segmentVersionToLoad = indexLoadingConfig.getSegmentVersion();
+      if (segmentVersionToLoad != null && !SegmentDirectoryPaths.segmentDirectoryFor(indexDir, segmentVersionToLoad)
+          .isDirectory()) {
         SegmentVersion segmentVersionOnDisk = new SegmentMetadataImpl(indexDir).getSegmentVersion();
         if (segmentVersionOnDisk != segmentVersionToLoad) {
           LOGGER.info("Segment: {} needs to be converted from version: {} to {}", segmentName, segmentVersionOnDisk,
@@ -88,38 +86,33 @@ public class Loaders {
         }
       }
 
-      // Add inverted indexes
-      // Add, remove or replace default columns
-      // Add column min/max values
-      // NOTE: this step may modify the segment metadata.
+      // Pre-process the segment
+      // NOTE: this step may modify the segment metadata
       try (SegmentPreProcessor preProcessor = new SegmentPreProcessor(indexDir, indexLoadingConfig, schema)) {
         preProcessor.process();
       }
 
       // Load the metadata again since converter and pre-processor may have changed it
-      SegmentMetadataImpl segmentMetadata = new SegmentMetadataImpl(indexDir, segmentVersionToLoad);
-      File segmentDirectoryPath = SegmentDirectoryPaths.segmentDirectoryFor(indexDir, segmentVersionToLoad);
-      SegmentDirectory segmentDirectory =
-          SegmentDirectory.createFromLocalFS(segmentDirectoryPath, segmentMetadata, readMode);
+      SegmentMetadataImpl segmentMetadata = new SegmentMetadataImpl(indexDir);
+
+      // Load the segment
+      ReadMode readMode = indexLoadingConfig.getReadMode();
+      SegmentDirectory segmentDirectory = SegmentDirectory.createFromLocalFS(indexDir, segmentMetadata, readMode);
       SegmentDirectory.Reader segmentReader = segmentDirectory.createReader();
       Map<String, ColumnIndexContainer> indexContainerMap = new HashMap<>();
-      for (String column : segmentMetadata.getColumnMetadataMap().keySet()) {
-        indexContainerMap.put(column,
-            ColumnIndexContainer.init(segmentReader, segmentMetadata.getColumnMetadataFor(column), indexLoadingConfig));
+      for (Map.Entry<String, ColumnMetadata> entry : segmentMetadata.getColumnMetadataMap().entrySet()) {
+        indexContainerMap.put(entry.getKey(),
+            new ColumnIndexContainer(segmentReader, entry.getValue(), indexLoadingConfig));
       }
 
       // Load star tree index if it exists
-      StarTreeInterf starTree = null;
+      StarTree starTree = null;
       if (segmentReader.hasStarTree()) {
         LOGGER.info("Loading star tree for segment: {}", segmentName);
-        starTree = StarTreeSerDe.fromFile(segmentReader.getStarTreeFile(), readMode);
+        starTree = new OffHeapStarTree(segmentReader.getStarTreeFile(), readMode);
       }
 
       return new IndexSegmentImpl(segmentDirectory, segmentMetadata, indexContainerMap, starTree);
-    }
-
-    private static boolean targetFormatAlreadyExists(File indexDir, SegmentVersion expectedSegmentVersion) {
-      return SegmentDirectoryPaths.segmentDirectoryFor(indexDir, expectedSegmentVersion).exists();
     }
   }
 }

@@ -17,7 +17,6 @@ package com.linkedin.pinot.controller.api.pojos;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import com.linkedin.pinot.common.restlet.swagger.Example;
 import com.linkedin.pinot.common.utils.CommonConstants;
 import org.apache.helix.model.InstanceConfig;
 import org.json.JSONException;
@@ -27,13 +26,31 @@ import org.json.JSONObject;
 /**
  * Instance POJO, used as part of the API to create instances.
  */
-@Example("{\n" + "\t\"host\": \"hostname.example.com\",\n" + "\t\"port\": \"1234\",\n" + "\t\"type\": \"server\"\n" + "}")
+//@Example("{\n" + "\t\"host\": \"hostname.example.com\",\n" + "\t\"port\": \"1234\",\n" + "\t\"type\": \"server\"\n" + "}")
 public class Instance {
   private final String _host;
   private final String _port;
   private final String _type;
   private final String _tag;
   private final String _instancePrefix;
+
+  public static Instance fromInstanceConfig(InstanceConfig instanceConfig) {
+    InstanceConfig ic = instanceConfig;
+    String instanceName = ic.getInstanceName();
+    String type;
+    if (instanceName.startsWith(CommonConstants.Helix.PREFIX_OF_SERVER_INSTANCE)) {
+      type = CommonConstants.Helix.SERVER_INSTANCE_TYPE;
+    } else if (instanceName.startsWith(CommonConstants.Helix.PREFIX_OF_BROKER_INSTANCE)) {
+      type = CommonConstants.Helix.BROKER_INSTANCE_TYPE;
+    } else {
+      throw new RuntimeException("Unknown instance type for: " + instanceName);
+    }
+
+    Instance instance = new Instance(ic.getHostName(),
+        ic.getPort(),
+        type, org.apache.commons.lang.StringUtils.join(ic.getTags(), ','));
+    return instance;
+  }
 
   @JsonCreator
   public Instance(

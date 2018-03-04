@@ -1,4 +1,4 @@
-import Ember from 'ember';
+import Component from '@ember/component';
 import { connect } from 'ember-redux';
 
 
@@ -11,7 +11,10 @@ function select(store) {
     timeseries,
     dimensions,
     selectedDimension,
-    heatmapData
+    heatmapData,
+    regionStart,
+    regionEnd,
+    heatmapLoaded
   } = store.dimensions;
 
   const {
@@ -26,7 +29,10 @@ function select(store) {
     loading,
     loaded,
     failed,
+    regionStart,
+    regionEnd,
     subdimensions: dimensionKeys
+      .filter(key => key.length && key !== 'All')
       .map((key) => {
         const keyName = `${selectedDimension}-${key}`;
         const subDimension = Object.assign({}, dimensions[keyName]);
@@ -38,7 +44,8 @@ function select(store) {
       }),
     dimensionKeys,
     granularity,
-    heatmapData
+    heatmapData,
+    heatmapLoaded
   };
 }
 
@@ -46,6 +53,6 @@ function actions() {
   return {};
 }
 
-export default connect(select, actions)(Ember.Component.extend({
+export default connect(select, actions)(Component.extend({
 }));
 

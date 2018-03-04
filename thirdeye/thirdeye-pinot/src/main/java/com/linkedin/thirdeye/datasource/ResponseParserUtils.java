@@ -23,8 +23,7 @@ public class ResponseParserUtils {
 
   public static Map<String, ThirdEyeResponseRow> createResponseMapByTimeAndDimension(
       ThirdEyeResponse thirdEyeResponse) {
-    Map<String, ThirdEyeResponseRow> responseMap;
-    responseMap = new HashMap<>();
+    Map<String, ThirdEyeResponseRow> responseMap = new HashMap<>();
     int numRows = thirdEyeResponse.getNumRows();
     for (int i = 0; i < numRows; i++) {
       ThirdEyeResponseRow thirdEyeResponseRow = thirdEyeResponse.getRow(i);
@@ -69,15 +68,13 @@ public class ResponseParserUtils {
     requestBuilder.setMetricFunctions(request.getMetricFunctions());
     requestBuilder.setDataSource(ThirdEyeUtils.getDataSourceFromMetricFunctions(request.getMetricFunctions()));
     ThirdEyeRequest metricSumsRequest = requestBuilder.build("metricSums");
-    ThirdEyeResponse metricSumsResponse = null;
     try {
-      metricSumsResponse =
-          CACHE_REGISTRY_INSTANCE.getQueryCache().getQueryResult(metricSumsRequest);
+      ThirdEyeResponse metricSumsResponse = CACHE_REGISTRY_INSTANCE.getQueryCache().getQueryResult(metricSumsRequest);
+      return metricSumsResponse.getRow(0).getMetrics();
     } catch (Exception e) {
       LOGGER.error("Caught exception when executing metric sums request", e);
     }
-    List<Double> metricSums = metricSumsResponse.getRow(0).getMetrics();
-    return metricSums;
+    return Collections.emptyList();
   }
 
   public static Map<Integer, List<Double>> getMetricSumsByTime(ThirdEyeResponse response) {

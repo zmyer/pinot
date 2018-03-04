@@ -4,21 +4,22 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.Sets;
 import com.google.inject.Inject;
 import com.linkedin.thirdeye.anomaly.utils.ThirdeyeMetricsUtil;
+import com.linkedin.thirdeye.auth.ThirdEyeAuthFilter;
+import com.linkedin.thirdeye.auth.ThirdEyePrincipal;
 import com.linkedin.thirdeye.datalayer.entity.AbstractEntity;
 import com.linkedin.thirdeye.datalayer.entity.AbstractIndexEntity;
 import com.linkedin.thirdeye.datalayer.entity.AbstractJsonEntity;
 import com.linkedin.thirdeye.datalayer.entity.AlertConfigIndex;
+import com.linkedin.thirdeye.datalayer.entity.AlertSnapshotIndex;
 import com.linkedin.thirdeye.datalayer.entity.AnomalyFeedbackIndex;
 import com.linkedin.thirdeye.datalayer.entity.AnomalyFunctionIndex;
 import com.linkedin.thirdeye.datalayer.entity.ApplicationIndex;
 import com.linkedin.thirdeye.datalayer.entity.AutotuneConfigIndex;
 import com.linkedin.thirdeye.datalayer.entity.ClassificationConfigIndex;
 import com.linkedin.thirdeye.datalayer.entity.ConfigIndex;
-import com.linkedin.thirdeye.datalayer.entity.DashboardConfigIndex;
 import com.linkedin.thirdeye.datalayer.entity.DataCompletenessConfigIndex;
 import com.linkedin.thirdeye.datalayer.entity.DatasetConfigIndex;
 import com.linkedin.thirdeye.datalayer.entity.DetectionStatusIndex;
-import com.linkedin.thirdeye.datalayer.entity.EmailConfigurationIndex;
 import com.linkedin.thirdeye.datalayer.entity.EntityToEntityMappingIndex;
 import com.linkedin.thirdeye.datalayer.entity.EventIndex;
 import com.linkedin.thirdeye.datalayer.entity.GenericJsonEntity;
@@ -29,20 +30,20 @@ import com.linkedin.thirdeye.datalayer.entity.MetricConfigIndex;
 import com.linkedin.thirdeye.datalayer.entity.OnboardDatasetMetricIndex;
 import com.linkedin.thirdeye.datalayer.entity.OverrideConfigIndex;
 import com.linkedin.thirdeye.datalayer.entity.RawAnomalyResultIndex;
+import com.linkedin.thirdeye.datalayer.entity.RootcauseSessionIndex;
 import com.linkedin.thirdeye.datalayer.entity.TaskIndex;
 import com.linkedin.thirdeye.datalayer.pojo.AbstractBean;
 import com.linkedin.thirdeye.datalayer.pojo.AlertConfigBean;
+import com.linkedin.thirdeye.datalayer.pojo.AlertSnapshotBean;
 import com.linkedin.thirdeye.datalayer.pojo.AnomalyFeedbackBean;
 import com.linkedin.thirdeye.datalayer.pojo.AnomalyFunctionBean;
 import com.linkedin.thirdeye.datalayer.pojo.ApplicationBean;
 import com.linkedin.thirdeye.datalayer.pojo.AutotuneConfigBean;
 import com.linkedin.thirdeye.datalayer.pojo.ClassificationConfigBean;
 import com.linkedin.thirdeye.datalayer.pojo.ConfigBean;
-import com.linkedin.thirdeye.datalayer.pojo.DashboardConfigBean;
 import com.linkedin.thirdeye.datalayer.pojo.DataCompletenessConfigBean;
 import com.linkedin.thirdeye.datalayer.pojo.DatasetConfigBean;
 import com.linkedin.thirdeye.datalayer.pojo.DetectionStatusBean;
-import com.linkedin.thirdeye.datalayer.pojo.EmailConfigurationBean;
 import com.linkedin.thirdeye.datalayer.pojo.EntityToEntityMappingBean;
 import com.linkedin.thirdeye.datalayer.pojo.EventBean;
 import com.linkedin.thirdeye.datalayer.pojo.GroupedAnomalyResultsBean;
@@ -52,6 +53,7 @@ import com.linkedin.thirdeye.datalayer.pojo.MetricConfigBean;
 import com.linkedin.thirdeye.datalayer.pojo.OnboardDatasetMetricBean;
 import com.linkedin.thirdeye.datalayer.pojo.OverrideConfigBean;
 import com.linkedin.thirdeye.datalayer.pojo.RawAnomalyResultBean;
+import com.linkedin.thirdeye.datalayer.pojo.RootcauseSessionBean;
 import com.linkedin.thirdeye.datalayer.pojo.TaskBean;
 import com.linkedin.thirdeye.datalayer.util.GenericResultSetMapper;
 import com.linkedin.thirdeye.datalayer.util.Predicate;
@@ -88,8 +90,6 @@ public class GenericPojoDao {
         newPojoInfo(DEFAULT_BASE_TABLE_NAME, AnomalyFeedbackIndex.class));
     pojoInfoMap.put(AnomalyFunctionBean.class,
         newPojoInfo(DEFAULT_BASE_TABLE_NAME, AnomalyFunctionIndex.class));
-    pojoInfoMap.put(EmailConfigurationBean.class,
-        newPojoInfo(DEFAULT_BASE_TABLE_NAME, EmailConfigurationIndex.class));
     pojoInfoMap.put(JobBean.class,
         newPojoInfo(DEFAULT_BASE_TABLE_NAME, JobIndex.class));
     pojoInfoMap.put(TaskBean.class,
@@ -102,8 +102,6 @@ public class GenericPojoDao {
         newPojoInfo(DEFAULT_BASE_TABLE_NAME, DatasetConfigIndex.class));
     pojoInfoMap.put(MetricConfigBean.class,
         newPojoInfo(DEFAULT_BASE_TABLE_NAME, MetricConfigIndex.class));
-    pojoInfoMap.put(DashboardConfigBean.class,
-        newPojoInfo(DEFAULT_BASE_TABLE_NAME, DashboardConfigIndex.class));
     pojoInfoMap.put(OverrideConfigBean.class,
         newPojoInfo(DEFAULT_BASE_TABLE_NAME, OverrideConfigIndex.class));
     pojoInfoMap.put(EventBean.class,
@@ -128,7 +126,10 @@ public class GenericPojoDao {
         newPojoInfo(DEFAULT_BASE_TABLE_NAME, ConfigIndex.class));
     pojoInfoMap.put(ApplicationBean.class,
         newPojoInfo(DEFAULT_BASE_TABLE_NAME, ApplicationIndex.class));
-
+    pojoInfoMap.put(AlertSnapshotBean.class,
+        newPojoInfo(DEFAULT_BASE_TABLE_NAME, AlertSnapshotIndex.class));
+    pojoInfoMap.put(RootcauseSessionBean.class,
+        newPojoInfo(DEFAULT_BASE_TABLE_NAME, RootcauseSessionIndex.class));
   }
 
   private static PojoInfo newPojoInfo(String baseTableName,
@@ -167,8 +168,20 @@ public class GenericPojoDao {
     return dataSource.getConnection();
   }
 
+  private String getCurrentPrincipal() {
+    // TODO use injection
+    ThirdEyePrincipal principal = ThirdEyeAuthFilter.getCurrentPrincipal();
+    if (principal != null) {
+     return principal.getName();
+    }
+    return "no-auth-user";
+  }
+
   public <E extends AbstractBean> Long put(final E pojo) {
     long tStart = System.nanoTime();
+    String currentUser = getCurrentPrincipal();
+    pojo.setCreatedBy(currentUser);
+    pojo.setUpdatedBy(currentUser);
     try {
       //insert into its base table
       //get the generated id
@@ -231,6 +244,7 @@ public class GenericPojoDao {
 
   public <E extends AbstractBean> int update(final E pojo, final Predicate predicate) {
     long tStart = System.nanoTime();
+    pojo.setUpdatedBy(getCurrentPrincipal());
     try {
       //update base table
       //update indexes

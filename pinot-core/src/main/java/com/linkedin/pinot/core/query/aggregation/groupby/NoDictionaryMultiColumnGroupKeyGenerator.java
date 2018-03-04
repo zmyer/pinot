@@ -19,10 +19,10 @@ import com.linkedin.pinot.common.data.FieldSpec;
 import com.linkedin.pinot.core.common.BlockMetadata;
 import com.linkedin.pinot.core.common.BlockValSet;
 import com.linkedin.pinot.core.operator.blocks.TransformBlock;
+import com.linkedin.pinot.core.util.FixedIntArray;
 import com.linkedin.pinot.core.query.aggregation.groupby.utils.ValueToIdMap;
 import com.linkedin.pinot.core.query.aggregation.groupby.utils.ValueToIdMapFactory;
 import com.linkedin.pinot.core.segment.index.readers.Dictionary;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
@@ -195,7 +195,7 @@ public class NoDictionaryMultiColumnGroupKeyGenerator implements GroupKeyGenerat
 
     public GroupKeyIterator(Map<FixedIntArray, Integer> map) {
       _iterator = map.entrySet().iterator();
-      _groupKey = new GroupKey(INVALID_ID, null);
+      _groupKey = new GroupKey();
     }
 
     @Override
@@ -206,8 +206,8 @@ public class NoDictionaryMultiColumnGroupKeyGenerator implements GroupKeyGenerat
     @Override
     public GroupKey next() {
       Map.Entry<FixedIntArray, Integer> entry = _iterator.next();
-      _groupKey.setFirst(entry.getValue());
-      _groupKey.setSecond(buildStringKeyFromIds(entry.getKey()));
+      _groupKey._groupId = entry.getValue();
+      _groupKey._stringKey = buildStringKeyFromIds(entry.getKey());
       return _groupKey;
     }
 
@@ -273,44 +273,5 @@ public class NoDictionaryMultiColumnGroupKeyGenerator implements GroupKeyGenerat
         throw new IllegalArgumentException("Illegal data type for no-dictionary key generator: " + dataType);
     }
     return values;
-  }
-
-  /**
-   * Wrapper around fixed size int array with hashCode() and equals() implementation.
-   * Used as a key in hash-map.
-   */
-  private static class FixedIntArray {
-    private final int[] _value;
-
-    FixedIntArray(int[] value) {
-      _value = value;
-    }
-
-    int[] elements() {
-      return _value;
-    }
-
-    int size() {
-      return _value.length;
-    }
-
-    @Override
-    public boolean equals(Object o) {
-      if (this == o) {
-        return true;
-      }
-      if (o == null || getClass() != o.getClass()) {
-        return false;
-      }
-
-      FixedIntArray that = (FixedIntArray) o;
-
-      return Arrays.equals(_value, that._value);
-    }
-
-    @Override
-    public int hashCode() {
-      return Arrays.hashCode(_value);
-    }
   }
 }

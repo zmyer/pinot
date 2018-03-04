@@ -4,18 +4,26 @@
 
 .te-graph-alert {
   width: 100%;
+  margin-top: $te-spacing;
+  border-radius: 5px;
 
   &--pending {
-    background-color: $te-light-grey;
+    background-color: app-shade(black, 1);
     height: 420px;
     text-align: center;
     font-weight: bold;
-    color: app-shade(black, 1);
+    color: app-shade(black, 2);
     font-size: 20px;
   }
 
   &__icon {
     font-size: 100px;
+    color: app-shade(black, 1);
+
+    &--warning {
+      color: app-shade(black, 3);
+      font-size: 82px;
+    }
   }
 
   &__content {

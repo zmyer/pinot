@@ -16,11 +16,11 @@
 
 package com.linkedin.pinot.core.realtime.impl.dictionary;
 
-import java.io.IOException;
-import java.util.Arrays;
-import com.linkedin.pinot.core.io.readerwriter.RealtimeIndexOffHeapMemoryManager;
+import com.linkedin.pinot.core.io.readerwriter.PinotDataBufferMemoryManager;
 import com.linkedin.pinot.core.io.readerwriter.impl.FixedByteSingleColumnSingleValueReaderWriter;
 import com.linkedin.pinot.core.segment.creator.impl.V1Constants;
+import java.io.IOException;
+import java.util.Arrays;
 import javax.annotation.Nonnull;
 
 
@@ -30,12 +30,12 @@ public class DoubleOffHeapMutableDictionary extends BaseOffHeapMutableDictionary
 
   private final FixedByteSingleColumnSingleValueReaderWriter _dictIdToValue;
 
-  public DoubleOffHeapMutableDictionary(int estimatedCardinality, int maxOverflowSize, RealtimeIndexOffHeapMemoryManager memoryManager,
-      String columnName) {
-    super(estimatedCardinality, maxOverflowSize, memoryManager, columnName);
+  public DoubleOffHeapMutableDictionary(int estimatedCardinality, int maxOverflowSize, PinotDataBufferMemoryManager memoryManager,
+      String allocationContext) {
+    super(estimatedCardinality, maxOverflowSize, memoryManager, allocationContext);
     final int initialEntryCount = nearestPowerOf2(estimatedCardinality);
     _dictIdToValue = new FixedByteSingleColumnSingleValueReaderWriter(initialEntryCount, V1Constants.Numbers.DOUBLE_SIZE,
-        memoryManager, columnName);
+        memoryManager, allocationContext);
   }
 
   public Object get(int dictionaryId) {
@@ -112,6 +112,7 @@ public class DoubleOffHeapMutableDictionary extends BaseOffHeapMutableDictionary
 
   @Nonnull
   @Override
+  @SuppressWarnings("Duplicates")
   public double[] getSortedValues() {
     int numValues = length();
     double[] sortedValues = new double[numValues];
@@ -122,6 +123,11 @@ public class DoubleOffHeapMutableDictionary extends BaseOffHeapMutableDictionary
 
     Arrays.sort(sortedValues);
     return sortedValues;
+  }
+
+  @Override
+  public int getAvgValueSize() {
+    return V1Constants.Numbers.DOUBLE_SIZE;
   }
 
   @Override
@@ -146,7 +152,7 @@ public class DoubleOffHeapMutableDictionary extends BaseOffHeapMutableDictionary
 
   @Override
   public double getDoubleValue(int dictId) {
-    return (Double)get(dictId);
+    return (Double) get(dictId);
   }
 
   @Override
@@ -161,5 +167,10 @@ public class DoubleOffHeapMutableDictionary extends BaseOffHeapMutableDictionary
     if (value > _max) {
       _max = value;
     }
+  }
+
+  @Override
+  public long getTotalOffHeapMemUsed() {
+    return super.getTotalOffHeapMemUsed() + V1Constants.Numbers.DOUBLE_SIZE * length();
   }
 }

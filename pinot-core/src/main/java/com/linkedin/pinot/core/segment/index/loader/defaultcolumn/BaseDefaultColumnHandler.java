@@ -15,16 +15,6 @@
  */
 package com.linkedin.pinot.core.segment.index.loader.defaultcolumn;
 
-import java.io.File;
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import org.apache.commons.configuration.PropertiesConfiguration;
-import org.apache.commons.io.FileUtils;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import com.google.common.base.Preconditions;
 import com.linkedin.pinot.common.data.FieldSpec;
 import com.linkedin.pinot.common.data.Schema;
@@ -39,6 +29,16 @@ import com.linkedin.pinot.core.segment.creator.impl.fwd.SingleValueSortedForward
 import com.linkedin.pinot.core.segment.index.ColumnMetadata;
 import com.linkedin.pinot.core.segment.index.SegmentMetadataImpl;
 import com.linkedin.pinot.core.segment.index.loader.LoaderUtils;
+import java.io.File;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import org.apache.commons.configuration.PropertiesConfiguration;
+import org.apache.commons.io.FileUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 
 public abstract class BaseDefaultColumnHandler implements DefaultColumnHandler {
@@ -120,14 +120,14 @@ public abstract class BaseDefaultColumnHandler implements DefaultColumnHandler {
     _segmentProperties.setProperty(V1Constants.MetadataKeys.Segment.METRICS, metricColumns);
 
     // Create a back up for origin metadata.
-    File metadataFile = new File(_indexDir, V1Constants.MetadataKeys.METADATA_FILE_NAME);
+    File metadataFile = _segmentProperties.getFile();
     File metadataBackUpFile = new File(metadataFile + ".bak");
     if (!metadataBackUpFile.exists()) {
       FileUtils.copyFile(metadataFile, metadataBackUpFile);
     }
 
     // Save the new metadata.
-    _segmentProperties.save(metadataFile);
+    _segmentProperties.save();
   }
 
   /**
@@ -237,9 +237,9 @@ public abstract class BaseDefaultColumnHandler implements DefaultColumnHandler {
    */
   protected void removeColumnV1Indices(String column) {
     // Delete existing dictionary and forward index for the column.
-    FileUtils.deleteQuietly(new File(_indexDir, column + V1Constants.Dict.FILE_EXTENTION));
-    FileUtils.deleteQuietly(new File(_indexDir, column + V1Constants.Indexes.SORTED_FWD_IDX_FILE_EXTENTION));
-    FileUtils.deleteQuietly(new File(_indexDir, column + V1Constants.Indexes.UN_SORTED_MV_FWD_IDX_FILE_EXTENTION));
+    FileUtils.deleteQuietly(new File(_indexDir, column + V1Constants.Dict.FILE_EXTENSION));
+    FileUtils.deleteQuietly(new File(_indexDir, column + V1Constants.Indexes.SORTED_SV_FORWARD_INDEX_FILE_EXTENSION));
+    FileUtils.deleteQuietly(new File(_indexDir, column + V1Constants.Indexes.UNSORTED_MV_FORWARD_INDEX_FILE_EXTENSION));
 
     // Remove the column metadata information if exists.
     SegmentColumnarIndexCreator.removeColumnMetadataInfo(_segmentProperties, column);
@@ -267,13 +267,6 @@ public abstract class BaseDefaultColumnHandler implements DefaultColumnHandler {
 
     Object sortedArray;
     switch (dataType) {
-      case STRING:
-        Preconditions.checkState(defaultValue instanceof String);
-        String stringDefaultValue = (String) defaultValue;
-        // Length of the UTF-8 encoded byte array.
-        dictionaryElementSize = stringDefaultValue.getBytes("UTF8").length;
-        sortedArray = new String[]{stringDefaultValue};
-        break;
       case INT:
         Preconditions.checkState(defaultValue instanceof Integer);
         sortedArray = new int[]{(Integer) defaultValue};
@@ -290,6 +283,13 @@ public abstract class BaseDefaultColumnHandler implements DefaultColumnHandler {
         Preconditions.checkState(defaultValue instanceof Double);
         sortedArray = new double[]{(Double) defaultValue};
         break;
+      case STRING:
+        Preconditions.checkState(defaultValue instanceof String);
+        String stringDefaultValue = (String) defaultValue;
+        // Length of the UTF-8 encoded byte array.
+        dictionaryElementSize = stringDefaultValue.getBytes("UTF8").length;
+        sortedArray = new String[]{stringDefaultValue};
+        break;
       default:
         throw new UnsupportedOperationException("Unsupported data type: " + dataType + " for column: " + column);
     }
@@ -303,11 +303,9 @@ public abstract class BaseDefaultColumnHandler implements DefaultColumnHandler {
 
     // Create dictionary.
     // We will have only one value in the dictionary.
-    SegmentDictionaryCreator segmentDictionaryCreator =
-        new SegmentDictionaryCreator(false/*hasNulls*/, sortedArray, fieldSpec, _indexDir,
-            V1Constants.Str.DEFAULT_STRING_PAD_CHAR);
-    segmentDictionaryCreator.build(new boolean[]{true}/*isSorted*/);
-    segmentDictionaryCreator.close();
+    try (SegmentDictionaryCreator creator = new SegmentDictionaryCreator(sortedArray, fieldSpec, _indexDir)) {
+      creator.build();
+    }
 
     // Create forward index.
     if (isSingleValue) {
