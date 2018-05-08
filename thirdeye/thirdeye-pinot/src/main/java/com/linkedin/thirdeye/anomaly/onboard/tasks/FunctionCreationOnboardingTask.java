@@ -1,9 +1,9 @@
 package com.linkedin.thirdeye.anomaly.onboard.tasks;
 
 import com.google.common.base.Preconditions;
-import com.linkedin.thirdeye.anomaly.onboard.BaseDetectionOnboardTask;
-import com.linkedin.thirdeye.anomaly.onboard.DetectionOnboardExecutionContext;
-import com.linkedin.thirdeye.anomaly.onboard.DetectionOnboardTaskContext;
+import com.linkedin.thirdeye.anomaly.onboard.framework.BaseDetectionOnboardTask;
+import com.linkedin.thirdeye.anomaly.onboard.framework.DetectionOnboardExecutionContext;
+import com.linkedin.thirdeye.anomaly.onboard.framework.DetectionOnboardTaskContext;
 import com.linkedin.thirdeye.anomaly.onboard.utils.FunctionCreationUtils;
 import com.linkedin.thirdeye.anomaly.utils.EmailUtils;
 import com.linkedin.thirdeye.api.TimeGranularity;
@@ -281,7 +281,7 @@ public class FunctionCreationOnboardingTask extends BaseDetectionOnboardTask {
     switch (timeGranularity.getUnit()) {
       case MINUTES:
         anomalyFunctionSpec.setType("CONFIDENCE_INTERVAL_SIGN_TEST");
-        anomalyFunctionSpec.setCron("0 0 0 * * ?");
+        anomalyFunctionSpec.setCron("0 0/15 * * * ? *");
         anomalyFunctionSpec.setWindowSize(6);
         anomalyFunctionSpec.setWindowUnit(TimeUnit.HOURS);
         anomalyFunctionSpec.setFrequency(new TimeGranularity(15, TimeUnit.MINUTES));
@@ -290,7 +290,7 @@ public class FunctionCreationOnboardingTask extends BaseDetectionOnboardTask {
         break;
       case HOURS:
         anomalyFunctionSpec.setType("REGRESSION_GAUSSIAN_SCAN");
-        anomalyFunctionSpec.setCron("0 0 14 1/1 * ? *");
+        anomalyFunctionSpec.setCron("0 0 * * * ? *");
         anomalyFunctionSpec.setWindowSize(24);
         anomalyFunctionSpec.setWindowUnit(TimeUnit.HOURS);
         anomalyFunctionSpec.setProperties("");
@@ -298,7 +298,7 @@ public class FunctionCreationOnboardingTask extends BaseDetectionOnboardTask {
         break;
       case DAYS:
         anomalyFunctionSpec.setType("SPLINE_REGRESSION_VANILLA");
-        anomalyFunctionSpec.setCron("0 0 14 1/1 * ? *");
+        anomalyFunctionSpec.setCron("0 0 14 * * ? *");
         anomalyFunctionSpec.setWindowSize(1);
         anomalyFunctionSpec.setWindowUnit(TimeUnit.DAYS);
         anomalyFunctionSpec.setProperties("");

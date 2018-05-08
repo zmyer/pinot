@@ -1,8 +1,15 @@
 import _ from 'lodash';
+import moment from 'moment';
 import { computed, set } from '@ember/object';
 import Controller from '@ember/controller';
+import { inject as service } from '@ember/service';
 
 export default Controller.extend({
+
+  /**
+   * Make duration service accessible
+   */
+  durationCache: service('services/duration'),
 
   /**
    * Active class appendage of 'view totals' link
@@ -55,6 +62,28 @@ export default Controller.extend({
   ),
 
   actions: {
+
+    /**
+     * Sets the new custom date range for anomaly coverage
+     * @method onRangeSelection
+     * @param {Object} rangeOption - the user-selected time range to load
+     */
+    onRangeSelection(rangeOption) {
+      const {
+        start,
+        end,
+        value: duration
+      } = rangeOption;
+      const durationObj = {
+        duration,
+        startDate: moment(start).valueOf(),
+        endDate: moment(end).valueOf()
+      };
+      // Cache the new time range and update page with it
+      this.get('durationCache').setDuration(durationObj);
+      this.transitionToRoute({ queryParams: durationObj });
+    },
+
     /**
      * Handle sorting for each sortable table column
      * @param {String} sortKey  - stringified start date

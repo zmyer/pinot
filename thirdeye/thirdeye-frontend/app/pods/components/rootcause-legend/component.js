@@ -8,6 +8,7 @@ import {
   toMetricLabel,
   toEventLabel
 } from 'thirdeye-frontend/utils/rca-utils';
+import _ from 'lodash';
 
 export default Component.extend({
   entities: null, // {}
@@ -22,22 +23,13 @@ export default Component.extend({
 
   classNames: ['rootcause-legend'],
 
-  validUrns: computed(
+  metrics: computed(
     'entities',
     'selectedUrns',
     function () {
-      const { entities, selectedUrns } = this.getProperties('entities', 'selectedUrns');
-      return filterPrefix(selectedUrns, 'thirdeye:').filter(urn => entities[urn] || urn.startsWith('thirdeye:metric:'));
-    }
-  ),
-
-  metrics: computed(
-    'entities',
-    'validUrns',
-    function () {
-      const { validUrns, entities } = this.getProperties('validUrns', 'entities');
-      return filterPrefix(validUrns, 'thirdeye:metric:').
-        reduce((agg, urn) => {
+      const { selectedUrns, entities } = this.getProperties('selectedUrns', 'entities');
+      return filterPrefix(selectedUrns, 'thirdeye:metric:')
+        .reduce((agg, urn) => {
           agg[urn] = toMetricLabel(urn, entities);
           return agg;
         }, {});
@@ -47,14 +39,14 @@ export default Component.extend({
   /**
    * Parses the validUrns and builds out
    * a Mapping of event Types to a mapping of urns
-   * @type {Objectgit sta}
+   * @type {Object}
    */
   events: computed(
     'entities',
-    'validUrns',
+    'selectedUrns',
     function () {
-      const { entities, validUrns } = this.getProperties('entities', 'validUrns');
-      return filterPrefix(validUrns, 'thirdeye:event:')
+      const { entities, selectedUrns } = this.getProperties('entities', 'selectedUrns');
+      return filterPrefix(selectedUrns, 'thirdeye:event:')
         .reduce((agg, urn) => {
           const type = urn.split(':')[2];
           agg[type] = agg[type] || {};
@@ -69,10 +61,10 @@ export default Component.extend({
 
   colors: computed(
     'entities',
-    'validUrns',
+    'selectedUrns',
     function () {
-      const { entities, validUrns } = this.getProperties('entities', 'validUrns');
-      return validUrns
+      const { entities, selectedUrns } = this.getProperties('entities', 'selectedUrns');
+      return [...selectedUrns]
         .filter(urn => entities[urn])
         .reduce((agg, urn) => {
           agg[urn] = entities[urn].color;
@@ -112,7 +104,7 @@ export default Component.extend({
      * @returns undefined
      */
     onMouseEnter(urn) {
-      this.attrs.onMouseEnter(urn);
+      this.attrs.onMouseEnter([urn]);
     },
 
     /**
@@ -120,7 +112,7 @@ export default Component.extend({
      * @returns undefined
      */
     onMouseLeave(){
-      this.attrs.onMouseLeave(null);
+      this.attrs.onMouseLeave([]);
     },
 
 
@@ -151,7 +143,7 @@ export default Component.extend({
 
     visibleMetrics() {
       const { selectedUrns } = this.getProperties('selectedUrns');
-      const visible = new Set(filterPrefix(selectedUrns, ['thirdeye:metric:', 'frontend:metric:']));
+      const visible = new Set(filterPrefix(selectedUrns, ['thirdeye:metric:', 'frontend:metric:', 'frontend:anomalyfunction:']));
       const other = new Set([...selectedUrns].filter(urn => !visible.has(urn)));
       this._bulkVisibility(visible, other);
     },

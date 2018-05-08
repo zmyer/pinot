@@ -5,27 +5,45 @@ import com.linkedin.thirdeye.anomaly.task.TaskDriverConfiguration;
 import com.linkedin.thirdeye.auto.onboard.AutoOnboardConfiguration;
 import com.linkedin.thirdeye.common.ThirdEyeConfiguration;
 
+
 public class ThirdEyeAnomalyConfiguration extends ThirdEyeConfiguration {
+
+  private boolean alert = false;
+  private boolean autoload = false;
+  private boolean classifier = false;
+  private boolean dataCompleteness = false;
+  private boolean holidayEventsLoader = false;
+  private boolean monitor = false;
+  private boolean pinotProxy = false;
   private boolean scheduler = false;
   private boolean worker = false;
-  private boolean monitor = false;
-  private boolean alert = false;
-  @Deprecated
-  private boolean merger = false;
-  private boolean autoload = false;
-  private boolean dataCompleteness = false;
-  private boolean classifier = false;
-  private boolean pinotProxy = false;
-  private boolean detectionOnboard = false;
 
   private long id;
   private String dashboardHost;
   private SmtpConfiguration smtpConfiguration;
+  private HolidayEventsLoaderConfiguration holidayEventsLoaderConfiguration = new HolidayEventsLoaderConfiguration();
   private MonitorConfiguration monitorConfiguration = new MonitorConfiguration();
   private AutoOnboardConfiguration autoOnboardConfiguration = new AutoOnboardConfiguration();
   private TaskDriverConfiguration taskDriverConfiguration = new TaskDriverConfiguration();
   private String failureFromAddress;
   private String failureToAddress;
+
+
+  public HolidayEventsLoaderConfiguration getHolidayEventsLoaderConfiguration() {
+    return holidayEventsLoaderConfiguration;
+  }
+
+  public void setHolidayEventsLoaderConfiguration(HolidayEventsLoaderConfiguration holidayEventsLoaderConfiguration) {
+    this.holidayEventsLoaderConfiguration = holidayEventsLoaderConfiguration;
+  }
+
+  public boolean isHolidayEventsLoader() {
+    return holidayEventsLoader;
+  }
+
+  public void setHolidayEventsLoader(boolean holidayEventsLoader) {
+    this.holidayEventsLoader = holidayEventsLoader;
+  }
 
   public String getDashboardHost() {
     return dashboardHost;
@@ -75,8 +93,6 @@ public class ThirdEyeAnomalyConfiguration extends ThirdEyeConfiguration {
     this.monitorConfiguration = monitorConfiguration;
   }
 
-
-
   public AutoOnboardConfiguration getAutoOnboardConfiguration() {
     return autoOnboardConfiguration;
   }
@@ -103,14 +119,6 @@ public class ThirdEyeAnomalyConfiguration extends ThirdEyeConfiguration {
 
   public SmtpConfiguration getSmtpConfiguration() {
     return smtpConfiguration;
-  }
-
-  public boolean isMerger() {
-    return merger;
-  }
-
-  public void setMerger(boolean merger) {
-    this.merger = merger;
   }
 
   public boolean isAutoload() {
@@ -145,14 +153,6 @@ public class ThirdEyeAnomalyConfiguration extends ThirdEyeConfiguration {
     this.pinotProxy = pinotProxy;
   }
 
-  public boolean isDetectionOnboard() {
-    return detectionOnboard;
-  }
-
-  public void setDetectionOnboard(boolean detectionOnboard) {
-    this.detectionOnboard = detectionOnboard;
-  }
-
   public void setSmtpConfiguration(SmtpConfiguration smtpConfiguration) {
     this.smtpConfiguration = smtpConfiguration;
   }
@@ -172,5 +172,4 @@ public class ThirdEyeAnomalyConfiguration extends ThirdEyeConfiguration {
   public void setFailureToAddress(String failureToAddress) {
     this.failureToAddress = failureToAddress;
   }
-
 }

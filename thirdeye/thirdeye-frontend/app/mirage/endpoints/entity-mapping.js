@@ -1,6 +1,6 @@
 
-
 export default function (server) {
+
   /**
    * get request for the entity mapping
    */
@@ -11,8 +11,27 @@ export default function (server) {
         createdBy: null,
         updatedBy: null,
         fromURN: 'thirdeye:metric:1',
-        toUrn: 'thirdeye:metric:100000'
+        toURN: 'thirdeye:metric:100000'
       }
+    ];
+  });
+
+  /**
+ * get request to fetch all datasets
+ */
+  server.get('/data/datasets', () => {
+    return [
+      'dataset 1',
+      'dataset 2',
+      'dataset 3'
+    ];
+  });
+
+  server.get('/external/services/all', () => {
+    return [
+      'service 1',
+      'service 2',
+      'service 3'
     ];
   });
 }

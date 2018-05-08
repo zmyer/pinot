@@ -17,7 +17,7 @@ package com.linkedin.pinot.server.starter.helix;
 
 import com.linkedin.pinot.common.messages.SegmentRefreshMessage;
 import com.linkedin.pinot.common.messages.SegmentReloadMessage;
-import com.linkedin.pinot.core.data.manager.offline.InstanceDataManager;
+import com.linkedin.pinot.core.data.manager.InstanceDataManager;
 import java.util.concurrent.Semaphore;
 import org.apache.helix.NotificationContext;
 import org.apache.helix.messaging.handling.HelixTaskResult;
@@ -112,9 +112,8 @@ public class SegmentMessageHandlerFactory implements MessageHandlerFactory {
       _logger.info("Handling message: {}", _message);
       try {
         acquireSema(_segmentName, LOGGER);
-        // The addOrReplaceOfflineSegment() call can retry multiple times with back-off for loading the same segment.
-        // If it does, future segment loads will be stalled on the one segment that we cannot load.
-        _fetcherAndLoader.addOrReplaceOfflineSegment(_tableName, _segmentName, /*retryOnFailure=*/false);
+        // The number of retry times depends on the retry count in SegmentFetcher.
+        _fetcherAndLoader.addOrReplaceOfflineSegment(_tableName, _segmentName);
         result.setSuccess(true);
       } finally {
         releaseSema();

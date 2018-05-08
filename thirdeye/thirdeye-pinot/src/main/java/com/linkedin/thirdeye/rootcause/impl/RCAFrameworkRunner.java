@@ -3,8 +3,6 @@ package com.linkedin.thirdeye.rootcause.impl;
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import com.linkedin.thirdeye.anomaly.ThirdEyeAnomalyConfiguration;
-import com.linkedin.thirdeye.anomaly.events.EventDataProviderLoader;
-import com.linkedin.thirdeye.anomaly.events.EventDataProviderManager;
 import com.linkedin.thirdeye.anomaly.events.EventType;
 import com.linkedin.thirdeye.anomaly.events.HistoricalAnomalyEventProvider;
 import com.linkedin.thirdeye.anomaly.events.HolidayEventProvider;
@@ -15,6 +13,7 @@ import com.linkedin.thirdeye.rootcause.Entity;
 import com.linkedin.thirdeye.rootcause.Pipeline;
 import com.linkedin.thirdeye.rootcause.RCAFramework;
 import com.linkedin.thirdeye.rootcause.RCAFrameworkExecutionResult;
+import com.linkedin.thirdeye.rootcause.util.EntityUtils;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
@@ -122,7 +121,7 @@ public class RCAFrameworkRunner {
       setLogger(cmd.getOptionValue(CLI_LOG_WARN), Level.WARN);
     if (cmd.hasOption(CLI_LOG_ERROR))
       setLogger(cmd.getOptionValue(CLI_LOG_ERROR), Level.ERROR);
-    
+
     if(cmd.hasOption(CLI_VERBOSE))
       setLogger(Logger.ROOT_LOGGER_NAME, Level.DEBUG);
 
@@ -137,15 +136,10 @@ public class RCAFrameworkRunner {
 
     ThirdEyeCacheRegistry.initializeCaches(thirdEyeConfig);
 
-    EventDataProviderManager eventProvider = EventDataProviderManager.getInstance();
-    eventProvider.registerEventDataProvider(EventType.HOLIDAY.toString(), new HolidayEventProvider());
-    eventProvider.registerEventDataProvider(EventType.HISTORICAL_ANOMALY.toString(), new HistoricalAnomalyEventProvider());
-
     // ************************************************************************
     // Framework setup
     // ************************************************************************
     File rcaConfig = new File(cmd.getOptionValue(CLI_ROOTCAUSE_CONFIG));
-    EventDataProviderLoader.registerEventDataProvidersFromConfig(rcaConfig, eventProvider);
     List<Pipeline> pipelines = RCAFrameworkLoader.getPipelinesFromConfig(rcaConfig, cmd.getOptionValue(CLI_FRAMEWORK));
 
     // Executor

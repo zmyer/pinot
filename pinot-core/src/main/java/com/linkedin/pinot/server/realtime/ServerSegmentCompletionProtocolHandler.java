@@ -28,6 +28,7 @@ import org.apache.commons.configuration.Configuration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+
 /**
  * A class that handles sending segment completion protocol requests to the controller and getting
  * back responses
@@ -42,11 +43,10 @@ public class ServerSegmentCompletionProtocolHandler {
   private static final String CONFIG_OF_CONTROLLER_HTTPS_ENABLED = "enabled";
   private static final String CONFIG_OF_CONTROLLER_HTTPS_PORT = "controller.port";
 
-  private static Integer _controllerHttpsPort = null;
-
-  private final String _instanceId;
-  private final FileUploadDownloadClient _fileUploadDownloadClient;
   private static SSLContext _sslContext;
+  private static Integer _controllerHttpsPort;
+
+  private final FileUploadDownloadClient _fileUploadDownloadClient;
 
   public static void init(Configuration uploaderConfig) {
     Configuration httpsConfig = uploaderConfig.subset(HTTPS_PROTOCOL);
@@ -56,19 +56,13 @@ public class ServerSegmentCompletionProtocolHandler {
     }
   }
 
-  public ServerSegmentCompletionProtocolHandler(String instanceId) {
-    _instanceId = instanceId;
-    if (_sslContext != null) {
-      _fileUploadDownloadClient = new FileUploadDownloadClient(_sslContext);
-    } else {
-      _fileUploadDownloadClient = new FileUploadDownloadClient();
-    }
+  public ServerSegmentCompletionProtocolHandler() {
+    _fileUploadDownloadClient = new FileUploadDownloadClient(_sslContext);
   }
 
-  public SegmentCompletionProtocol.Response segmentCommitStart(long offset, final String segmentName) {
-    SegmentCompletionProtocol.Request.Params params = new SegmentCompletionProtocol.Request.Params();
-    params.withInstanceId(_instanceId).withOffset(offset).withSegmentName(segmentName);
-    SegmentCompletionProtocol.SegmentCommitStartRequest request = new SegmentCompletionProtocol.SegmentCommitStartRequest(params);
+  public SegmentCompletionProtocol.Response segmentCommitStart(SegmentCompletionProtocol.Request.Params params) {
+    SegmentCompletionProtocol.SegmentCommitStartRequest request =
+        new SegmentCompletionProtocol.SegmentCommitStartRequest(params);
     String url = createSegmentCompletionUrl(request);
     if (url == null) {
       return SegmentCompletionProtocol.RESP_NOT_SENT;
@@ -77,11 +71,10 @@ public class ServerSegmentCompletionProtocolHandler {
   }
 
   // TODO We need to make this work with trusted certificates if the VIP is using https.
-  public SegmentCompletionProtocol.Response segmentCommitUpload(long offset, final String segmentName, final File segmentTarFile,
-      final String controllerVipUrl) {
-    SegmentCompletionProtocol.Request.Params params = new SegmentCompletionProtocol.Request.Params();
-    params.withInstanceId(_instanceId).withOffset(offset).withSegmentName(segmentName);
-    SegmentCompletionProtocol.SegmentCommitUploadRequest request = new SegmentCompletionProtocol.SegmentCommitUploadRequest(params);
+  public SegmentCompletionProtocol.Response segmentCommitUpload(SegmentCompletionProtocol.Request.Params params,
+      final File segmentTarFile, final String controllerVipUrl) {
+    SegmentCompletionProtocol.SegmentCommitUploadRequest request =
+        new SegmentCompletionProtocol.SegmentCommitUploadRequest(params);
 
     String hostPort;
     String protocol;
@@ -93,15 +86,12 @@ public class ServerSegmentCompletionProtocolHandler {
       throw new RuntimeException("Could not make URI", e);
     }
     String url = request.getUrl(hostPort, protocol);
-    return uploadSegment(url, segmentName, segmentTarFile);
+    return uploadSegment(url, params.getSegmentName(), segmentTarFile);
   }
 
-  public SegmentCompletionProtocol.Response segmentCommitEnd(long offset, final String segmentName, String segmentLocation,
-      long memoryUsedBytes) {
-    SegmentCompletionProtocol.Request.Params params = new SegmentCompletionProtocol.Request.Params();
-    params.withInstanceId(_instanceId).withOffset(offset).withSegmentName(segmentName)
-        .withSegmentLocation(segmentLocation).withMemoryUsedBytes(memoryUsedBytes);
-    SegmentCompletionProtocol.SegmentCommitEndRequest request = new SegmentCompletionProtocol.SegmentCommitEndRequest(params);
+  public SegmentCompletionProtocol.Response segmentCommitEnd(SegmentCompletionProtocol.Request.Params params) {
+    SegmentCompletionProtocol.SegmentCommitEndRequest request =
+        new SegmentCompletionProtocol.SegmentCommitEndRequest(params);
     String url = createSegmentCompletionUrl(request);
     if (url == null) {
       return SegmentCompletionProtocol.RESP_NOT_SENT;
@@ -109,29 +99,27 @@ public class ServerSegmentCompletionProtocolHandler {
     return sendRequest(url);
   }
 
-  public SegmentCompletionProtocol.Response segmentCommit(long offset, final String segmentName, long memoryUsedBytes,
+  public SegmentCompletionProtocol.Response segmentCommit(SegmentCompletionProtocol.Request.Params params,
       final File segmentTarFile) {
-    SegmentCompletionProtocol.Request.Params params = new SegmentCompletionProtocol.Request.Params();
-    params.withInstanceId(_instanceId).withOffset(offset).withSegmentName(segmentName).withMemoryUsedBytes(memoryUsedBytes);
     SegmentCompletionProtocol.SegmentCommitRequest request = new SegmentCompletionProtocol.SegmentCommitRequest(params);
     String url = createSegmentCompletionUrl(request);
     if (url == null) {
       return SegmentCompletionProtocol.RESP_NOT_SENT;
     }
 
-    return uploadSegment(url, segmentName, segmentTarFile);
+    return uploadSegment(url, params.getSegmentName(), segmentTarFile);
   }
 
   public SegmentCompletionProtocol.Response extendBuildTime(SegmentCompletionProtocol.Request.Params params) {
-    params.withInstanceId(_instanceId);
-    SegmentCompletionProtocol.ExtendBuildTimeRequest request = new SegmentCompletionProtocol.ExtendBuildTimeRequest(params);
+    SegmentCompletionProtocol.ExtendBuildTimeRequest request =
+        new SegmentCompletionProtocol.ExtendBuildTimeRequest(params);
     String url = createSegmentCompletionUrl(request);
     return sendRequest(url);
   }
 
   public SegmentCompletionProtocol.Response segmentConsumed(SegmentCompletionProtocol.Request.Params params) {
-    params.withInstanceId(_instanceId);
-    SegmentCompletionProtocol.SegmentConsumedRequest request = new SegmentCompletionProtocol.SegmentConsumedRequest(params);
+    SegmentCompletionProtocol.SegmentConsumedRequest request =
+        new SegmentCompletionProtocol.SegmentConsumedRequest(params);
     String url = createSegmentCompletionUrl(request);
     if (url == null) {
       return SegmentCompletionProtocol.RESP_NOT_SENT;
@@ -140,15 +128,14 @@ public class ServerSegmentCompletionProtocolHandler {
   }
 
   public SegmentCompletionProtocol.Response segmentStoppedConsuming(SegmentCompletionProtocol.Request.Params params) {
-    params.withInstanceId(_instanceId);
-    SegmentCompletionProtocol.SegmentStoppedConsuming request = new SegmentCompletionProtocol.SegmentStoppedConsuming(params);
+    SegmentCompletionProtocol.SegmentStoppedConsuming request =
+        new SegmentCompletionProtocol.SegmentStoppedConsuming(params);
     String url = createSegmentCompletionUrl(request);
     if (url == null) {
       return SegmentCompletionProtocol.RESP_NOT_SENT;
     }
     return sendRequest(url);
   }
-
 
   private String createSegmentCompletionUrl(SegmentCompletionProtocol.Request request) {
     ControllerLeaderLocator leaderLocator = ControllerLeaderLocator.getInstance();

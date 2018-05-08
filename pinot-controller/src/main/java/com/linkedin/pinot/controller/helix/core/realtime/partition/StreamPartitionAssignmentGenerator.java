@@ -19,7 +19,7 @@ package com.linkedin.pinot.controller.helix.core.realtime.partition;
 import com.google.common.annotations.VisibleForTesting;
 import com.linkedin.pinot.common.config.TableConfig;
 import com.linkedin.pinot.common.metadata.ZKMetadataProvider;
-import com.linkedin.pinot.controller.helix.PartitionAssignment;
+import com.linkedin.pinot.common.partition.PartitionAssignment;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -30,9 +30,13 @@ import org.apache.helix.store.zk.ZkHelixPropertyStore;
 
 
 /**
+ * TODO: Replace uses of this class with {@link com.linkedin.pinot.common.partition.PartitionAssignmentGenerator}
+ * which doesn't depend on znode for partition assignment
+ *
  * Class to help generate partition assignment, given the table config, number of stream partitions,
  * instances and all tables needing reassignment
  */
+@Deprecated
 public class StreamPartitionAssignmentGenerator {
 
   private ZkHelixPropertyStore<ZNRecord> _propertyStore;
@@ -93,21 +97,5 @@ public class StreamPartitionAssignmentGenerator {
   @VisibleForTesting
   protected TableConfig getRealtimeTableConfig(String tableNameWithType) {
     return ZKMetadataProvider.getTableConfig(_propertyStore, tableNameWithType);
-  }
-
-  /**
-   * Given map of table name to stream partition assignment, construct and write znodes to property store one by one
-   * @param newPartitionAssignment
-   */
-  public void writeStreamPartitionAssignment(Map<String, PartitionAssignment> newPartitionAssignment) {
-    for (Map.Entry<String, PartitionAssignment> entry : newPartitionAssignment.entrySet()) {
-      ZNRecord znRecord = new ZNRecord(entry.getKey());
-      Map<String, List<String>> partitionToInstances = entry.getValue().getPartitionToInstances();
-      for (Map.Entry<String, List<String>> partition : partitionToInstances.entrySet()) {
-        znRecord.setListField(partition.getKey(), partition.getValue());
-      }
-      final String path = ZKMetadataProvider.constructPropertyStorePathForKafkaPartitions(entry.getKey());
-      _propertyStore.set(path, znRecord, AccessOption.PERSISTENT);
-    }
   }
 }

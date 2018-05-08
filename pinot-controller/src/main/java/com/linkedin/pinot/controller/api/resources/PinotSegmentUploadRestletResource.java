@@ -48,6 +48,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.io.UnsupportedEncodingException;
 import java.net.InetAddress;
 import java.net.URISyntaxException;
@@ -279,6 +280,14 @@ public class PinotSegmentUploadRestletResource {
     File tempTarredSegmentFile = null;
     File tempSegmentDir = null;
 
+    if (headers != null) {
+      // TODO: Add these headers into open source hadoop jobs
+      LOGGER.info("HTTP Header {} is {}", CommonConstants.Controller.SEGMENT_NAME_HTTP_HEADER,
+          headers.getRequestHeader(CommonConstants.Controller.SEGMENT_NAME_HTTP_HEADER));
+      LOGGER.info("HTTP Header {} is {}", CommonConstants.Controller.TABLE_NAME_HTTP_HEADER,
+          headers.getRequestHeader(CommonConstants.Controller.TABLE_NAME_HTTP_HEADER));
+    }
+
     try {
       FileUploadPathProvider provider = new FileUploadPathProvider(_controllerConf);
       String tempSegmentName = "tmp-" + System.nanoTime();
@@ -324,15 +333,18 @@ public class PinotSegmentUploadRestletResource {
           break;
 
         case TAR:
-          Map<String, List<FormDataBodyPart>> map = multiPart.getFields();
-          if (!validateMultiPart(map, "UNKNOWN")) {
-            throw new ControllerApplicationException(LOGGER, "Invalid multi-part form", Response.Status.BAD_REQUEST);
-          }
-          String partName = map.keySet().iterator().next();
-          FormDataBodyPart bodyPart = map.get(partName).get(0);
-          try (InputStream inputStream = bodyPart.getValueAs(InputStream.class);
-              FileOutputStream outputStream = new FileOutputStream(tempTarredSegmentFile)) {
-            IOUtils.copyLarge(inputStream, outputStream);
+          try {
+            Map<String, List<FormDataBodyPart>> map = multiPart.getFields();
+            if (!validateMultiPart(map, null)) {
+              throw new ControllerApplicationException(LOGGER, "Invalid multi-part form", Response.Status.BAD_REQUEST);
+            }
+            FormDataBodyPart bodyPart = map.values().iterator().next().get(0);
+            try (InputStream inputStream = bodyPart.getValueAs(InputStream.class);
+                OutputStream outputStream = new FileOutputStream(tempTarredSegmentFile)) {
+              IOUtils.copyLarge(inputStream, outputStream);
+            }
+          } finally {
+            multiPart.cleanup();
           }
           break;
 

@@ -20,7 +20,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 
-public abstract class   MetadataEventNotifierFactory {
+public abstract class MetadataEventNotifierFactory {
   public static final Logger LOGGER = LoggerFactory.getLogger(MetadataEventNotifierFactory.class);
   public static final String METADATA_EVENT_CLASS_CONFIG = "factory.class";
 

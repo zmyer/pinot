@@ -1,5 +1,7 @@
 package com.linkedin.thirdeye.dashboard.resources;
 
+import com.wordnik.swagger.annotations.ApiOperation;
+import com.wordnik.swagger.annotations.ApiParam;
 import javax.ws.rs.core.Response;
 import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -12,8 +14,6 @@ import com.linkedin.thirdeye.datalayer.bao.AnomalyFunctionManager;
 import com.linkedin.thirdeye.datalayer.dto.AnomalyFunctionDTO;
 import com.linkedin.thirdeye.datalayer.bao.MergedAnomalyResultManager;
 import com.linkedin.thirdeye.datalayer.dto.MergedAnomalyResultDTO;
-import com.linkedin.thirdeye.datalayer.bao.RawAnomalyResultManager;
-import com.linkedin.thirdeye.datalayer.dto.RawAnomalyResultDTO;
 import com.linkedin.thirdeye.datasource.DAORegistry;
 
 import java.util.ArrayList;
@@ -31,7 +31,6 @@ import javax.validation.constraints.NotNull;
 public class OnboardResource {
   private final AnomalyFunctionManager anomalyFunctionDAO;
   private final MergedAnomalyResultManager mergedAnomalyResultDAO;
-  private final RawAnomalyResultManager rawAnomalyResultDAO;
 
   private static final DAORegistry DAO_REGISTRY = DAORegistry.getInstance();
   private static final Logger LOG = LoggerFactory.getLogger(OnboardResource.class);
@@ -39,22 +38,20 @@ public class OnboardResource {
   public OnboardResource() {
     this.anomalyFunctionDAO = DAO_REGISTRY.getAnomalyFunctionDAO();
     this.mergedAnomalyResultDAO = DAO_REGISTRY.getMergedAnomalyResultDAO();
-    this.rawAnomalyResultDAO = DAO_REGISTRY.getRawAnomalyResultDAO();
   }
 
   public OnboardResource(AnomalyFunctionManager anomalyFunctionManager,
-                         MergedAnomalyResultManager mergedAnomalyResultManager,
-                         RawAnomalyResultManager rawAnomalyResultManager) {
+                         MergedAnomalyResultManager mergedAnomalyResultManager) {
     this.anomalyFunctionDAO = anomalyFunctionManager;
     this.mergedAnomalyResultDAO = mergedAnomalyResultManager;
-    this.rawAnomalyResultDAO = rawAnomalyResultManager;
   }
 
   // endpoint clone function Ids to append a name defined in nameTags
 
   @GET
   @Path("function/{id}")
-  public AnomalyFunctionDTO getAnomalyFunction(@PathParam("id") Long id) {
+  @ApiOperation("GET a single function record by id")
+  public AnomalyFunctionDTO getAnomalyFunction(@ApiParam("alert function id\n") @PathParam("id") Long id) {
     return anomalyFunctionDAO.findById(id);
   }
 
@@ -290,7 +287,7 @@ public class OnboardResource {
 
     LOG.info("clone merged anomaly results from source anomaly function id {} to id {}", srcId, destId);
 
-    List<MergedAnomalyResultDTO> mergedAnomalyResultDTOs = mergedAnomalyResultDAO.findByStartTimeInRangeAndFunctionId(start, end, srcId, true);
+    List<MergedAnomalyResultDTO> mergedAnomalyResultDTOs = mergedAnomalyResultDAO.findByStartTimeInRangeAndFunctionId(start, end, srcId);
     if (mergedAnomalyResultDTOs == null || mergedAnomalyResultDTOs.isEmpty()) {
       LOG.error("No merged anomaly results found for anomaly function Id: {}", srcId);
       return false;
@@ -299,7 +296,6 @@ public class OnboardResource {
     for (MergedAnomalyResultDTO mergedAnomalyResultDTO : mergedAnomalyResultDTOs) {
       long oldId = mergedAnomalyResultDTO.getId();
       mergedAnomalyResultDTO.setId(null);  // clean the Id, then will create a new Id when save
-      mergedAnomalyResultDTO.setRawAnomalyIdList(null);
       mergedAnomalyResultDTO.setFunctionId(destId);
       mergedAnomalyResultDTO.setFunction(destAnomalyFunction);
       long newId = mergedAnomalyResultDAO.save(mergedAnomalyResultDTO);
@@ -377,26 +373,12 @@ public class OnboardResource {
         functionId, anomalyFunction.getCollection(), anomalyFunction.getMetric());
     int mergedAnomaliesDeleted = 0;
     List<MergedAnomalyResultDTO> mergedResults =
-        mergedAnomalyResultDAO.findByStartTimeInRangeAndFunctionId(monitoringWindowStartTime, monitoringWindowEndTime, functionId, true);
+        mergedAnomalyResultDAO.findByStartTimeInRangeAndFunctionId(monitoringWindowStartTime, monitoringWindowEndTime, functionId);
     if (CollectionUtils.isNotEmpty(mergedResults)) {
       mergedAnomaliesDeleted = deleteMergedResults(mergedResults);
     }
     returnInfo.put("mergedAnomaliesDeleted", mergedAnomaliesDeleted);
     LOG.info("{} merged anomaly results have been deleted", mergedAnomaliesDeleted);
-
-    // Find raw anomaly results and delete them
-    LOG.info("Deleting raw anomaly results in the time range: {} -- {}", new DateTime(monitoringWindowStartTime), new
-        DateTime(monitoringWindowEndTime));
-    LOG.info("Beginning cleanup merged anomaly results of functionId {} collection {} metric {}",
-        functionId, anomalyFunction.getCollection(), anomalyFunction.getMetric());
-    int rawAnomaliesDeleted = 0;
-    List<RawAnomalyResultDTO> rawResults =
-        rawAnomalyResultDAO.findAllByTimeAndFunctionId(monitoringWindowStartTime, monitoringWindowEndTime, functionId);
-    if (CollectionUtils.isNotEmpty(rawResults)) {
-      rawAnomaliesDeleted = deleteRawResults(rawResults);
-    }
-    returnInfo.put("rawAnomaliesDeleted", rawAnomaliesDeleted);
-    LOG.info("{} raw anomaly results have been deleted", rawAnomaliesDeleted);
 
     return returnInfo;
   }
@@ -411,17 +393,5 @@ public class OnboardResource {
       mergedAnomaliesDeleted++;
     }
     return mergedAnomaliesDeleted;
-  }
-
-  // Delete raw anomaly results from rawResultDAO
-  private int deleteRawResults(List<RawAnomalyResultDTO> rawResults) {
-    LOG.info("Deleting raw anomaly results...");
-    int rawAnomaliesDeleted = 0;
-    for(RawAnomalyResultDTO rawResult : rawResults) {
-      LOG.info("...Deleting raw anomaly result id {} for functionId {}", rawResult.getId(), rawResult.getFunctionId());
-      rawAnomalyResultDAO.delete(rawResult);
-      rawAnomaliesDeleted++;
-    }
-    return rawAnomaliesDeleted;
   }
 }

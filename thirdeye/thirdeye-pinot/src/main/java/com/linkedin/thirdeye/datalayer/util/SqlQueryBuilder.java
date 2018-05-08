@@ -230,18 +230,23 @@ public class SqlQueryBuilder {
     return prepareStatement;
   }
 
-  public PreparedStatement createDeleteStatement(Connection connection,
-      Class<? extends AbstractEntity> entityClass, List<Long> ids) throws Exception {
+  public PreparedStatement createDeleteStatement(Connection connection, Class<? extends AbstractEntity> entityClass,
+      List<Long> ids, boolean useBaseId) throws Exception {
     if (ids == null || ids.isEmpty()) {
       throw new IllegalArgumentException("ids to delete cannot be null/empty");
     }
     String tableName =
         entityMappingHolder.tableToEntityNameMap.inverse().get(entityClass.getSimpleName());
     StringBuilder sqlBuilder = new StringBuilder("DELETE FROM " + tableName);
-    StringBuilder whereClause = new StringBuilder(" WHERE  id IN( ");
+    String whereString = " WHERE id IN( ";
+    if (useBaseId) {
+      whereString = " WHERE base_id IN( ";
+    }
+    StringBuilder whereClause = new StringBuilder(whereString);
     String delim = "";
     for (Long id : ids) {
       whereClause.append(delim).append(id);
+      delim = ",";
     }
     whereClause.append(")");
     sqlBuilder.append(whereClause.toString());

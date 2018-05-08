@@ -1,4 +1,5 @@
 import { computed } from '@ember/object';
+import { equal } from '@ember/object/computed';
 import Component from '@ember/component';
 import moment from 'moment';
 import d3 from 'd3';
@@ -11,6 +12,7 @@ import {
   toMetricLabel,
   colorMapping
 } from 'thirdeye-frontend/utils/rca-utils';
+import _ from 'lodash';
 
 const TIMESERIES_MODE_ABSOLUTE = 'absolute';
 const TIMESERIES_MODE_RELATIVE = 'relative';
@@ -30,30 +32,23 @@ export default Component.extend({
 
   onHover: null, // function (urns)
 
-  timeseriesMode: null, // 'absolute', 'relative', 'log'
+  timeseriesMode: null, // 'absolute', 'relative', 'log', 'split'
 
   classNames: ['rootcause-chart'],
 
   /**
-   * id of the entity to be focused on the chart
-   * @type {String}
+   * urns of the entities to be focused on the chart
+   * @type {Set}
    */
-  focusedUrn: null,
+  focusedUrns: new Set(),
 
   /**
    * Translate an urn into a chart id
-   * @returns {String|null}
+   * @returns {Set}
    */
-  focusedId: computed('focusedUrn', function() {
-    const urn = this.get('focusedUrn');
-
-    return this._urnToChartId(urn);
+  focusedIds: computed('focusedUrns', function() {
+    return this.get('focusedUrns');
   }),
-
-  init() {
-    this._super(...arguments);
-    this.set('timeseriesMode', TIMESERIES_MODE_ABSOLUTE);
-  },
 
   legend: {
     show: false
@@ -166,7 +161,7 @@ export default Component.extend({
       const { timeseries, timeseriesMode, displayableUrns } =
         this.getProperties('timeseries', 'timeseriesMode', 'displayableUrns');
 
-      if (timeseriesMode == TIMESERIES_MODE_SPLIT) {
+      if (timeseriesMode === TIMESERIES_MODE_SPLIT) {
         return {};
       }
 
@@ -195,17 +190,20 @@ export default Component.extend({
       const { displayableUrns, timeseriesMode } =
         this.getProperties('displayableUrns', 'timeseriesMode');
 
-      if (timeseriesMode != TIMESERIES_MODE_SPLIT) {
+      if (timeseriesMode !== TIMESERIES_MODE_SPLIT) {
         return {};
       }
 
       const splitSeries = {};
       const metricUrns = new Set(filterPrefix(displayableUrns, 'frontend:metric:'));
+
       const otherUrns = new Set([...displayableUrns].filter(urn => !metricUrns.has(urn)));
 
-      filterPrefix(metricUrns, ['frontend:metric:current:']).forEach(urn => {
+      filterPrefix(metricUrns, 'frontend:metric:current:').forEach(urn => {
         const splitMetricUrns = [urn];
         const baselineUrn = toBaselineUrn(urn);
+
+        // show related baseline
         if (metricUrns.has(baselineUrn)) {
           splitMetricUrns.push(baselineUrn);
         }
@@ -230,7 +228,7 @@ export default Component.extend({
       const { entities, displayableUrns, timeseriesMode } =
         this.getProperties('entities', 'displayableUrns', 'timeseriesMode');
 
-      if (timeseriesMode != TIMESERIES_MODE_SPLIT) {
+      if (timeseriesMode !== TIMESERIES_MODE_SPLIT) {
         return {};
       }
 
@@ -252,7 +250,7 @@ export default Component.extend({
       const { entities, displayableUrns, timeseriesMode } =
         this.getProperties('entities', 'displayableUrns', 'timeseriesMode');
 
-      if (timeseriesMode != TIMESERIES_MODE_SPLIT) {
+      if (timeseriesMode !== TIMESERIES_MODE_SPLIT) {
         return {};
       }
 
@@ -267,12 +265,7 @@ export default Component.extend({
   /**
    * Split view indicator
    */
-  isSplit: computed(
-    'timeseriesMode',
-    function () {
-      return this.get('timeseriesMode') == TIMESERIES_MODE_SPLIT;
-    }
-  ),
+  isSplit: equal('timeseriesMode', TIMESERIES_MODE_SPLIT),
 
   //
   // helpers
@@ -290,7 +283,10 @@ export default Component.extend({
 
     const series = {};
     [...urns].forEach(urn => {
-      series[this._makeLabel(urn)] = this._makeSeries(urn);
+      const s = this._makeSeries(urn);
+      if (!_.isEmpty(s.timestamps)) {
+        series[this._makeLabel(urn)] = s;
+      }
     });
 
     series['anomalyRange'] = {
@@ -401,8 +397,8 @@ export default Component.extend({
     if (hasPrefix(urn, 'frontend:metric:current:')) {
       const metricEntity = entities[toMetricUrn(urn)];
       const series = {
-        timestamps: timeseries[urn].timestamps,
-        values: timeseries[urn].values,
+        timestamps: timeseries[urn].timestamp,
+        values: timeseries[urn].value,
         color: metricEntity ? metricEntity.color : 'none',
         type: 'line',
         axis: 'y'
@@ -413,8 +409,8 @@ export default Component.extend({
     } else if (hasPrefix(urn, 'frontend:metric:baseline:')) {
       const metricEntity = entities[toMetricUrn(urn)];
       const series = {
-        timestamps: timeseries[urn].timestamps,
-        values: timeseries[urn].values,
+        timestamps: timeseries[urn].timestamp,
+        values: timeseries[urn].value,
         color: metricEntity ? 'light-' + metricEntity.color : 'none',
         type: 'line',
         axis: 'y'
@@ -516,23 +512,4 @@ export default Component.extend({
       return outputUrns;
     }
   },
-
-  /**
-   * Converts an urn into a id that's readable
-   * by the c3-library .focus method
-   * @param {String} urn focused entity's urn
-   * @private
-   */
-  _urnToChartId(urn) {
-    if (!urn) return;
-
-    if (urn.includes('metric')) {
-      var [, metric, id, ...filters] = urn.split(':');
-      urn = ['frontend', metric, 'current', id].join(':');
-      if (filters.length) {
-        urn += `:${filters.join(':')}`;
-      }
-    }
-    return urn;
-  }
 });

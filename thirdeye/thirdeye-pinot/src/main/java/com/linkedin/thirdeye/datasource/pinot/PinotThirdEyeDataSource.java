@@ -171,8 +171,23 @@ public class PinotThirdEyeDataSource implements ThirdEyeDataSource {
         } else {
           pql = PqlUtils.getPql(request, metricFunction, decoratedFilterSet, dataTimeSpec);
         }
-        ThirdEyeResultSetGroup resultSetGroup = this.executePQL(new PinotQuery(pql, tableName));
+
+        ThirdEyeResultSetGroup resultSetGroup;
+        final long tStartFunction = System.nanoTime();
+        try {
+          resultSetGroup = this.executePQL(new PinotQuery(pql, tableName));
+          if (metricConfig != null) {
+            ThirdeyeMetricsUtil.getRequestLog().success(this.getName(), metricConfig.getDataset(), metricConfig.getName(), tStartFunction, System.nanoTime());
+          }
+        } catch (Exception e) {
+          if (metricConfig != null) {
+            ThirdeyeMetricsUtil.getRequestLog().failure(this.getName(), metricConfig.getDataset(), metricConfig.getName(), tStartFunction, System.nanoTime(), e);
+          }
+          throw e;
+        }
+
         metricFunctionToResultSetList.put(metricFunction, resultSetGroup.getResultSets());
+
       }
 
       List<String[]> resultRows = parseResultSets(request, metricFunctionToResultSetList);
@@ -479,7 +494,7 @@ public class PinotThirdEyeDataSource implements ThirdEyeDataSource {
 
     return CacheBuilder.newBuilder()
         .removalListener(listener)
-        .expireAfterWrite(ThirdEyeCacheRegistry.CACHE_EXPIRATION_HOURS, TimeUnit.HOURS)
+        .expireAfterWrite(15, TimeUnit.MINUTES)
         .maximumWeight(maxBucketNumber)
         .weigher(new Weigher<PinotQuery, ThirdEyeResultSetGroup>() {
           @Override public int weigh(PinotQuery pinotQuery, ThirdEyeResultSetGroup resultSetGroup) {

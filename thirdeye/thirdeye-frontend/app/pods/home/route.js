@@ -1,14 +1,38 @@
 import Route from '@ember/routing/route';
-import applicationAnomalies from 'thirdeye-frontend/mirage/fixtures/applicationAnomalies';
-import anomalyPerformance from 'thirdeye-frontend/mirage/fixtures/anomalyPerformance';
-import { humanizeFloat } from 'thirdeye-frontend/utils/utils';
 import columns from 'thirdeye-frontend/shared/anomaliesTableColumns';
-import RSVP from 'rsvp';
+import fetch from 'fetch';
+import { hash } from 'rsvp';
+import { selfServeApiCommon } from 'thirdeye-frontend/utils/api/self-serve';
+import { setProperties } from '@ember/object';
+import { task } from 'ember-concurrency';
+import RSVP from "rsvp";
+import moment from 'moment';
+import { inject as service } from '@ember/service';
+import _ from 'lodash';
+
+const queryParamsConfig = {
+  refreshModel: true,
+  replace: false
+};
 
 export default Route.extend({
+  store: service('store'),
+  anomaliesApiService: service('services/api/anomalies'),
+
+  queryParams: {
+    appName: queryParamsConfig,
+    startDate: queryParamsConfig,
+    endDate: queryParamsConfig
+  },
+  applicationAnomalies: null,
+  appName: null,
+  startDate: moment().startOf('day').utc().valueOf(),
+  endDate: moment().utc().valueOf(),
+  duration: null,
 
   /**
-   * Returns a two-dimensional array, which maps anomalies by metric and functionName (aka alert)
+   * Returns a mapping of anomalies by metric and functionName (aka alert), performance stats for anomalies by
+   * application, and redirect links to the anomaly search page for each metric-alert mapping
    * @return {Object}
    * @example
    * {
@@ -22,46 +46,84 @@ export default Route.extend({
    *   }
    * }
    */
-  model() {
-    let anomalyMapping = {};
+  async model(params) {
+    const { appName, startDate, endDate, duration } = params;//check params
+    const applications = await this.get('anomaliesApiService').queryApplications(appName, startDate, endDate);// Get all applicatons available
 
-    applicationAnomalies.forEach(anomaly => {
-      const { metric, functionName, current, baseline } = anomaly;
-
-      if (!anomalyMapping[metric]) {
-        anomalyMapping[metric] = {};
-      }
-
-      if (!anomalyMapping[metric][functionName]) {
-        anomalyMapping[metric][functionName] = [];
-      }
-
-      // Group anomalies by metric and function name
-      anomalyMapping[metric][functionName].push(anomaly);
-
-      // Format current and baseline numbers, so numbers in the millions+ don't overflow
-      anomaly.current = humanizeFloat(anomaly.current);
-      anomaly.baseline = humanizeFloat(anomaly.baseline);
-      anomaly.change = (((current - baseline) / baseline) * 100).toFixed(2);
-    });
-
-    return RSVP.hash({
-      anomalyMapping,
-      anomalyPerformance
+    return hash({
+      appName,
+      startDate,
+      endDate,
+      duration,
+      applications
     });
   },
+
+  afterModel(model) {
+    // Overrides with params if exists
+    const appName = model.appName || null;//model.applications.get('firstObject.application');
+    const startDate = Number(model.startDate) || this.get('startDate');//TODO: we can use ember transform here
+    const endDate = Number(model.endDate) || this.get('endDate');
+    const duration = model.duration || this.get('duration');
+
+    // Update props
+    this.setProperties({
+      appName,
+      startDate,
+      endDate,
+      duration
+    });
+
+    return new RSVP.Promise(async (resolve, reject) => {
+      try {
+        const anomalyMapping = appName ? await this.get('_getAnomalyMapping').perform(model) : [];
+        const anomalyPerformance = appName ? await this.get('anomaliesApiService').queryPerformanceByAppNameUrl(appName, moment(this.get('startDate')).startOf('day').utc().format(), moment(this.get('endDate')).startOf('day').utc().format()) : [];
+        const defaultParams = {
+          anomalyMapping,
+          anomalyPerformance,
+          appName,
+          startDate,
+          endDate,
+          duration
+        };
+        // Update model
+        resolve(Object.assign(model, { ...defaultParams }));
+      } catch (error) {
+        reject(new Error(`Unable to retrieve anomaly data. ${error}`));
+      }
+    });
+  },
+
+  _getAnomalyMapping: task (function * (model) {//TODO: need to add to anomaly util - LH
+    let anomalyMapping = {};
+    //fetch the anomalies from the onion wrapper cache.
+    const applicationAnomalies = yield this.get('anomaliesApiService').queryAnomaliesByAppName(this.get('appName'), this.get('startDate'));
+    this.set('applicationAnomalies', applicationAnomalies);
+
+    applicationAnomalies.forEach(anomaly => {
+      const metricName = anomaly.get('metricName');
+      //Grouping the anomalies of the same metric name
+      if (!anomalyMapping[metricName]) {
+        anomalyMapping[metricName] = [];
+      }
+
+      // Group anomalies by metricName and function name (alertName)
+      anomalyMapping[metricName].push(this.get('anomaliesApiService').getHumanizedEntity(anomaly));
+    });
+
+    return anomalyMapping;
+  }).drop(),
 
   /**
    * Retrieves metrics to index anomalies
    * @return {String[]} - array of strings, each of which is a metric
+   * TODO: not used now. Clean up to follow - lohuynh
    */
   getMetrics() {
     let metricSet = new Set();
-
-    applicationAnomalies.forEach(anomaly => {
-      metricSet.add(anomaly.metric);
+    this.get('applicationAnomalies').forEach(anomaly => {
+      metricSet.add(anomaly.get('metric'));
     });
-
     return [...metricSet];
   },
 
@@ -71,10 +133,12 @@ export default Route.extend({
    */
   getAlerts() {
     let alertSet = new Set();
-    applicationAnomalies.forEach(anomaly => {
-      alertSet.add(anomaly.functionName);
-    });
-
+    const applicationAnomalies = this.get('applicationAnomalies');
+    if (applicationAnomalies) {
+      applicationAnomalies.forEach(anomaly => {
+        alertSet.add(anomaly.get('functionName'));
+      });
+    }
     return [...alertSet];
   },
 
@@ -82,13 +146,15 @@ export default Route.extend({
    * Sets the table column, metricList, and alertList
    * @return {undefined}
    */
-  setupController(controller) {
+  setupController(controller, model) {
     this._super(...arguments);
-
     controller.setProperties({
       columns,
-      metricList: this.getMetrics(),
-      alertList: this.getAlerts()
+      appNameSelected: model.applications.findBy('application', this.get('appName')),
+      //metricList: this.getMetrics(),//TODO: clean up - lohuynh
+      // alertList: this.getAlerts(),
+      appName: this.get('appName'),
+      anomaliesCount:  Object.keys(model.anomalyMapping).length
     });
   }
 });

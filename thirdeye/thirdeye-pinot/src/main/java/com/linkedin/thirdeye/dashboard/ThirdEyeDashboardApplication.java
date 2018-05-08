@@ -3,60 +3,63 @@ package com.linkedin.thirdeye.dashboard;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.google.common.cache.CacheBuilder;
 import com.linkedin.thirdeye.anomaly.detection.DetectionJobScheduler;
-import com.linkedin.thirdeye.anomaly.onboard.FunctionOnboardingResource;
+import com.linkedin.thirdeye.anomaly.onboard.DetectionOnboardResource;
 import com.linkedin.thirdeye.anomalydetection.alertFilterAutotune.AlertFilterAutotuneFactory;
+import com.linkedin.thirdeye.api.TimeGranularity;
 import com.linkedin.thirdeye.auth.AuthCookieSerializer;
 import com.linkedin.thirdeye.auth.Credentials;
+import com.linkedin.thirdeye.auth.ThirdEyeAuthFilter;
 import com.linkedin.thirdeye.auth.ThirdEyeAuthenticatorDisabled;
 import com.linkedin.thirdeye.auth.ThirdEyeAuthenticatorLdap;
 import com.linkedin.thirdeye.auth.ThirdEyePrincipal;
-import com.linkedin.thirdeye.auth.ThirdEyeAuthFilter;
 import com.linkedin.thirdeye.common.BaseThirdEyeApplication;
+import com.linkedin.thirdeye.common.ThirdEyeSwaggerBundle;
 import com.linkedin.thirdeye.dashboard.configs.AuthConfiguration;
 import com.linkedin.thirdeye.dashboard.configs.ResourceConfiguration;
 import com.linkedin.thirdeye.dashboard.resources.AdminResource;
-import com.linkedin.thirdeye.dashboard.resources.AnomalyFunctionResource;
 import com.linkedin.thirdeye.dashboard.resources.AnomalyResource;
 import com.linkedin.thirdeye.dashboard.resources.AutoOnboardResource;
 import com.linkedin.thirdeye.dashboard.resources.CacheResource;
+import com.linkedin.thirdeye.dashboard.resources.CustomizedEventResource;
 import com.linkedin.thirdeye.dashboard.resources.DashboardResource;
-import com.linkedin.thirdeye.dashboard.resources.DataCompletenessResource;
 import com.linkedin.thirdeye.dashboard.resources.DatasetConfigResource;
 import com.linkedin.thirdeye.dashboard.resources.DetectionJobResource;
 import com.linkedin.thirdeye.dashboard.resources.EmailResource;
 import com.linkedin.thirdeye.dashboard.resources.EntityManagerResource;
 import com.linkedin.thirdeye.dashboard.resources.EntityMappingResource;
-import com.linkedin.thirdeye.dashboard.resources.JobResource;
 import com.linkedin.thirdeye.dashboard.resources.MetricConfigResource;
 import com.linkedin.thirdeye.dashboard.resources.OnboardDatasetMetricResource;
 import com.linkedin.thirdeye.dashboard.resources.OnboardResource;
-import com.linkedin.thirdeye.dashboard.resources.OverrideConfigResource;
 import com.linkedin.thirdeye.dashboard.resources.SummaryResource;
 import com.linkedin.thirdeye.dashboard.resources.ThirdEyeResource;
-import com.linkedin.thirdeye.dashboard.resources.v2.AggregationResource;
 import com.linkedin.thirdeye.dashboard.resources.v2.AnomaliesResource;
 import com.linkedin.thirdeye.dashboard.resources.v2.AuthResource;
 import com.linkedin.thirdeye.dashboard.resources.v2.ConfigResource;
 import com.linkedin.thirdeye.dashboard.resources.v2.DataResource;
-import com.linkedin.thirdeye.dashboard.resources.v2.EventResource;
 import com.linkedin.thirdeye.dashboard.resources.v2.RootCauseEntityFormatter;
+import com.linkedin.thirdeye.dashboard.resources.v2.RootCauseMetricResource;
 import com.linkedin.thirdeye.dashboard.resources.v2.RootCauseResource;
 import com.linkedin.thirdeye.dashboard.resources.v2.RootCauseSessionResource;
 import com.linkedin.thirdeye.dashboard.resources.v2.TimeSeriesResource;
+import com.linkedin.thirdeye.dashboard.resources.v2.UserDashboardResource;
+import com.linkedin.thirdeye.dashboard.resources.v2.aggregation.AggregationLoader;
 import com.linkedin.thirdeye.dashboard.resources.v2.aggregation.DefaultAggregationLoader;
 import com.linkedin.thirdeye.dashboard.resources.v2.rootcause.DefaultEntityFormatter;
 import com.linkedin.thirdeye.dashboard.resources.v2.rootcause.FormatterLoader;
 import com.linkedin.thirdeye.dashboard.resources.v2.timeseries.DefaultTimeSeriesLoader;
+import com.linkedin.thirdeye.dashboard.resources.v2.timeseries.TimeSeriesLoader;
 import com.linkedin.thirdeye.datasource.ThirdEyeCacheRegistry;
 import com.linkedin.thirdeye.detector.email.filter.AlertFilterFactory;
 import com.linkedin.thirdeye.detector.function.AnomalyFunctionFactory;
 import com.linkedin.thirdeye.rootcause.RCAFramework;
 import com.linkedin.thirdeye.rootcause.impl.RCAFrameworkLoader;
+import com.linkedin.thirdeye.tracking.RequestStatisticsLogger;
 import io.dropwizard.assets.AssetsBundle;
 import io.dropwizard.auth.Authenticator;
 import io.dropwizard.auth.CachingAuthenticator;
 import io.dropwizard.bundles.redirect.PathRedirect;
 import io.dropwizard.bundles.redirect.RedirectBundle;
+import io.dropwizard.lifecycle.Managed;
 import io.dropwizard.setup.Bootstrap;
 import io.dropwizard.setup.Environment;
 import io.dropwizard.views.ViewBundle;
@@ -71,17 +74,20 @@ import java.util.concurrent.TimeUnit;
 import javax.crypto.spec.SecretKeySpec;
 import javax.servlet.DispatcherType;
 import javax.servlet.FilterRegistration;
-import javax.servlet.ServletRegistration;
 import org.codehaus.jackson.map.ObjectMapper;
-import org.eclipse.jetty.proxy.ProxyServlet;
 import org.eclipse.jetty.servlets.CrossOriginFilter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 
+/**
+ * The type Third eye dashboard application.
+ */
 public class ThirdEyeDashboardApplication
     extends BaseThirdEyeApplication<ThirdEyeDashboardConfiguration> {
   private static final Logger LOG = LoggerFactory.getLogger(ThirdEyeDashboardApplication.class);
+
+  private RequestStatisticsLogger requestStatisticsLogger;
 
   @Override
   public String getName() {
@@ -101,6 +107,7 @@ public class ThirdEyeDashboardApplication
     bootstrap.addBundle(new AssetsBundle("/assets/lib", "/assets/lib", null, "lib"));
     bootstrap.addBundle(new AssetsBundle("/assets/img", "/assets/img", null, "img"));
     bootstrap.addBundle(new AssetsBundle("/assets/data", "/assets/data", null, "data"));
+    bootstrap.addBundle(new ThirdEyeSwaggerBundle());
   }
 
   @Override
@@ -125,44 +132,34 @@ public class ThirdEyeDashboardApplication
 
     AnomalyFunctionFactory anomalyFunctionFactory = new AnomalyFunctionFactory(config.getFunctionConfigPath());
     AlertFilterFactory alertFilterFactory = new AlertFilterFactory(config.getAlertFilterConfigPath());
-    EmailResource emailResource = new EmailResource(config);
 
-    env.jersey().register(new AnomalyFunctionResource(config.getFunctionConfigPath()));
     env.jersey().register(new DashboardResource());
     env.jersey().register(new CacheResource());
     env.jersey().register(new AnomalyResource(anomalyFunctionFactory, alertFilterFactory));
-    env.jersey().register(emailResource);
+    env.jersey().register(new EmailResource(config));
     env.jersey().register(new EntityManagerResource(config));
     env.jersey().register(new MetricConfigResource());
     env.jersey().register(new DatasetConfigResource());
-    env.jersey().register(new JobResource());
     env.jersey().register(new AdminResource());
     env.jersey().register(new SummaryResource());
     env.jersey().register(new ThirdEyeResource());
-    env.jersey().register(new OverrideConfigResource());
     env.jersey().register(new DataResource(anomalyFunctionFactory, alertFilterFactory));
     env.jersey().register(new AnomaliesResource(anomalyFunctionFactory, alertFilterFactory));
-    env.jersey().register(new TimeSeriesResource(Executors.newCachedThreadPool(),
-        new DefaultTimeSeriesLoader(DAO_REGISTRY.getMetricConfigDAO(), DAO_REGISTRY.getDatasetConfigDAO(), ThirdEyeCacheRegistry.getInstance().getQueryCache())));
-    env.jersey().register(new AggregationResource(Executors.newCachedThreadPool(),
-        new DefaultAggregationLoader(DAO_REGISTRY.getMetricConfigDAO(), DAO_REGISTRY.getDatasetConfigDAO(), ThirdEyeCacheRegistry.getInstance().getQueryCache())));
     env.jersey().register(new OnboardResource());
-    env.jersey().register(new EventResource(config));
-    env.jersey().register(new DataCompletenessResource(DAO_REGISTRY.getDataCompletenessConfigDAO()));
     env.jersey().register(new EntityMappingResource());
     env.jersey().register(new OnboardDatasetMetricResource());
     env.jersey().register(new AutoOnboardResource(config));
     env.jersey().register(new ConfigResource(DAO_REGISTRY.getConfigDAO()));
-    env.jersey().register(new RootCauseSessionResource(DAO_REGISTRY.getRootcauseSessionDAO(), new ObjectMapper()));
-    env.jersey().register(new FunctionOnboardingResource());
+    env.jersey().register(new CustomizedEventResource(DAO_REGISTRY.getEventDAO()));
+    env.jersey().register(new TimeSeriesResource());
+    env.jersey().register(new UserDashboardResource(DAO_REGISTRY.getMergedAnomalyResultDAO(), DAO_REGISTRY.getAnomalyFunctionDAO(), DAO_REGISTRY.getMetricConfigDAO(), DAO_REGISTRY.getDatasetConfigDAO()));
+    env.jersey().register(new DetectionOnboardResource(DAO_REGISTRY.getTaskDAO(), DAO_REGISTRY.getAnomalyFunctionDAO()));
 
-    if (config.getOnboardingHost() != null) {
-      LOG.info("Setting up onboarding proxy for '{}'", config.getOnboardingHost());
-      ServletRegistration.Dynamic proxy = env.servlets().addServlet("detection-onboard", ProxyServlet.Transparent.class);
-      proxy.setInitParameter("proxyTo", config.getOnboardingHost());
-      proxy.setInitParameter("prefix", "/detection-onboard");
-      proxy.addMapping("/detection-onboard/*");
-    }
+    TimeSeriesLoader timeSeriesLoader = new DefaultTimeSeriesLoader(DAO_REGISTRY.getMetricConfigDAO(), DAO_REGISTRY.getDatasetConfigDAO(), ThirdEyeCacheRegistry.getInstance().getQueryCache());
+    AggregationLoader aggregationLoader = new DefaultAggregationLoader(DAO_REGISTRY.getMetricConfigDAO(), DAO_REGISTRY.getDatasetConfigDAO(), ThirdEyeCacheRegistry.getInstance().getQueryCache(), ThirdEyeCacheRegistry.getInstance().getDatasetMaxDataTimeCache());
+
+    env.jersey().register(new RootCauseSessionResource(DAO_REGISTRY.getRootcauseSessionDAO(), new ObjectMapper()));
+    env.jersey().register(new RootCauseMetricResource(Executors.newCachedThreadPool(), aggregationLoader, timeSeriesLoader, DAO_REGISTRY.getMetricConfigDAO(), DAO_REGISTRY.getDatasetConfigDAO()));
 
     env.getObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
 
@@ -213,6 +210,21 @@ public class ThirdEyeDashboardApplication
       // auth resource
       env.jersey().register(new AuthResource(authenticator, serializer, authConfig.getCookieTTL() * 1000));
     }
+
+    env.lifecycle().manage(new Managed() {
+      @Override
+      public void start() throws Exception {
+        requestStatisticsLogger = new RequestStatisticsLogger(new TimeGranularity(1, TimeUnit.HOURS));
+        requestStatisticsLogger.start();
+      }
+
+      @Override
+      public void stop() throws Exception {
+        if (requestStatisticsLogger != null) {
+          requestStatisticsLogger.shutdown();
+        }
+      }
+    });
   }
 
   private static RootCauseResource makeRootCauseResource(ThirdEyeDashboardConfiguration config) throws Exception {
@@ -255,6 +267,12 @@ public class ThirdEyeDashboardApplication
     return rcaConfigFile;
   }
 
+  /**
+   * The entry point of application.
+   *
+   * @param args the input arguments
+   * @throws Exception the exception
+   */
   public static void main(String[] args) throws Exception {
     if (args.length == 0) {
       throw new IllegalArgumentException("Please provide config directory as parameter");

@@ -1,9 +1,11 @@
 package com.linkedin.thirdeye.datalayer.bao.jdbc;
 
+import com.google.common.base.Preconditions;
 import com.google.inject.Singleton;
 import com.linkedin.thirdeye.anomaly.detection.DetectionTaskRunner;
 import com.linkedin.thirdeye.anomaly.task.TaskConstants;
 import java.sql.Timestamp;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -38,13 +40,24 @@ public class JobManagerImpl extends AbstractManagerImpl<JobDTO> implements JobMa
   }
 
   @Override
+  public List<JobDTO> findByStatusWithinDays(JobStatus status, int days) {
+    DateTime activeDate = new DateTime().minusDays(days);
+    Timestamp activeTimestamp = new Timestamp(activeDate.getMillis());
+    Predicate statusPredicate = Predicate.EQ("status", status.toString());
+    Predicate timestampPredicate = Predicate.GE("createTime", activeTimestamp);
+    return findByPredicate(Predicate.AND(statusPredicate, timestampPredicate));
+  }
+
+  @Override
   @Transactional
-  public void updateStatusAndJobEndTimeForJobIds(Set<Long> ids, JobStatus status, Long jobEndTime) {
-    for (Long id : ids) {
-      JobDTO anomalyJobSpec = findById(id);
-      anomalyJobSpec.setStatus(status);
-      anomalyJobSpec.setScheduleEndTime(jobEndTime);
-      update(anomalyJobSpec);
+  public void updateJobStatusAndEndTime(List<JobDTO> jobsToUpdate, JobStatus newStatus, long newEndTime) {
+    Preconditions.checkNotNull(newStatus);
+    if (CollectionUtils.isNotEmpty(jobsToUpdate)) {
+      for (JobDTO jobDTO : jobsToUpdate) {
+        jobDTO.setStatus(newStatus);
+        jobDTO.setScheduleEndTime(newEndTime);
+      }
+      update(jobsToUpdate);
     }
   }
 
@@ -55,12 +68,7 @@ public class JobManagerImpl extends AbstractManagerImpl<JobDTO> implements JobMa
     Timestamp expireTimestamp = new Timestamp(expireDate.getMillis());
     Predicate statusPredicate = Predicate.EQ("status", status.toString());
     Predicate timestampPredicate = Predicate.LT("updateTime", expireTimestamp);
-    List<JobBean> list =
-        genericPojoDao.get(Predicate.AND(statusPredicate, timestampPredicate), JobBean.class);
-    for (JobBean jobBean : list) {
-      deleteById(jobBean.getId());
-    }
-    return list.size();
+    return deleteByPredicate(Predicate.AND(statusPredicate, timestampPredicate));
   }
 
   @Override

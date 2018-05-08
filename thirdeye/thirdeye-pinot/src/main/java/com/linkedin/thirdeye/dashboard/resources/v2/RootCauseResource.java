@@ -1,11 +1,15 @@
 package com.linkedin.thirdeye.dashboard.resources.v2;
 
+import com.linkedin.thirdeye.api.Constants;
 import com.linkedin.thirdeye.dashboard.resources.v2.pojo.RootCauseEntity;
 import com.linkedin.thirdeye.rootcause.Entity;
 import com.linkedin.thirdeye.rootcause.RCAFramework;
 import com.linkedin.thirdeye.rootcause.RCAFrameworkExecutionResult;
-import com.linkedin.thirdeye.rootcause.impl.EntityUtils;
+import com.linkedin.thirdeye.rootcause.util.EntityUtils;
 import com.linkedin.thirdeye.rootcause.impl.TimeRangeEntity;
+import com.wordnik.swagger.annotations.Api;
+import com.wordnik.swagger.annotations.ApiOperation;
+import com.wordnik.swagger.annotations.ApiParam;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -25,6 +29,7 @@ import org.slf4j.LoggerFactory;
 
 @Path(value = "/rootcause")
 @Produces(MediaType.APPLICATION_JSON)
+@Api(tags = {Constants.RCA_TAG})
 public class RootCauseResource {
   private static final Logger LOG = LoggerFactory.getLogger(RootCauseResource.class);
 
@@ -44,15 +49,24 @@ public class RootCauseResource {
 
   @GET
   @Path("/query")
+  @ApiOperation(value = "Send query")
   public List<RootCauseEntity> query(
+      @ApiParam(value = "framework name")
       @QueryParam("framework") String framework,
+      @ApiParam(value = "start time of the anomalous time period for the metric under analysis")
       @QueryParam("anomalyStart") Long anomalyStart,
+      @ApiParam(value = "end time of the anomalous time period for the metric under analysis")
       @QueryParam("anomalyEnd") Long anomalyEnd,
+      @ApiParam(value = "baseline start time, e.g. anomaly start time offset by 1 week")
       @QueryParam("baselineStart") Long baselineStart,
+      @ApiParam(value = "baseline end time, e.g. typically anomaly start time offset by 1 week")
       @QueryParam("baselineEnd") Long baselineEnd,
+      @ApiParam(value = "start overall time window to consider for events")
       @QueryParam("analysisStart") Long analysisStart,
+      @ApiParam(value = "end of overall time window to consider for events")
       @QueryParam("analysisEnd") Long analysisEnd,
       @QueryParam("formatterDepth") Integer formatterDepth,
+      @ApiParam(value = "URNs of metrics to analyze")
       @QueryParam("urns") List<String> urns) throws Exception {
 
     // configuration validation
@@ -90,7 +104,7 @@ public class RootCauseResource {
     if(analysisEnd - analysisStart > ANALYSIS_RANGE_MAX)
       throw new IllegalArgumentException(String.format("Analysis range cannot be longer than %d", ANALYSIS_RANGE_MAX));
 
-    urns = parseUrnsParam(urns);
+    urns = ResourceUtils.parseListParams(urns);
     if(urns.isEmpty())
       throw new IllegalArgumentException("Must provide entity urns");
 
@@ -118,6 +132,7 @@ public class RootCauseResource {
 
   @GET
   @Path("/raw")
+  @ApiOperation(value = "Raw")
   public List<RootCauseEntity> raw(
       @QueryParam("framework") String framework,
       @QueryParam("formatterDepth") Integer formatterDepth,
@@ -131,7 +146,7 @@ public class RootCauseResource {
       formatterDepth = DEFAULT_FORMATTER_DEPTH;
 
     // parse urns arg
-    urns = parseUrnsParam(urns);
+    urns = ResourceUtils.parseListParams(urns);
 
     // format input
     Set<Entity> input = new HashSet<>();
@@ -178,17 +193,4 @@ public class RootCauseResource {
     throw new IllegalArgumentException(String.format("No formatter for Entity '%s'", e.getUrn()));
   }
 
-  /**
-   * Support both multi-entity notations:
-   * <br/><b>(1) comma-delimited:</b> {@code "urns=thirdeye:metric:123,thirdeye:metric:124"}
-   * <br/><b>(2) multi-param</b> {@code "urns=thirdeye:metric:123&urns=thirdeye:metric:124"}
-   *
-   * @param urns urns param
-   * @return list of urns
-   */
-  private static List<String> parseUrnsParam(List<String> urns) {
-    if(urns.size() != 1)
-      return urns;
-    return Arrays.asList(urns.get(0).split(","));
-  }
 }

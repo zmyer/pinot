@@ -51,12 +51,15 @@ body {
 @import 'components/rootcause-metric';
 @import 'components/rootcause-placeholder';
 @import 'components/rootcause-chart';
+@import 'components/rootcause-trend';
 @import 'components/alert-report-modal';
 @import 'components/te-radio';
 @import 'components/metrics-table';
 @import 'components/card-container';
 @import 'components/te-anomaly-table';
 @import 'components/te-toggle';
+@import 'components/range-pill-selectors';
+@import 'components/shared/common-tabs';
 
 // Pod Pages
 @import 'ember-power-select/themes/bootstrap';
@@ -68,4 +71,7 @@ body {
 @import 'pods/rca';
 @import 'pods/events';
 @import 'pods/login';
+@import 'pods/loading';
 @import 'pods/rootcause';
+@import 'pods/home/alerts-dashboard';
+@import 'pods/custom/anomalies-table';

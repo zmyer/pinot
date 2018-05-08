@@ -4,35 +4,33 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import com.linkedin.thirdeye.anomaly.alert.v2.AlertJobSchedulerV2;
 import com.linkedin.thirdeye.anomaly.classification.ClassificationJobScheduler;
 import com.linkedin.thirdeye.anomaly.classification.classifier.AnomalyClassifierFactory;
-import com.linkedin.thirdeye.anomaly.onboard.DetectionOnboardResource;
-import com.linkedin.thirdeye.anomaly.onboard.DetectionOnboardServiceExecutor;
+import com.linkedin.thirdeye.anomaly.detection.DetectionJobScheduler;
+import com.linkedin.thirdeye.anomaly.events.HolidayEventResource;
+import com.linkedin.thirdeye.anomaly.events.HolidayEventsLoader;
+import com.linkedin.thirdeye.anomaly.monitor.MonitorJobScheduler;
+import com.linkedin.thirdeye.anomaly.task.TaskDriver;
 import com.linkedin.thirdeye.anomalydetection.alertFilterAutotune.AlertFilterAutotuneFactory;
-import com.linkedin.thirdeye.dashboard.resources.AnomalyFunctionResource;
+import com.linkedin.thirdeye.api.TimeGranularity;
+import com.linkedin.thirdeye.auto.onboard.AutoOnboardService;
+import com.linkedin.thirdeye.common.BaseThirdEyeApplication;
+import com.linkedin.thirdeye.common.ThirdEyeSwaggerBundle;
+import com.linkedin.thirdeye.completeness.checker.DataCompletenessScheduler;
+import com.linkedin.thirdeye.dashboard.resources.DetectionJobResource;
 import com.linkedin.thirdeye.dashboard.resources.EmailResource;
+import com.linkedin.thirdeye.datasource.DAORegistry;
 import com.linkedin.thirdeye.datasource.ThirdEyeCacheRegistry;
 import com.linkedin.thirdeye.datasource.pinot.resources.PinotDataSourceResource;
 import com.linkedin.thirdeye.detector.email.filter.AlertFilterFactory;
-
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.List;
-
-import com.linkedin.thirdeye.dashboard.resources.DetectionJobResource;
-import com.linkedin.thirdeye.anomaly.detection.DetectionJobScheduler;
-import com.linkedin.thirdeye.anomaly.monitor.MonitorJobScheduler;
-import com.linkedin.thirdeye.anomaly.task.TaskDriver;
-import com.linkedin.thirdeye.auto.onboard.AutoOnboardService;
-import com.linkedin.thirdeye.common.BaseThirdEyeApplication;
-import com.linkedin.thirdeye.completeness.checker.DataCompletenessScheduler;
 import com.linkedin.thirdeye.detector.function.AnomalyFunctionFactory;
-
+import com.linkedin.thirdeye.tracking.RequestStatisticsLogger;
 import io.dropwizard.assets.AssetsBundle;
 import io.dropwizard.lifecycle.Managed;
 import io.dropwizard.setup.Bootstrap;
 import io.dropwizard.setup.Environment;
-import org.apache.commons.configuration.Configuration;
-import org.apache.commons.configuration.MapConfiguration;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 
 public class ThirdEyeAnomalyApplication
@@ -49,8 +47,9 @@ public class ThirdEyeAnomalyApplication
   private AnomalyClassifierFactory anomalyClassifierFactory = null;
   private AlertFilterAutotuneFactory alertFilterAutotuneFactory = null;
   private ClassificationJobScheduler classificationJobScheduler = null;
-  private DetectionOnboardServiceExecutor detectionOnboardServiceExecutor = null;
   private EmailResource emailResource = null;
+  private HolidayEventsLoader holidayEventsLoader = null;
+  private RequestStatisticsLogger requestStatisticsLogger = null;
 
   public static void main(final String[] args) throws Exception {
 
@@ -76,6 +75,7 @@ public class ThirdEyeAnomalyApplication
   @Override
   public void initialize(final Bootstrap<ThirdEyeAnomalyConfiguration> bootstrap) {
     bootstrap.addBundle(new AssetsBundle("/assets/", "/", "index.html"));
+    bootstrap.addBundle(new ThirdEyeSwaggerBundle());
   }
 
   @Override
@@ -95,6 +95,9 @@ public class ThirdEyeAnomalyApplication
       @Override
       public void start() throws Exception {
 
+        requestStatisticsLogger = new RequestStatisticsLogger(new TimeGranularity(1, TimeUnit.HOURS));
+        requestStatisticsLogger.start();
+
         if (config.isWorker()) {
           initAnomalyFunctionFactory(config.getFunctionConfigPath());
           initAlertFilterFactory(config.getAlertFilterConfigPath());
@@ -113,7 +116,6 @@ public class ThirdEyeAnomalyApplication
           detectionJobScheduler.start();
           environment.jersey().register(
               new DetectionJobResource(detectionJobScheduler, alertFilterFactory, alertFilterAutotuneFactory, emailResource));
-          environment.jersey().register(new AnomalyFunctionResource(config.getFunctionConfigPath()));
         }
         if (config.isMonitor()) {
           monitorJobScheduler = new MonitorJobScheduler(config.getMonitorConfiguration());
@@ -128,6 +130,13 @@ public class ThirdEyeAnomalyApplication
           autoOnboardService = new AutoOnboardService(config);
           autoOnboardService.start();
         }
+        if (config.isHolidayEventsLoader()) {
+          holidayEventsLoader =
+              new HolidayEventsLoader(config.getHolidayEventsLoaderConfiguration(), config.getCalendarApiKeyPath(),
+                  DAORegistry.getInstance().getEventDAO());
+          holidayEventsLoader.start();
+          environment.jersey().register(new HolidayEventResource(holidayEventsLoader));
+        }
         if (config.isDataCompleteness()) {
           dataCompletenessScheduler = new DataCompletenessScheduler();
           dataCompletenessScheduler.start();
@@ -139,17 +148,13 @@ public class ThirdEyeAnomalyApplication
         if (config.isPinotProxy()) {
           environment.jersey().register(new PinotDataSourceResource());
         }
-        if (config.isDetectionOnboard()) {
-          Configuration systemConfig = DetectionOnboardResource.toSystemConfiguration(config);
-
-          detectionOnboardServiceExecutor = new DetectionOnboardServiceExecutor();
-          detectionOnboardServiceExecutor.start();
-          environment.jersey().register(new DetectionOnboardResource(detectionOnboardServiceExecutor, systemConfig));
-        }
       }
 
       @Override
       public void stop() throws Exception {
+        if (requestStatisticsLogger != null) {
+          requestStatisticsLogger.shutdown();
+        }
         if (taskDriver != null) {
           taskDriver.shutdown();
         }
@@ -158,6 +163,9 @@ public class ThirdEyeAnomalyApplication
         }
         if (monitorJobScheduler != null) {
           monitorJobScheduler.shutdown();
+        }
+        if (holidayEventsLoader != null) {
+          holidayEventsLoader.shutdown();
         }
         if (alertJobSchedulerV2 != null) {
           alertJobSchedulerV2.shutdown();
@@ -173,9 +181,6 @@ public class ThirdEyeAnomalyApplication
         }
         if (config.isPinotProxy()) {
           // Do nothing
-        }
-        if (detectionOnboardServiceExecutor != null) {
-          detectionOnboardServiceExecutor.shutdown();
         }
       }
     });

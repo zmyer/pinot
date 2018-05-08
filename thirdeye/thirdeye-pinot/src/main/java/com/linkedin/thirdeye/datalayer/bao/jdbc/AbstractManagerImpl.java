@@ -1,27 +1,21 @@
 package com.linkedin.thirdeye.datalayer.bao.jdbc;
 
+import com.google.inject.persist.Transactional;
 import com.linkedin.thirdeye.datalayer.bao.AbstractManager;
 import com.linkedin.thirdeye.datalayer.dao.GenericPojoDao;
 import com.linkedin.thirdeye.datalayer.dto.AbstractDTO;
-import com.linkedin.thirdeye.datalayer.dto.AnomalyFeedbackDTO;
-import com.linkedin.thirdeye.datalayer.dto.AnomalyFunctionDTO;
-import com.linkedin.thirdeye.datalayer.dto.RawAnomalyResultDTO;
 import com.linkedin.thirdeye.datalayer.pojo.AbstractBean;
-import com.linkedin.thirdeye.datalayer.pojo.AnomalyFeedbackBean;
-import com.linkedin.thirdeye.datalayer.pojo.AnomalyFunctionBean;
-import com.linkedin.thirdeye.datalayer.pojo.RawAnomalyResultBean;
 import com.linkedin.thirdeye.datalayer.util.Predicate;
+import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import org.apache.commons.collections.CollectionUtils;
+import org.joda.time.DateTime;
 import org.modelmapper.ModelMapper;
 import org.modelmapper.convention.MatchingStrategies;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public abstract class AbstractManagerImpl<E extends AbstractDTO> implements AbstractManager<E> {
-  private static final Logger LOG = LoggerFactory.getLogger(AbstractManagerImpl.class);
-
   protected static final ModelMapper MODEL_MAPPER = new ModelMapper();
 
   static {
@@ -67,6 +61,16 @@ public abstract class AbstractManagerImpl<E extends AbstractDTO> implements Abst
     return genericPojoDao.update(bean);
   }
 
+  // Test is located at TestAlertConfigManager.testBatchUpdate()
+  @Override
+  public int update(List<E> entities) {
+    ArrayList<AbstractBean> beans = new ArrayList<>();
+    for (E entity : entities) {
+      beans.add(convertDTO2Bean(entity, beanClass));
+    }
+    return genericPojoDao.update(beans);
+  }
+
   public E findById(Long id) {
     AbstractBean abstractBean = genericPojoDao.get(id, beanClass);
     if (abstractBean != null) {
@@ -78,13 +82,46 @@ public abstract class AbstractManagerImpl<E extends AbstractDTO> implements Abst
   }
 
   @Override
-  public void delete(E entity) {
-    genericPojoDao.delete(entity.getId(), beanClass);
+  public List<E> findByIds(List<Long> ids) {
+    List<? extends AbstractBean> abstractBeans = genericPojoDao.get(ids, beanClass);
+    List<E> abstractDTOs = new ArrayList<>();
+    if (CollectionUtils.isNotEmpty(abstractBeans)) {
+      for (AbstractBean abstractBean : abstractBeans) {
+        E abstractDTO = (E) MODEL_MAPPER.map(abstractBean, dtoClass);
+        abstractDTOs.add(abstractDTO);
+      }
+    }
+    return abstractDTOs;
   }
 
   @Override
-  public void deleteById(Long id) {
-    genericPojoDao.delete(id, beanClass);
+  public int delete(E entity) {
+    return genericPojoDao.delete(entity.getId(), beanClass);
+  }
+
+  // Test is located at TestAlertConfigManager.testBatchDeletion()
+  @Override
+  public int deleteById(Long id) {
+    return genericPojoDao.delete(id, beanClass);
+  }
+
+  @Override
+  public int deleteByIds(List<Long> ids) {
+    return genericPojoDao.delete(ids, beanClass);
+  }
+
+  @Override
+  public int deleteByPredicate(Predicate predicate) {
+    return genericPojoDao.deleteByPredicate(predicate, beanClass);
+  }
+
+  @Override
+  @Transactional
+  public int deleteRecordsOlderThanDays(int days) {
+    DateTime expireDate = new DateTime().minusDays(days);
+    Timestamp expireTimestamp = new Timestamp(expireDate.getMillis());
+    Predicate timestampPredicate = Predicate.LT("createTime", expireTimestamp);
+    return deleteByPredicate(timestampPredicate);
   }
 
   @Override
@@ -110,37 +147,17 @@ public abstract class AbstractManagerImpl<E extends AbstractDTO> implements Abst
     return convertBeanListToDTOList(list);
   }
 
+  @Override
+  public List<Long> findIdsByPredicate(Predicate predicate) {
+    return genericPojoDao.getIdsByPredicate(predicate, beanClass);
+  }
+
   protected List<E> convertBeanListToDTOList(List<? extends AbstractBean> beans) {
     List<E> result = new ArrayList<>();
     for (AbstractBean bean : beans) {
       result.add((E) convertBean2DTO(bean, dtoClass));
     }
     return result;
-  }
-
-  @Deprecated
-  protected RawAnomalyResultDTO createRawAnomalyDTOFromBean(
-      RawAnomalyResultBean rawAnomalyResultBean) {
-    RawAnomalyResultDTO rawAnomalyResultDTO;
-    rawAnomalyResultDTO = MODEL_MAPPER.map(rawAnomalyResultBean, RawAnomalyResultDTO.class);
-    if (rawAnomalyResultBean.getFunctionId() != null) {
-      AnomalyFunctionBean anomalyFunctionBean =
-          genericPojoDao.get(rawAnomalyResultBean.getFunctionId(), AnomalyFunctionBean.class);
-      if (anomalyFunctionBean == null) {
-        LOG.error("this anomaly function bean should not be null");
-      }
-      AnomalyFunctionDTO anomalyFunctionDTO =
-          MODEL_MAPPER.map(anomalyFunctionBean, AnomalyFunctionDTO.class);
-      rawAnomalyResultDTO.setFunction(anomalyFunctionDTO);
-    }
-    if (rawAnomalyResultBean.getAnomalyFeedbackId() != null) {
-      AnomalyFeedbackBean anomalyFeedbackBean = genericPojoDao
-          .get(rawAnomalyResultBean.getAnomalyFeedbackId(), AnomalyFeedbackBean.class);
-      AnomalyFeedbackDTO anomalyFeedbackDTO =
-          MODEL_MAPPER.map(anomalyFeedbackBean, AnomalyFeedbackDTO.class);
-      rawAnomalyResultDTO.setFeedback(anomalyFeedbackDTO);
-    }
-    return rawAnomalyResultDTO;
   }
 
   protected <T extends AbstractDTO> T convertBean2DTO(AbstractBean entity, Class<T> dtoClass) {

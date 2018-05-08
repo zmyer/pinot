@@ -1,8 +1,9 @@
-import { getWithDefault } from '@ember/object';
-import _ from 'lodash';
 import moment from 'moment';
 import { isPresent } from "@ember/utils";
+import { getWithDefault } from '@ember/object';
 import { buildDateEod } from 'thirdeye-frontend/utils/utils';
+import { getFormatedDuration } from 'thirdeye-frontend/utils/anomaly';
+import floatToPercent from 'thirdeye-frontend/utils/float-to-percent';
 
 /**
  * Handles types and defaults returned from eval/projected endpoints
@@ -63,48 +64,30 @@ export function enhanceAnomalies(rawAnomalies, severityScores) {
   // Loop over all anomalies to configure display settings
   anomalies.forEach((anomaly) => {
     let dimensionList = [];
-    const startMoment = moment(anomaly.anomalyStart);
-    const endMoment = moment(anomaly.anomalyEnd);
-    const anomalyDuration = moment.duration(endMoment.diff(startMoment));
-    const days = anomalyDuration.get("days");
-    const hours = anomalyDuration.get("hours");
-    const minutes = anomalyDuration.get("minutes");
-    const score = resolvedScores.length ? resolvedScores.find(score => score.id === anomaly.anomalyId).score : null;
-    const durationArr = [pluralizeTime(days, 'day'), pluralizeTime(hours, 'hour'), pluralizeTime(minutes, 'minute')];
-
+    let targetAnomaly = resolvedScores.find(score => Number(score.id) === Number(anomaly.anomalyId));
+    // Extract current anomaly's score from array of all scores
+    const score = resolvedScores.length && targetAnomaly ? targetAnomaly.score : null;
     // Set up anomaly change rate display
-    const changeRate = (anomaly.current && anomaly.baseline) ? ((anomaly.current - anomaly.baseline) / anomaly.baseline * 100).toFixed(2) : 0;
-    const changeDirection = (anomaly.current > anomaly.baseline) ? '-' : '+';
-    const changeDirectionLabel = changeRate < 0 ? 'down' : 'up';
+    const changeRate = (anomaly.current && anomaly.baseline) ? floatToPercent((anomaly.current - anomaly.baseline) / anomaly.baseline) : 0;
     const isNullChangeRate = Number.isNaN(Number(changeRate));
-
-    // We want to display only non-zero duration values in our table
-    const noZeroDurationArr = _.remove(durationArr, function(item) {
-      return isPresent(item);
-    });
-
     // Set 'not reviewed' label
     if (!anomaly.anomalyFeedback) {
       anomaly.anomalyFeedback = 'Not reviewed yet';
     }
-
     // Add missing properties
     Object.assign(anomaly, {
       changeRate,
-      changeDirection,
       isNullChangeRate,
-      changeDirectionLabel,
       shownChangeRate: changeRate,
       isUserReported: anomaly.anomalyResultSource === 'USER_LABELED_ANOMALY',
       startDateStr: moment(anomaly.anomalyStart).format('MMM D, hh:mm A'),
-      durationStr: noZeroDurationArr.join(', '),
+      durationStr: getFormatedDuration(anomaly.anomalyStart, anomaly.anomalyEnd),
       severityScore: score && !isNaN(score) ? score.toFixed(2) : 'N/A',
       shownCurrent: Number(anomaly.current) > 0 ? anomaly.current : 'N/A',
       shownBaseline: Number(anomaly.baseline) > 0 ? anomaly.baseline : 'N/A',
       showResponseSaved: false,
       showResponseFailed: false
     });
-
     // Create a list of all available dimensions for toggling. Also massage dimension property.
     if (anomaly.anomalyFunctionDimension) {
       let dimensionObj = JSON.parse(anomaly.anomalyFunctionDimension);
@@ -118,16 +101,17 @@ export function enhanceAnomalies(rawAnomalies, severityScores) {
       let dimensionString = dimensionStrArr.join(' & ');
       Object.assign(anomaly, { dimensionList, dimensionString });
     }
-
     newAnomalies.push(anomaly);
   });
-
   // List most recent anomalies first
   return newAnomalies.sortBy('anomalyStart').reverse();
 }
 
 /**
  * Generates time range options for selection in the self-serve UI
+ * @example output
+ * [{ name: "3 Months", value: "3m", start: Moment, isActive: true },
+ *  { name: "Custom", value: "custom", start: null, isActive: false }]
  * @method setUpTimeRangeOptions
  * @param {Array} datesKeys - array of keys used to generate time ranges
  * @param {String} duration - the selected time span that is default
@@ -144,19 +128,22 @@ export function setUpTimeRangeOptions(datesKeys, duration) {
   };
 
   const dateKeyMap = new Map([
-    [ '1m', ['Last 30 Days', 1, 'month'] ],
-    [ '3m', ['3 Months', 3, 'month'] ],
-    [ '2w', ['Last 2 Weeks', 2, 'week'] ],
-    [ '1w', ['Last Week', 1, 'week'] ]
-  ]);
+   [ '1m', ['Last 30 Days', 1, 'month'] ],
+   [ '3m', ['3 Months', 3, 'month'] ],
+   [ '2w', ['Last 2 Weeks', 2, 'week'] ],
+   [ '1w', ['Last Week', 1, 'week'] ],
+   [ '2d', ['Yesterday', 2, 'day'] ],
+   [ '1d', ['Last 24 hours', 1, 'day'] ],
+   [ 'today', ['Today'] ]
+   ]);
 
-  datesKeys.forEach((value) => {
-    let currVal = dateKeyMap.get(value);
-    let name = currVal[0];
-    let start = moment().subtract(currVal[1], currVal[2]).endOf('day').utc();
-    let isActive = duration === value;
-    newRangeArr.push({ name, value, start, isActive });
-  });
+   datesKeys.forEach((value) => {
+     const currVal = dateKeyMap.get(value);
+     const label = currVal[0];
+     const start = (label === 'Today') ? moment().startOf('day') : moment().subtract(currVal[1], currVal[2]).startOf('hour').utc();
+     const isActive = duration === value;
+     newRangeArr.push({ name: label, value, start, isActive });
+   });
 
   newRangeArr.push(defaultCustomRange);
 
@@ -306,50 +293,6 @@ export function formatConfigGroupProps(alertData, alertIndex) {
 }
 
 /**
- * Caches duration data to local storage in order to persist it across pages
- * TODO: Move this to self-serve services
- * @method setDuration
- * @param {String} duration - qualifies duration set as 'custom' or a range key like '3m'
- * @param {Number} startDate - start date for alert page (and list of anomalies)
- * @param {Number} endDate - end date for alert page (and list of anomalies)
- * @return {undefined}
- */
-export function setDuration(duration, startDate, endDate) {
-  sessionStorage.setItem('duration', JSON.stringify({ duration, startDate, endDate }));
-}
-
-/**
- * Retrieves duration data from local storage in order to persist it across pages
- * TODO: Move this to self-serve services
- * @method getDuration
- * @return {Object}
- */
-export function getDuration() {
-  return JSON.parse(sessionStorage.getItem('duration'));
-}
-
-/**
- * Decides which time range to load as default (query params, default set, or locally cached)
- * @method prepareTimeRange
- * @return {Object}
- */
-export function prepareTimeRange(queryParams, defaultDurationObj) {
-  const durationCached = sessionStorage.getItem('duration') !== null;
-  // Check for presence of each time range key in qeury params
-  const isDurationInQuery = isPresent(queryParams.duration) && isPresent(queryParams.startDate) && isPresent(queryParams.endDate)
-  // Use querystring time range if present. Else, use preset defaults
-  const defaultDuration = isDurationInQuery ? queryParams : defaultDurationObj;
-  // Prefer cached time range if present. Else, load from defaults
-  const durationObj = durationCached ? getDuration() : defaultDuration;
-  // If no time range is cached for the session, cache the new one
-  if (!durationCached) {
-    const { duration, startDate, endDate } = durationObj;
-    setDuration(duration, startDate, endDate);
-  }
-  return durationObj;
-}
-
-/**
  * When fetching current and projected MTTD (minimum time to detect) data, we need to supply the
  * endpoint with a severity threshold. This decides whether to use the default or not.
  * @method extractSeverity
@@ -374,9 +317,6 @@ export default {
   formatConfigGroupProps,
   buildAnomalyStats,
   buildMetricDataUrl,
-  prepareTimeRange,
   extractSeverity,
-  setDuration,
-  getDuration,
   evalObj
 };

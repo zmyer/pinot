@@ -78,7 +78,10 @@ public enum BrokerMeter implements AbstractMetrics.Meter {
   LLC_QUERY_COUNT("queries", false),
   HLC_QUERY_COUNT("queries", false),
 
-  ROUTING_TABLE_REBUILD_FAILURES("failures", false);
+  ROUTING_TABLE_REBUILD_FAILURES("failures", false),
+
+  GROUP_BY_SIZE("queries", false),
+  TOTAL_SERVER_RESPONSE_SIZE("queries", false);
 
   private final String brokerMeterName;
   private final String unit;

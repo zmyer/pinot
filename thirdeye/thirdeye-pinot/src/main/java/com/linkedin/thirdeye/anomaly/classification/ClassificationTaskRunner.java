@@ -12,6 +12,8 @@ import com.linkedin.thirdeye.anomaly.task.TaskContext;
 import com.linkedin.thirdeye.anomaly.task.TaskInfo;
 import com.linkedin.thirdeye.anomaly.task.TaskResult;
 import com.linkedin.thirdeye.anomaly.task.TaskRunner;
+import com.linkedin.thirdeye.anomalydetection.context.AnomalyResult;
+import com.linkedin.thirdeye.anomalydetection.context.RawAnomalyResult;
 import com.linkedin.thirdeye.api.DimensionMap;
 import com.linkedin.thirdeye.api.MetricTimeSeries;
 import com.linkedin.thirdeye.api.TimeGranularity;
@@ -21,7 +23,6 @@ import com.linkedin.thirdeye.datalayer.bao.MergedAnomalyResultManager;
 import com.linkedin.thirdeye.datalayer.dto.AnomalyFunctionDTO;
 import com.linkedin.thirdeye.datalayer.dto.ClassificationConfigDTO;
 import com.linkedin.thirdeye.datalayer.dto.MergedAnomalyResultDTO;
-import com.linkedin.thirdeye.datalayer.dto.RawAnomalyResultDTO;
 import com.linkedin.thirdeye.datasource.DAORegistry;
 import com.linkedin.thirdeye.detector.email.filter.AlertFilter;
 import com.linkedin.thirdeye.detector.email.filter.AlertFilterFactory;
@@ -101,7 +102,7 @@ public class ClassificationTaskRunner implements TaskRunner {
       AlertFilter alertFilter = alertFilterMap.get(mainFunctionId);
       // Get the anomalies from the main anomaly function
       List<MergedAnomalyResultDTO> mainAnomalies =
-          mergedAnomalyDAO.findOverlappingByFunctionId(mainFunctionId, windowStart, windowEnd, false);
+          mergedAnomalyDAO.findOverlappingByFunctionId(mainFunctionId, windowStart, windowEnd);
       filteredMainAnomalies.addAll(filterAnomalies(alertFilter, mainAnomalies));
     }
     // Run classification on each main anomaly that passes through alert filter
@@ -183,7 +184,7 @@ public class ClassificationTaskRunner implements TaskRunner {
         if (anomalyFunctionDTO.getIsActive()) {
           // Get existing anomalies from DB
           anomalies = mergedAnomalyDAO.findOverlappingByFunctionIdDimensions(auxFunctionId, startTimeForCorrelatedAnomalies,
-              endTimeForCorrelatedAnomalies, dimensionMap.toString(), false);
+              endTimeForCorrelatedAnomalies, dimensionMap.toString());
         } else {
           LOG.info("Invoking ad-hoc anomaly detection for anomaly function {} at window ({}--{}).", auxFunctionId,
               new DateTime(windowStart), new DateTime(windowEnd));
@@ -379,19 +380,18 @@ public class ClassificationTaskRunner implements TaskRunner {
       }
 
       // Starts anomaly detection
-      List<RawAnomalyResultDTO> adhocRawAnomalies =
+      List<AnomalyResult> adhocRawAnomalies =
           anomalyFunction.analyze(dimensions, metricTimeSeries, windowStart, windowEnd, knownAnomalies);
 
       // Generate merged anomalies from the adhoc raw anomalies
       if (CollectionUtils.isNotEmpty(adhocRawAnomalies)) {
-        for (RawAnomalyResultDTO rawAnomaly : adhocRawAnomalies) {
-          rawAnomaly.setFunction(anomalyFunctionSpec);
+        for (AnomalyResult rawAnomaly : adhocRawAnomalies) {
           // Make sure score and weight are valid numbers
           rawAnomaly.setScore(DetectionTaskRunner.normalize(rawAnomaly.getScore()));
           rawAnomaly.setWeight(DetectionTaskRunner.normalize(rawAnomaly.getWeight()));
         }
 
-        ListMultimap<DimensionMap, RawAnomalyResultDTO> resultRawAnomalies = ArrayListMultimap.create();
+        ListMultimap<DimensionMap, AnomalyResult> resultRawAnomalies = ArrayListMultimap.create();
         resultRawAnomalies.putAll(dimensions, adhocRawAnomalies);
         TimeBasedAnomalyMerger timeBasedAnomalyMerger = new TimeBasedAnomalyMerger(anomalyFunctionFactory);
         ListMultimap<DimensionMap, MergedAnomalyResultDTO> resultMergedAnomalies =

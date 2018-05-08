@@ -19,10 +19,11 @@ import com.linkedin.pinot.core.operator.BaseOperator;
 import com.linkedin.pinot.core.operator.ExecutionStatistics;
 import com.linkedin.pinot.core.operator.blocks.IntermediateResultsBlock;
 import com.linkedin.pinot.core.operator.blocks.TransformBlock;
-import com.linkedin.pinot.core.operator.transform.TransformExpressionOperator;
+import com.linkedin.pinot.core.operator.transform.TransformOperator;
 import com.linkedin.pinot.core.query.aggregation.AggregationExecutor;
 import com.linkedin.pinot.core.query.aggregation.AggregationFunctionContext;
 import com.linkedin.pinot.core.query.aggregation.DefaultAggregationExecutor;
+import java.util.List;
 import javax.annotation.Nonnull;
 
 
@@ -32,14 +33,15 @@ import javax.annotation.Nonnull;
 public class AggregationOperator extends BaseOperator<IntermediateResultsBlock> {
   private static final String OPERATOR_NAME = "AggregationOperator";
 
-  private final AggregationFunctionContext[] _aggregationFunctionContexts;
-  private final TransformExpressionOperator _transformOperator;
+  private final AggregationFunctionContext[] _functionContexts;
+  private final TransformOperator _transformOperator;
   private final long _numTotalRawDocs;
+
   private ExecutionStatistics _executionStatistics;
 
-  public AggregationOperator(@Nonnull AggregationFunctionContext[] aggregationFunctionContexts,
-      @Nonnull TransformExpressionOperator transformOperator, long numTotalRawDocs) {
-    _aggregationFunctionContexts = aggregationFunctionContexts;
+  public AggregationOperator(@Nonnull AggregationFunctionContext[] functionContexts,
+      @Nonnull TransformOperator transformOperator, long numTotalRawDocs) {
+    _functionContexts = functionContexts;
     _transformOperator = transformOperator;
     _numTotalRawDocs = numTotalRawDocs;
   }
@@ -48,25 +50,24 @@ public class AggregationOperator extends BaseOperator<IntermediateResultsBlock> 
   protected IntermediateResultsBlock getNextBlock() {
     int numDocsScanned = 0;
 
-    // Perform aggregation on all the blocks.
-    AggregationExecutor aggregationExecutor = new DefaultAggregationExecutor(_aggregationFunctionContexts);
-    aggregationExecutor.init();
+    // Perform aggregation on all the transform blocks
+    AggregationExecutor aggregationExecutor = new DefaultAggregationExecutor(_functionContexts);
     TransformBlock transformBlock;
     while ((transformBlock = _transformOperator.nextBlock()) != null) {
       numDocsScanned += transformBlock.getNumDocs();
       aggregationExecutor.aggregate(transformBlock);
     }
-    aggregationExecutor.finish();
+    List<Object> aggregationResult = aggregationExecutor.getResult();
 
-    // Create execution statistics.
+    // Create execution statistics
     long numEntriesScannedInFilter = _transformOperator.getExecutionStatistics().getNumEntriesScannedInFilter();
-    long numEntriesScannedPostFilter = numDocsScanned * _transformOperator.getNumProjectionColumns();
+    long numEntriesScannedPostFilter = numDocsScanned * _transformOperator.getNumColumnsProjected();
     _executionStatistics =
         new ExecutionStatistics(numDocsScanned, numEntriesScannedInFilter, numEntriesScannedPostFilter,
             _numTotalRawDocs);
 
-    // Build intermediate result block based on aggregation result from the executor.
-    return new IntermediateResultsBlock(_aggregationFunctionContexts, aggregationExecutor.getResult(), false);
+    // Build intermediate result block based on aggregation result from the executor
+    return new IntermediateResultsBlock(_functionContexts, aggregationResult, false);
   }
 
   @Override

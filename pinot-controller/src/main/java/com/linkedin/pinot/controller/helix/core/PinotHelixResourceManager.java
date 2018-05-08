@@ -20,8 +20,8 @@ import com.google.common.base.Preconditions;
 import com.google.common.collect.BiMap;
 import com.google.common.collect.HashBiMap;
 import com.google.common.util.concurrent.Uninterruptibles;
+import com.linkedin.pinot.common.Utils;
 import com.linkedin.pinot.common.config.IndexingConfig;
-import com.linkedin.pinot.common.config.ReplicaGroupStrategyConfig;
 import com.linkedin.pinot.common.config.SegmentsValidationAndRetentionConfig;
 import com.linkedin.pinot.common.config.TableConfig;
 import com.linkedin.pinot.common.config.TableCustomConfig;
@@ -29,15 +29,18 @@ import com.linkedin.pinot.common.config.TableNameBuilder;
 import com.linkedin.pinot.common.config.Tenant;
 import com.linkedin.pinot.common.config.TenantConfig;
 import com.linkedin.pinot.common.data.Schema;
+import com.linkedin.pinot.common.exception.InvalidConfigException;
 import com.linkedin.pinot.common.messages.SegmentRefreshMessage;
 import com.linkedin.pinot.common.messages.SegmentReloadMessage;
 import com.linkedin.pinot.common.metadata.ZKMetadataProvider;
 import com.linkedin.pinot.common.metadata.instance.InstanceZKMetadata;
+import com.linkedin.pinot.common.metadata.segment.LLCRealtimeSegmentZKMetadata;
 import com.linkedin.pinot.common.metadata.segment.OfflineSegmentZKMetadata;
-import com.linkedin.pinot.common.metadata.segment.PartitionToReplicaGroupMappingZKMetadata;
 import com.linkedin.pinot.common.metadata.segment.RealtimeSegmentZKMetadata;
 import com.linkedin.pinot.common.metadata.segment.SegmentZKMetadata;
-import com.linkedin.pinot.common.metadata.stream.KafkaStreamMetadata;
+import com.linkedin.pinot.core.realtime.stream.StreamMetadata;
+import com.linkedin.pinot.common.partition.ReplicaGroupPartitionAssignment;
+import com.linkedin.pinot.common.partition.ReplicaGroupPartitionAssignmentGenerator;
 import com.linkedin.pinot.common.segment.SegmentMetadata;
 import com.linkedin.pinot.common.utils.CommonConstants;
 import com.linkedin.pinot.common.utils.CommonConstants.Helix.StateModel.BrokerOnlineOfflineStateModel;
@@ -52,7 +55,7 @@ import com.linkedin.pinot.common.utils.retry.RetryPolicies;
 import com.linkedin.pinot.common.utils.retry.RetryPolicy;
 import com.linkedin.pinot.controller.ControllerConf;
 import com.linkedin.pinot.controller.api.pojos.Instance;
-import com.linkedin.pinot.controller.helix.PartitionAssignment;
+import com.linkedin.pinot.common.partition.PartitionAssignment;
 import com.linkedin.pinot.controller.helix.core.PinotResourceManagerResponse.ResponseStatus;
 import com.linkedin.pinot.controller.helix.core.realtime.PinotLLCRealtimeSegmentManager;
 import com.linkedin.pinot.controller.helix.core.rebalance.RebalanceSegmentStrategy;
@@ -95,7 +98,6 @@ import org.apache.helix.model.InstanceConfig;
 import org.apache.helix.model.LiveInstance;
 import org.apache.helix.store.zk.ZkHelixPropertyStore;
 import org.apache.zookeeper.data.Stat;
-import org.codehaus.jackson.map.ObjectMapper;
 import org.json.JSONException;
 import org.json.JSONObject;
 import org.slf4j.Logger;
@@ -365,6 +367,7 @@ public class PinotHelixResourceManager {
     }
     return resourceNames;
   }
+
   /**
    * Get all Pinot raw table names.
    *
@@ -546,23 +549,23 @@ public class PinotHelixResourceManager {
     return res;
   }
 
-  public PinotResourceManagerResponse rebuildBrokerResourceFromHelixTags(@Nonnull final String tableNameWithType) {
+  public PinotResourceManagerResponse rebuildBrokerResourceFromHelixTags(@Nonnull final String tableNameWithType)
+      throws Exception {
     // Get the broker tag for this table
     String brokerTag;
-    TenantConfig tenantConfig;
+    TableConfig tableConfig;
 
     try {
-      TableConfig tableConfig = ZKMetadataProvider.getTableConfig(_propertyStore, tableNameWithType);
-      if (tableConfig == null) {
-        return new PinotResourceManagerResponse("Table " + tableNameWithType + " does not exist", false);
-      }
-      tenantConfig = tableConfig.getTenantConfig();
+      tableConfig = ZKMetadataProvider.getTableConfig(_propertyStore, tableNameWithType);
     } catch (Exception e) {
-      LOGGER.warn("Caught exception while getting tenant config for table {}", tableNameWithType, e);
-      return new PinotResourceManagerResponse(
-          "Failed to fetch broker tag for table " + tableNameWithType + " due to exception: " + e.getMessage(), false);
+      LOGGER.warn("Caught exception while getting table config for table {}", tableNameWithType, e);
+      throw new InvalidTableConfigException("Failed to fetch broker tag for table " + tableNameWithType + " due to exception: " + e.getMessage());
     }
-
+    if (tableConfig == null) {
+      LOGGER.warn("Table " + tableNameWithType + " does not exist");
+      throw new InvalidConfigException("Invalid table configuration for table " + tableNameWithType + ". Table does not exist");
+    }
+    TenantConfig tenantConfig = tableConfig.getTenantConfig();
     brokerTag = tenantConfig.getBroker();
 
     // Look for all instances tagged with this broker tag
@@ -576,8 +579,7 @@ public class PinotHelixResourceManager {
     Set<String> idealStateBrokerInstances = brokerIdealState.getInstanceSet(tableNameWithType);
 
     if (idealStateBrokerInstances.equals(brokerInstances)) {
-      return new PinotResourceManagerResponse(
-          "Broker resource is not rebuilt because ideal state is the same for table {} " + tableNameWithType, false);
+      return new PinotResourceManagerResponse("Broker resource is not rebuilt because ideal state is the same for table: " + tableNameWithType, true);
     }
 
     // Reset ideal state with the instance list
@@ -605,9 +607,7 @@ public class PinotHelixResourceManager {
     } catch (Exception e) {
       LOGGER.warn("Caught exception while rebuilding broker resource from Helix tags for table {}", e,
           tableNameWithType);
-      return new PinotResourceManagerResponse(
-          "Failed to rebuild brokerResource for table " + tableNameWithType + " due to exception: " + e.getMessage(),
-          false);
+      throw e;
     }
   }
 
@@ -1030,7 +1030,8 @@ public class PinotHelixResourceManager {
    * @throws TableAlreadyExistsException for offline tables only if the table already exists
    */
   public void addTable(@Nonnull TableConfig tableConfig) throws IOException {
-    String tableNameWithType = tableConfig.getTableName();
+    final String tableNameWithType = tableConfig.getTableName();
+
     TenantConfig tenantConfig;
     if (isSingleTenantCluster()) {
       tenantConfig = new TenantConfig();
@@ -1062,43 +1063,37 @@ public class PinotHelixResourceManager {
     SegmentsValidationAndRetentionConfig segmentsConfig = tableConfig.getValidationConfig();
     switch (tableType) {
       case OFFLINE:
-        final String offlineTableName = tableConfig.getTableName();
         // existing tooling relies on this check not existing for realtime table (to migrate to LLC)
         // So, we avoid adding that for REALTIME just yet
-        if (getAllTables().contains(offlineTableName)) {
-          throw new TableAlreadyExistsException("Table " + offlineTableName + " already exists");
+        if (getAllTables().contains(tableNameWithType)) {
+          throw new TableAlreadyExistsException("Table " + tableNameWithType + " already exists");
         }
         // now lets build an ideal state
-        LOGGER.info("building empty ideal state for table : " + offlineTableName);
-        final IdealState offlineIdealState = PinotTableIdealStateBuilder.buildEmptyIdealStateFor(offlineTableName,
+        LOGGER.info("building empty ideal state for table : " + tableNameWithType);
+        final IdealState offlineIdealState = PinotTableIdealStateBuilder.buildEmptyIdealStateFor(tableNameWithType,
             Integer.parseInt(segmentsConfig.getReplication()));
         LOGGER.info("adding table via the admin");
-        _helixAdmin.addResource(_helixClusterName, offlineTableName, offlineIdealState);
-        LOGGER.info("successfully added the table : " + offlineTableName + " to the cluster");
+        _helixAdmin.addResource(_helixClusterName, tableNameWithType, offlineIdealState);
+        LOGGER.info("successfully added the table : " + tableNameWithType + " to the cluster");
 
         // lets add table configs
-        ZKMetadataProvider.setOfflineTableConfig(_propertyStore, offlineTableName, TableConfig.toZnRecord(tableConfig));
+        ZKMetadataProvider.setOfflineTableConfig(_propertyStore, tableNameWithType, TableConfig.toZnRecord(tableConfig));
 
-        _propertyStore.create(ZKMetadataProvider.constructPropertyStorePathForResource(offlineTableName),
-            new ZNRecord(offlineTableName), AccessOption.PERSISTENT);
+        _propertyStore.create(ZKMetadataProvider.constructPropertyStorePathForResource(tableNameWithType),
+            new ZNRecord(tableNameWithType), AccessOption.PERSISTENT);
 
-        // If the segment assignment strategy is using replica groups, build the mapping table and
-        // store to property store.
-        String assignmentStrategy = segmentsConfig.getSegmentAssignmentStrategy();
-        if (assignmentStrategy != null && SegmentAssignmentStrategyEnum.valueOf(assignmentStrategy)
-            == SegmentAssignmentStrategyEnum.ReplicaGroupSegmentAssignmentStrategy) {
-          PartitionToReplicaGroupMappingZKMetadata partitionMappingMetadata =
-              buildPartitionToReplicaGroupMapping(offlineTableName, tableConfig);
-          _propertyStore.set(ZKMetadataProvider.constructPropertyStorePathForInstancePartitions(offlineTableName),
-              partitionMappingMetadata.toZNRecord(), AccessOption.PERSISTENT);
-        }
-
+        // Update replica group partition assignment to the property store if applicable
+        updateReplicaGroupPartitionAssignment(tableConfig);
         break;
       case REALTIME:
-        final String realtimeTableName = tableConfig.getTableName();
-        // lets add table configs
+        // Ensure that realtime table is not created for the realtime table
+        Schema schema = ZKMetadataProvider.getTableSchema(_propertyStore, tableNameWithType);
+        if (schema == null) {
+          throw new InvalidTableConfigException("No schema defined for realtime table: " + tableNameWithType);
+        }
 
-        ZKMetadataProvider.setRealtimeTableConfig(_propertyStore, realtimeTableName,
+        // lets add table configs
+        ZKMetadataProvider.setRealtimeTableConfig(_propertyStore, tableNameWithType,
             TableConfig.toZnRecord(tableConfig));
         /*
          * PinotRealtimeSegmentManager sets up watches on table and segment path. When a table gets created,
@@ -1113,15 +1108,43 @@ public class PinotHelixResourceManager {
          * the low-level consumers.
          */
         IndexingConfig indexingConfig = tableConfig.getIndexingConfig();
-        ensureRealtimeClusterIsSetUp(tableConfig, realtimeTableName, indexingConfig);
+        ensureRealtimeClusterIsSetUp(tableConfig, tableNameWithType, indexingConfig);
 
-        LOGGER.info("Successfully added or updated the table {} ", realtimeTableName);
+        LOGGER.info("Successfully added or updated the table {} ", tableNameWithType);
         break;
       default:
         throw new InvalidTableConfigException("UnSupported table type: " + tableType);
     }
 
     handleBrokerResource(tableNameWithType, brokersForTenant);
+  }
+
+  /**
+   * Update replica group partition assignment in the property store
+   *
+   * @param tableConfig a table config
+   */
+  private void updateReplicaGroupPartitionAssignment(TableConfig tableConfig) {
+    String tableNameWithType = tableConfig.getTableName();
+    String assignmentStrategy = tableConfig.getValidationConfig().getSegmentAssignmentStrategy();
+    // We create replica group partition assignment and write to property store if new table config
+    // has the replica group config.
+    if (assignmentStrategy != null && SegmentAssignmentStrategyEnum.valueOf(assignmentStrategy)
+        == SegmentAssignmentStrategyEnum.ReplicaGroupSegmentAssignmentStrategy) {
+      ReplicaGroupPartitionAssignmentGenerator partitionAssignmentGenerator =
+          new ReplicaGroupPartitionAssignmentGenerator(_propertyStore);
+
+      // Create the new replica group partition assignment if there is none in the property store.
+      // This will create the replica group partition assignment and write to the property store in 2 cases:
+      // 1. when we create the table with replica group segment assignment
+      // 2. when we update the table config with replica group segment assignment from another assignment strategy
+      if (partitionAssignmentGenerator.getReplicaGroupPartitionAssignment(tableNameWithType) == null) {
+        List<String> servers = getServerInstancesForTable(tableNameWithType, TableType.OFFLINE);
+        ReplicaGroupPartitionAssignment partitionAssignment =
+            partitionAssignmentGenerator.buildReplicaGroupPartitionAssignment(tableNameWithType, tableConfig, servers);
+        partitionAssignmentGenerator.writeReplicaGroupPartitionAssignment(partitionAssignment);
+      }
+    }
   }
 
   public static class InvalidTableConfigException extends RuntimeException {
@@ -1149,11 +1172,11 @@ public class PinotHelixResourceManager {
 
   private void ensureRealtimeClusterIsSetUp(TableConfig config, String realtimeTableName,
       IndexingConfig indexingConfig) {
-    KafkaStreamMetadata kafkaStreamMetadata = new KafkaStreamMetadata(indexingConfig.getStreamConfigs());
+    StreamMetadata streamMetadata = new StreamMetadata(indexingConfig.getStreamConfigs());
     IdealState idealState = _helixAdmin.getResourceIdealState(_helixClusterName, realtimeTableName);
 
-    if (kafkaStreamMetadata.hasHighLevelKafkaConsumerType()) {
-     if (kafkaStreamMetadata.hasSimpleKafkaConsumerType()) {
+    if (streamMetadata.hasHighLevelKafkaConsumerType()) {
+     if (streamMetadata.hasSimpleKafkaConsumerType()) {
        // We may be adding on low-level, or creating both.
        if (idealState == null) {
          // Need to create both. Create high-level consumer first.
@@ -1171,14 +1194,13 @@ public class PinotHelixResourceManager {
     }
 
     // Either we have only low-level consumer, or both.
-    if (kafkaStreamMetadata.hasSimpleKafkaConsumerType()) {
+    if (streamMetadata.hasSimpleKafkaConsumerType()) {
       // Will either create idealstate entry, or update the IS entry with new segments
       // (unless there are low-level segments already present)
-      final String llcKafkaPartitionAssignmentPath = ZKMetadataProvider.constructPropertyStorePathForKafkaPartitions(
-          realtimeTableName);
-      if(!_propertyStore.exists(llcKafkaPartitionAssignmentPath, AccessOption.PERSISTENT)) {
-        PinotTableIdealStateBuilder.buildLowLevelRealtimeIdealStateFor(realtimeTableName, config, _helixAdmin,
-            _helixClusterName, _helixZkManager, idealState);
+      final List<LLCRealtimeSegmentZKMetadata> llcSegmentMetadatas =
+          ZKMetadataProvider.getLLCRealtimeSegmentZKMetadataListForTable(_propertyStore, realtimeTableName);
+      if (llcSegmentMetadatas.isEmpty()) {
+        PinotTableIdealStateBuilder.buildLowLevelRealtimeIdealStateFor(realtimeTableName, config, idealState);
         LOGGER.info("Successfully added Helix entries for low-level consumers for {} ", realtimeTableName);
       } else {
         LOGGER.info("LLC is already set up for table {}, not configuring again", realtimeTableName);
@@ -1212,6 +1234,9 @@ public class PinotHelixResourceManager {
       ZKMetadataProvider.setRealtimeTableConfig(_propertyStore, tableNameWithType, TableConfig.toZnRecord(config));
       ensureRealtimeClusterIsSetUp(config, tableNameWithType, config.getIndexingConfig());
     } else if (type == TableType.OFFLINE) {
+      // Update replica group partition assignment to the property store if applicable
+      updateReplicaGroupPartitionAssignment(config);
+
       ZKMetadataProvider.setOfflineTableConfig(_propertyStore, tableNameWithType, TableConfig.toZnRecord(config));
       IdealState idealState = _helixAdmin.getResourceIdealState(_helixClusterName, tableNameWithType);
       final String configReplication = config.getValidationConfig().getReplication();
@@ -1299,6 +1324,9 @@ public class PinotHelixResourceManager {
 
     // Remove table config
     ZKMetadataProvider.removeResourceConfigFromPropertyStore(_propertyStore, offlineTableName);
+
+    // Remove replica group partition assignment
+    ZKMetadataProvider.removeInstancePartitionAssignmentFromPropertyStore(_propertyStore, offlineTableName);
   }
 
   public void deleteRealtimeTable(String tableName) {
@@ -1334,64 +1362,6 @@ public class PinotHelixResourceManager {
         }
       }
     }
-  }
-
-  /**
-   * Build the partition mapping table that maps a tuple of (partition number, replica group number) to a list of
-   * servers. Two important configurations are explained below.
-   *
-   * - 'numInstancesPerPartition': this number decides the number of servers within a replica group.
-   *
-   * - 'partitionColumn': this configuration decides whether to use the table or partition level replica groups.
-   *
-   * @param tableName: Name of table
-   * @param tableConfig: Configuration for table
-   * @return Partition mapping table from the given configuration
-   */
-  private PartitionToReplicaGroupMappingZKMetadata buildPartitionToReplicaGroupMapping(String tableName,
-      TableConfig tableConfig) {
-
-    // Fetch the server instances for the table.
-    List<String> servers = getServerInstancesForTable(tableName, TableType.OFFLINE);
-
-    // Fetch information required to build the mapping table from the table configuration.
-    ReplicaGroupStrategyConfig replicaGroupStrategyConfig = tableConfig.getValidationConfig().getReplicaGroupStrategyConfig();
-    String partitionColumn = replicaGroupStrategyConfig.getPartitionColumn();
-    int numInstancesPerPartition = replicaGroupStrategyConfig.getNumInstancesPerPartition();
-
-    // If we do not have the partition column configuration, we assume to use the table level replica groups,
-    // which is equivalent to have the same partition number for all segments (i.e. 1 partition).
-    int numPartitions = 1;
-    if (partitionColumn != null) {
-      numPartitions = tableConfig.getIndexingConfig().getSegmentPartitionConfig().getNumPartitions(partitionColumn);
-    }
-    int numReplicas = tableConfig.getValidationConfig().getReplicationNumber();
-    int numServers = servers.size();
-
-    // Enforcing disjoint server sets for each replica group.
-    if (numInstancesPerPartition * numReplicas > numServers) {
-      throw new UnsupportedOperationException("Replica group aware segment assignment assumes that servers in "
-          + "each replica group are disjoint. Check the configurations to see if the following inequality holds. "
-          + "'numInstancePerPartition' * 'numReplicas' <= 'totalServerNumbers'" );
-    }
-
-    // Creating a mapping table
-    PartitionToReplicaGroupMappingZKMetadata
-        partitionToReplicaGroupMapping = new PartitionToReplicaGroupMappingZKMetadata();
-    partitionToReplicaGroupMapping.setTableName(tableName);
-
-    Collections.sort(servers);
-    for (int partitionId = 0; partitionId < numPartitions; partitionId++) {
-      // If the configuration contains partition column information, we use the segment level replica groups.
-      if (numPartitions != 1) {
-        Collections.shuffle(servers);
-      }
-      for (int i = 0; i < numInstancesPerPartition * numReplicas; i++) {
-        int groupId = i / numInstancesPerPartition;
-        partitionToReplicaGroupMapping.addInstanceToReplicaGroup(partitionId, groupId, servers.get(i));
-      }
-    }
-    return partitionToReplicaGroupMapping;
   }
 
   /**
@@ -2094,26 +2064,29 @@ public class PinotHelixResourceManager {
 
   @Nonnull
   public JSONObject rebalanceTable(final String rawTableName, TableType tableType, Configuration rebalanceUserConfig)
-      throws JSONException {
+      throws JSONException, InvalidConfigException {
 
     TableConfig tableConfig = getTableConfig(rawTableName, tableType);
     String tableNameWithType = tableConfig.getTableName();
     IdealState idealState = _helixAdmin.getResourceIdealState(_helixClusterName, tableNameWithType);
 
-    RebalanceSegmentStrategy rebalanceSegmentsStrategy =
-        RebalanceSegmentStrategyFactory.getInstance().getRebalanceSegmentsStrategy(tableConfig);
-    PartitionAssignment newPartitionAssignment =
-        rebalanceSegmentsStrategy.rebalancePartitionAssignment(idealState, tableConfig, rebalanceUserConfig);
-    IdealState newIdealState = rebalanceSegmentsStrategy.rebalanceIdealState(idealState, tableConfig,
-        rebalanceUserConfig, newPartitionAssignment);
-
     JSONObject jsonObject = new JSONObject();
     try {
-      jsonObject.put("partitionAssignment", newPartitionAssignment);
-      jsonObject.put("idealState", newIdealState);
+      RebalanceSegmentStrategy rebalanceSegmentsStrategy =
+          RebalanceSegmentStrategyFactory.getInstance().getRebalanceSegmentsStrategy(tableConfig);
+      PartitionAssignment newPartitionAssignment =
+          rebalanceSegmentsStrategy.rebalancePartitionAssignment(idealState, tableConfig, rebalanceUserConfig);
+      IdealState newIdealState = rebalanceSegmentsStrategy.rebalanceIdealState(idealState, tableConfig,
+          rebalanceUserConfig, newPartitionAssignment);
+
+      jsonObject.put("partitionAssignment", newPartitionAssignment.getPartitionToInstances());
+      jsonObject.put("idealState", newIdealState.getRecord().getMapFields());
     } catch (JSONException e) {
       LOGGER.error("Exception in constructing json response for rebalance table {}", tableNameWithType, e);
-      throw(e);
+      throw e;
+    } catch (InvalidConfigException e) {
+      LOGGER.error("Exception in rebalancing config for table {}", tableNameWithType, e);
+      throw e;
     }
     return jsonObject;
   }

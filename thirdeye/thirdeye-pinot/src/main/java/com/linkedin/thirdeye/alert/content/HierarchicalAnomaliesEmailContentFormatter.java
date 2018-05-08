@@ -7,7 +7,6 @@ import com.linkedin.thirdeye.anomalydetection.context.AnomalyResult;
 import com.linkedin.thirdeye.datalayer.dto.AnomalyFunctionDTO;
 import com.linkedin.thirdeye.datalayer.dto.EventDTO;
 import com.linkedin.thirdeye.datalayer.dto.MergedAnomalyResultDTO;
-import com.linkedin.thirdeye.datalayer.dto.RawAnomalyResultDTO;
 import com.linkedin.thirdeye.datalayer.pojo.AlertConfigBean.COMPARE_MODE;
 import com.linkedin.thirdeye.util.ThirdEyeUtils;
 import java.util.ArrayList;
@@ -113,8 +112,6 @@ public class HierarchicalAnomaliesEmailContentFormatter extends BaseEmailContent
    * @return
    */
   private AnomalyReportEntity generateAnomalyReportEntity(MergedAnomalyResultDTO anomaly, String dashboardHost) {
-    RawAnomalyResultDTO latestRawAnomaly = getLatestRawAnomalyResult(anomaly);
-
     AnomalyFeedback feedback = anomaly.getFeedback();
 
     String feedbackVal = getFeedbackValue(feedback);
@@ -145,10 +142,6 @@ public class HierarchicalAnomaliesEmailContentFormatter extends BaseEmailContent
           null, null, targetDimensions));
     }
 
-    if (useLatestAnomaly && latestRawAnomaly != null) {
-      anomalyReport.setCurrentVal(ThirdEyeUtils.getRoundedValue(latestRawAnomaly.getAvgCurrentVal()));
-      anomalyReport.setBaselineVal(ThirdEyeUtils.getRoundedValue(latestRawAnomaly.getAvgBaselineVal()));
-    }
     return anomalyReport;
   }
 

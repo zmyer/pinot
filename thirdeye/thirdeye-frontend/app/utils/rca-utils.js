@@ -32,7 +32,9 @@ export const eventColorMapping = {
   informed: 'red',
   lix: 'purple',
   gcn: 'orange',
-  anomaly: 'teal'
+  anomaly: 'teal',
+  cm: 'grey',
+  custom: 'pink'
 };
 
 export const dateFormatFull = 'ddd, MMM D YYYY, h:mm a';
@@ -52,7 +54,7 @@ export function makeSortable(f) {
  * Returns true for collection-like objects with an iterator function, but treats strings as atomic item. Also null-safe.
  */
 export function isIterable(obj) {
-  if (obj === null || _.isString(obj)) {
+  if (typeof obj === 'undefined' || obj === null || _.isString(obj)) {
     return false;
   }
   return typeof obj[Symbol.iterator] === 'function';
@@ -98,6 +100,9 @@ export function stripTail(urn) {
   if (urn.startsWith('frontend:metric:')) {
     return _.slice(parts, 0, 4).join(':');
   }
+  if (urn.startsWith('frontend:anomalyfunction:')) {
+    return _.slice(parts, 0, 3).join(':');
+  }
   return urn;
 }
 
@@ -115,6 +120,9 @@ export function extractTail(urn) {
   }
   if (urn.startsWith('frontend:metric:')) {
     return _.slice(parts, 4);
+  }
+  if (urn.startsWith('frontend:anomalyfunction:')) {
+    return _.slice(parts, 3);
   }
   return [];
 }
@@ -181,6 +189,35 @@ export function toBaselineUrn(urn) {
  * @returns {string} frontend metric-reference urn with given offset
  */
 export function toOffsetUrn(urn, offset) {
+  return metricUrnHelper(`frontend:metric:${offset}:`, urn);
+}
+
+/**
+ * Converts any metric urn to its frontend metric-reference equivalent, with an absolute time offset.
+ * (I.e. the resulting metric urn does not use 'baseline', but rather the compare mode specified in the context)
+ *
+ * @param {string} urn metric urn
+ * @param {string} contextCompareMode compare mode offset ('wo1w', 'wo2w', 'wo3w', 'wo4w')
+ * @returns {string} frontend metric-reference urn with given offset
+ */
+export function toAbsoluteUrn(urn, contextCompareMode) {
+  if (urn.startsWith('thirdeye:metric:')) {
+    urn = toCurrentUrn(urn);
+  }
+
+  if (!urn.startsWith('frontend:metric:')) {
+    return urn;
+  }
+
+  let offset = urn.split(':')[2].toLowerCase();
+  if (offset === 'baseline') {
+    offset = contextCompareMode.toLowerCase();
+  }
+
+  if (offset === 'wow') {
+    offset = 'wo1w';
+  }
+
   return metricUrnHelper(`frontend:metric:${offset}:`, urn);
 }
 
@@ -257,6 +294,10 @@ function metricUrnHelper(prefix, urn) {
     const tail = makeUrnTail(parts, 4);
     return `${prefix}${parts[3]}${tail}`;
   }
+  if (hasPrefix(urn, 'frontend:anomalyfunction:')) {
+    const tail = makeUrnTail(parts, 3);
+    return `${prefix}${parts[2]}${tail}`;
+  }
   throw new Error(`Requires metric urn, but found ${urn}`);
 }
 
@@ -280,7 +321,7 @@ function makeUrnTail(parts, baseLen) {
  * @returns {boolean}
  */
 export function hasPrefix(urn, prefixes) {
-  return !_.isEmpty(makeIterable(prefixes).filter(pre => urn.startsWith(pre)));
+  return urn && !_.isEmpty(makeIterable(prefixes).filter(pre => urn.startsWith(pre)));
 }
 
 /**
@@ -306,11 +347,17 @@ export function filterPrefix(urns, prefixes) {
 export function toBaselineRange(range, offset) {
   const offsetWeeks = {
     current: 0,
+    none: 0,
+    predicted: 0,
     wow: 1,
     wo1w: 1,
     wo2w: 2,
     wo3w: 3,
-    wo4w: 4
+    wo4w: 4,
+    mean4w: 1, // default. not fully supported by backend yet
+    median4w: 1, // default. not fully supported by backend yet
+    min4w: 1, // default. not fully supported by backend yet
+    max4w: 1 // default. not fully supported by backend yet
   }[offset.toLowerCase()];
 
   if (offsetWeeks === 0) {
@@ -355,7 +402,8 @@ export function toFilters(urns) {
   const dimensionFilters = filterPrefix(urns, 'thirdeye:dimension:').map(urn => _.slice(urn.split(':').map(decodeURIComponent), 2, 4));
   const metricFilters = filterPrefix(urns, 'thirdeye:metric:').map(extractTail).map(enc => enc.map(tup => splitFilterFragment(decodeURIComponent(tup)))).reduce(flatten, []);
   const frontendMetricFilters = filterPrefix(urns, 'frontend:metric:').map(extractTail).map(enc => enc.map(tup => splitFilterFragment(decodeURIComponent(tup)))).reduce(flatten, []);
-  return [...new Set([...dimensionFilters, ...metricFilters, ...frontendMetricFilters])].sort();
+  const anomalyFunctoinFilters = filterPrefix(urns, 'frontend:anomalyfunction:').map(extractTail).map(enc => enc.map(tup => splitFilterFragment(decodeURIComponent(tup)))).reduce(flatten, []);
+  return [...new Set([...dimensionFilters, ...metricFilters, ...frontendMetricFilters, ...anomalyFunctoinFilters])].sort();
 }
 
 function splitFilterFragment(fragment) {
@@ -533,6 +581,7 @@ export default {
   toBaselineUrn,
   toMetricUrn,
   toOffsetUrn,
+  toAbsoluteUrn,
   stripTail,
   extractTail,
   appendTail,
