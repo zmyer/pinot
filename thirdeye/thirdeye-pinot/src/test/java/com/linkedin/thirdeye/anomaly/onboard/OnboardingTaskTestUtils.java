@@ -1,5 +1,6 @@
 package com.linkedin.thirdeye.anomaly.onboard;
 
+import com.linkedin.thirdeye.anomaly.onboard.framework.DetectionOnboardTaskContext;
 import com.linkedin.thirdeye.anomaly.onboard.tasks.DefaultDetectionOnboardJob;
 import java.util.HashMap;
 import java.util.Map;
@@ -22,6 +23,7 @@ public class OnboardingTaskTestUtils {
     properties.put(DefaultDetectionOnboardJob.ALERT_FILTER_FACTORY_CONFIG_PATH, ClassLoader.getSystemResource("sample-alertfilter.properties").getPath());
     properties.put(DefaultDetectionOnboardJob.ALERT_FILTER_AUTOTUNE_FACTORY_CONFIG_PATH, ClassLoader.getSystemResource("sample-alertfilter-autotune.properties").getPath());
     properties.put(DefaultDetectionOnboardJob.FUNCTION_NAME, "Normal Function");
+    properties.put(DefaultDetectionOnboardJob.ALERT_APPLICATION, "test");
     properties.put(DefaultDetectionOnboardJob.COLLECTION_NAME, TEST_COLLECTION);
     properties.put(DefaultDetectionOnboardJob.METRIC_NAME, TEST_METRIC);
     properties.put(DefaultDetectionOnboardJob.WINDOW_SIZE, "1");

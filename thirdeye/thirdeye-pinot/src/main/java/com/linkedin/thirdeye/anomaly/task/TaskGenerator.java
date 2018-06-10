@@ -69,28 +69,35 @@ public class TaskGenerator {
 
   public List<MonitorTaskInfo> createMonitorTasks(MonitorJobContext monitorJobContext) {
     List<MonitorTaskInfo> tasks = new ArrayList<>();
+    MonitorConfiguration monitorConfiguration = monitorJobContext.getMonitorConfiguration();
 
-    // TODO: Currently generates 1 task for updating all the completed jobs
-    // We might need to create more tasks and assign only certain number of updations to each (say 5k)
+    // Generates the task to updating the status of all jobs and tasks
     MonitorTaskInfo updateTaskInfo = new MonitorTaskInfo();
     updateTaskInfo.setMonitorType(MonitorType.UPDATE);
+    updateTaskInfo.setCompletedJobRetentionDays(monitorConfiguration.getCompletedJobRetentionDays());
+    updateTaskInfo.setDefaultRetentionDays(monitorConfiguration.getDefaultRetentionDays());
+    updateTaskInfo.setDetectionStatusRetentionDays(monitorConfiguration.getDetectionStatusRetentionDays());
+    updateTaskInfo.setRawAnomalyRetentionDays(monitorConfiguration.getRawAnomalyRetentionDays());
     tasks.add(updateTaskInfo);
 
-    MonitorConfiguration monitorConfiguration = monitorJobContext.getMonitorConfiguration();
+    // Generates the task to expire (delete) old jobs and tasks in DB
     MonitorTaskInfo expireTaskInfo = new MonitorTaskInfo();
     expireTaskInfo.setMonitorType(MonitorType.EXPIRE);
-    expireTaskInfo.setExpireDaysAgo(monitorConfiguration.getExpireDaysAgo());
+    expireTaskInfo.setCompletedJobRetentionDays(monitorConfiguration.getCompletedJobRetentionDays());
+    expireTaskInfo.setDefaultRetentionDays(monitorConfiguration.getDefaultRetentionDays());
+    expireTaskInfo.setDetectionStatusRetentionDays(monitorConfiguration.getDetectionStatusRetentionDays());
+    expireTaskInfo.setRawAnomalyRetentionDays(monitorConfiguration.getRawAnomalyRetentionDays());
     tasks.add(expireTaskInfo);
 
     return tasks;
   }
 
   public List<ClassificationTaskInfo> createGroupingTasks(ClassificationJobContext classificationJobContext,
-      long monitoringWindowStartTime, long monitoringWindowEndTime) throws Exception {
-    long jobexecutionId = classificationJobContext.getJobExecutionId();
+      long monitoringWindowStartTime, long monitoringWindowEndTime) {
+    long jobExecutionId = classificationJobContext.getJobExecutionId();
     ClassificationConfigDTO groupingConfig = classificationJobContext.getConfigDTO();
     ClassificationTaskInfo classificationTaskInfo =
-        new ClassificationTaskInfo(jobexecutionId, monitoringWindowStartTime, monitoringWindowEndTime,
+        new ClassificationTaskInfo(jobExecutionId, monitoringWindowStartTime, monitoringWindowEndTime,
             groupingConfig);
 
     List<ClassificationTaskInfo> tasks = new ArrayList<>();

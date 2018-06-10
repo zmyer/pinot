@@ -44,6 +44,7 @@ public class PinotTableRestletResourceTest extends ControllerTest {
   // NOTE: to add HLC realtime table, number of Server instances must be multiple of number of replicas
   private static final int NUM_SERVER_INSTANCES = 6;
 
+  private static final String REALTIME_TABLE_NAME = "testRealtimeTable";
   private final TableConfig.Builder _offlineBuilder = new TableConfig.Builder(TableType.OFFLINE);
   private final TableConfig.Builder _realtimeBuilder = new TableConfig.Builder(TableType.REALTIME);
   private String _createTableUrl;
@@ -67,6 +68,9 @@ public class PinotTableRestletResourceTest extends ControllerTest {
         .setRetentionTimeUnit("DAYS")
         .setRetentionTimeValue("5");
 
+    // add schema for realtime table
+    addDummySchema(REALTIME_TABLE_NAME);
+
     Map<String, String> streamConfigs = new HashMap<>();
     streamConfigs.put("streamType", "kafka");
     streamConfigs.put(DataSource.STREAM_PREFIX + "." + Kafka.CONSUMER_TYPE, Kafka.ConsumerType.highLevel.toString());
@@ -76,11 +80,12 @@ public class PinotTableRestletResourceTest extends ControllerTest {
     streamConfigs.put(DataSource.Realtime.REALTIME_SEGMENT_FLUSH_SIZE, Integer.toString(1234));
     streamConfigs.put(
         DataSource.STREAM_PREFIX + "." + Kafka.KAFKA_CONSUMER_PROPS_PREFIX + "." + Kafka.AUTO_OFFSET_RESET, "smallest");
-    _realtimeBuilder.setTableName("testRealtimeTable")
+    _realtimeBuilder.setTableName(REALTIME_TABLE_NAME)
         .setTimeColumnName("timeColumn")
         .setTimeType("DAYS")
         .setRetentionTimeUnit("DAYS")
         .setRetentionTimeValue("5")
+        .setSchemaName(REALTIME_TABLE_NAME)
         .setStreamConfigs(streamConfigs);
   }
 
@@ -124,9 +129,31 @@ public class PinotTableRestletResourceTest extends ControllerTest {
       Assert.assertTrue(e.getMessage().startsWith("Server returned HTTP response code: 400"));
     }
 
-    // Create a REALTIME table with a valid name which should succeed
-    realtimeTableConfig.setTableName("valid_table_name");
-    String realtimeTableJSONConfigString = realtimeTableConfig.toJSONConfigString();
+    // Creating a REALTIME table without a valid schema should fail
+    _realtimeBuilder.setSchemaName("invalidSchemaName");
+    TableConfig invalidConfig = _realtimeBuilder.build();
+    try {
+      sendPostRequest(_createTableUrl, realtimeTableConfig.toJSONConfigString());
+      Assert.fail("Creation of a REALTIME table without a valid schema does not fail");
+    } catch (IOException e) {
+      // Expected 400 Bad Request
+      Assert.assertTrue(e.getMessage().startsWith("Server returned HTTP response code: 400"));
+    }
+
+    // Creating a REALTIME table with a different schema name in the config should succeed (backwards compatibility mode)
+    String schemaName = "differentRTSchema";
+    _realtimeBuilder.setSchemaName(schemaName);
+    // use a different table name so it doesn't associate a previously uploaded schema with the table
+    _realtimeBuilder.setTableName("RT_TABLE");
+    addDummySchema(schemaName);
+    TableConfig diffConfig = _realtimeBuilder.build();
+    sendPostRequest(_createTableUrl, diffConfig.toJSONConfigString());
+
+    // Create a REALTIME table with a valid name and schema which should succeed
+    _realtimeBuilder.setTableName(REALTIME_TABLE_NAME);
+    _realtimeBuilder.setSchemaName(REALTIME_TABLE_NAME);
+    TableConfig config = _realtimeBuilder.build();
+    String realtimeTableJSONConfigString = config.toJSONConfigString();
     sendPostRequest(_createTableUrl, realtimeTableJSONConfigString);
 
     // TODO: check whether we should allow POST request to create REALTIME table that already exists
@@ -149,6 +176,7 @@ public class PinotTableRestletResourceTest extends ControllerTest {
     Assert.assertEquals(tableConfig.getValidationConfig().getReplicationNumber(),
         Math.max(tableReplication, MIN_NUM_REPLICAS));
 
+    addDummySchema(tableName);
     tableJSONConfigString =
         _realtimeBuilder.setTableName(tableName).setNumReplicas(tableReplication).build().toJSONConfigString();
     sendPostRequest(_createTableUrl, tableJSONConfigString);
@@ -190,6 +218,7 @@ public class PinotTableRestletResourceTest extends ControllerTest {
     Assert.assertEquals(modifiedConfig.getValidationConfig().getRetentionTimeValue(), "10");
 
     // Realtime
+    addDummySchema(tableName);
     tableJSONConfigString = _realtimeBuilder.setTableName(tableName).setNumReplicas(2).build().toJSONConfigString();
     sendPostRequest(_createTableUrl, tableJSONConfigString);
     tableConfig = getTableConfig(tableName, "REALTIME");
@@ -204,6 +233,15 @@ public class PinotTableRestletResourceTest extends ControllerTest {
     modifiedConfig = getTableConfig(tableName, "REALTIME");
     Assert.assertNotNull(modifiedConfig.getQuotaConfig());
     Assert.assertEquals(modifiedConfig.getQuotaConfig().getStorage(), "10G");
+    Assert.assertNull(modifiedConfig.getQuotaConfig().getMaxQueriesPerSecond());
+
+    quota.setMaxQueriesPerSecond("100.00");
+    tableConfig.setQuotaConfig(quota);
+    sendPutRequest(_controllerRequestURLBuilder.forUpdateTableConfig(tableName), tableConfig.toJSONConfigString());
+    modifiedConfig = getTableConfig(tableName, "REALTIME");
+    Assert.assertNotNull(modifiedConfig.getQuotaConfig().getMaxQueriesPerSecond());
+    Assert.assertEquals(modifiedConfig.getQuotaConfig().getMaxQueriesPerSecond(), "100.00");
+
     boolean notFoundException = false;
     try {
       // table does not exist

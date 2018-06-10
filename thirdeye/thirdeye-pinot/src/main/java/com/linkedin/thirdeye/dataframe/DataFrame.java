@@ -21,6 +21,9 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVRecord;
+import org.joda.time.DateTime;
+import org.joda.time.DateTimeZone;
+import org.joda.time.Period;
 
 
 /**
@@ -35,37 +38,6 @@ public class DataFrame {
   public static final String COLUMN_JOIN_LEFT = "_left";
   public static final String COLUMN_JOIN_RIGHT = "_right";
   public static final int DEFAULT_MAX_COLUMN_WIDTH = 30;
-
-  /**
-   * Strategy interface for resampling series with different native types with a common
-   * strategy.
-   */
-  public interface ResamplingStrategy {
-    Grouping.GroupingDataFrame apply(Grouping grouping, Series s);
-  }
-
-  /**
-   * Resampling by last value in each grouped interval
-   */
-  public static final class ResampleLast implements ResamplingStrategy {
-    @Override
-    public Grouping.GroupingDataFrame apply(Grouping grouping, Series s) {
-      switch(s.type()) {
-        case DOUBLE:
-          return grouping.aggregate(s, DoubleSeries.LAST);
-        case LONG:
-          return grouping.aggregate(s, LongSeries.LAST);
-        case STRING:
-          return grouping.aggregate(s, StringSeries.LAST);
-        case BOOLEAN:
-          return grouping.aggregate(s, BooleanSeries.LAST);
-        case OBJECT:
-          return grouping.aggregate(s, ObjectSeries.LAST);
-        default:
-          throw new IllegalArgumentException(String.format("Cannot resample series type '%s'", s.type()));
-      }
-    }
-  }
 
   /**
    * Builder for DataFrame in row-by-row sequence. Constructs each column as a StringSeries
@@ -1044,6 +1016,13 @@ public class DataFrame {
   /**
    * @see DataFrame#map(Series.Function, Series...)
    */
+  public BooleanSeries map(Series.Conditional function, String... seriesNames) {
+    return map(function, names2series(seriesNames));
+  }
+
+  /**
+   * @see DataFrame#map(Series.Function, Series...)
+   */
   public BooleanSeries map(Series.DoubleConditional function, String... seriesNames) {
     return map(function, names2series(seriesNames));
   }
@@ -1168,6 +1147,13 @@ public class DataFrame {
    */
   public static ObjectSeries map(Series.ObjectFunction function, Series... series) {
     return (ObjectSeries)map((Series.Function)function, series);
+  }
+
+  /**
+   * @see DataFrame#map(Series.Function, Series...)
+   */
+  public static BooleanSeries map(Series.Conditional function, Series... series) {
+    return (BooleanSeries)map((Series.Function)function, series);
   }
 
   /**
@@ -1315,7 +1301,7 @@ public class DataFrame {
     DataFrame df = this;
     for(int i=seriesNames.size()-1; i>=0; i--) {
       // TODO support "-series" order inversion
-      df = df.project(assertSeriesExists(seriesNames.get(i)).sortedIndex());
+      df = df.project(df.get(seriesNames.get(i)).sortedIndex());
     }
     return df;
   }
@@ -1330,39 +1316,6 @@ public class DataFrame {
     for(Map.Entry<String, Series> e : this.series.entrySet()) {
       newDataFrame.addSeries(e.getKey(), e.getValue().reverse());
     }
-    return newDataFrame;
-  }
-
-  /**
-   * Returns a copy of the DataFrame with values resampled by {@code interval} using {@code strategy}
-   * on the series referenced by {@code seriesName}. The method first applies an interval-based
-   * grouping to the series and then aggregates the DataFrame using the specified strategy. If
-   * the series referenced by {@code seriesName} is not of native type {@code LongSeries} it is
-   * converted transparently.
-   *
-   * @param seriesName target series for resampling
-   * @param interval resampling interval
-   * @param strategy resampling strategy
-   * @throws IllegalArgumentException if the series does not exist
-   * @return resampled DataFrame copy
-   */
-  public DataFrame resample(String seriesName, long interval, ResamplingStrategy strategy) {
-    DataFrame baseDataFrame = this.sortedBy(seriesName);
-
-    Grouping grouping = Grouping.GroupingByInterval.from(baseDataFrame.get(seriesName), interval);
-
-    // resample series
-    DataFrame newDataFrame = new DataFrame(this);
-    newDataFrame.series.clear();
-
-    for(Map.Entry<String, Series> e : baseDataFrame.getSeries().entrySet()) {
-      if(e.getKey().equals(seriesName))
-        continue;
-      newDataFrame.addSeries(e.getKey(), strategy.apply(grouping, e.getValue()).getValues());
-    }
-
-    // new series
-    newDataFrame.addSeries(seriesName, grouping.keys());
     return newDataFrame;
   }
 
@@ -1389,6 +1342,14 @@ public class DataFrame {
     return this.project(fromIndex);
   }
 
+  /**
+   * Returns a copy of the DataFrame with rows filtered by series values referenced by {@code seriesName}.
+   * If the value referenced by {@code seriesName} associated with a row is {@code true} the row is copied,
+   * otherwise it is set to {@code null}.
+   *
+   * @param seriesName filter series name
+   * @return filtered DataFrame copy
+   */
   public DataFrame filter(String seriesName) {
     return this.filter(this.getBooleans(seriesName));
   }
@@ -1419,6 +1380,21 @@ public class DataFrame {
 
   public DataFrame filterEquals(String seriesName, final Object value) {
     return this.filter(this.get(seriesName).getObjects().eq(value));
+  }
+
+  /**
+   * Sets the values of the series references by {@code seriesName} and masked by {@code mask}
+   * to the corresponding values in {@code values}. Uses a copy of the affected series.
+   *
+   * @see Series#set(BooleanSeries, Series)
+   *
+   * @param seriesName series name to set values of
+   * @param mask row mask (if {@code true} row is replaced by value)
+   * @param values values to replace row with
+   * @return DataFrame with values
+   */
+  public DataFrame set(String seriesName, BooleanSeries mask, Series values) {
+    return this.addSeries(seriesName, this.get(seriesName).set(mask, values));
   }
 
   /**
@@ -1549,13 +1525,66 @@ public class DataFrame {
   }
 
   /**
+   * Returns a DataFrameGrouping based on an time period
+   *
+   * @see Grouping.GroupingByPeriod
+   *
+   * @return DataFrameGrouping
+   */
+  public Grouping.DataFrameGrouping groupByPeriod(Series timestamps, DateTime origin, Period period) {
+    return new Grouping.DataFrameGrouping(Grouping.GROUP_KEY, this, Grouping.GroupingByPeriod.from(timestamps.getLongs(), origin, period));
+  }
+
+  /**
+   * Returns a DataFrameGrouping based on an time period
+   *
+   * @see Grouping.GroupingByPeriod
+   *
+   * @return DataFrameGrouping
+   */
+  public Grouping.DataFrameGrouping groupByPeriod(Series timestamps, DateTimeZone timezone, Period period) {
+    return new Grouping.DataFrameGrouping(Grouping.GROUP_KEY, this, Grouping.GroupingByPeriod.from(timestamps.getLongs(), timezone, period));
+  }
+
+  /**
+   * Returns a DataFrameGrouping based on an time period
+   *
+   * @see Grouping.GroupingByPeriod
+   *
+   * @return DataFrameGrouping
+   */
+  public Grouping.DataFrameGrouping groupByPeriod(String seriesName, DateTimeZone timezone, Period period) {
+    return new Grouping.DataFrameGrouping(Grouping.GROUP_KEY, this, Grouping.GroupingByPeriod.from(assertSeriesExists(seriesName).getLongs(), timezone, period));
+  }
+
+  /**
    * Returns a copy of the DataFrame omitting rows that contain a {@code null} value in any series.
    *
    * @return DataFrame copy without null rows
    */
   public DataFrame dropNull() {
+    return this.dropNull(new ArrayList<>(this.getSeriesNames()));
+  }
+
+  /**
+   * Returns a copy of the DataFrame omitting rows that contain a {@code null} value in any given series.
+   *
+   * @param seriesNames series names to drop null values for
+   * @return DataFrame copy without null rows
+   */
+  public DataFrame dropNull(String... seriesNames) {
+    return this.dropNull(Arrays.asList(seriesNames));
+  }
+
+  /**
+   * Returns a copy of the DataFrame omitting rows that contain a {@code null} value in any given series.
+   *
+   * @param seriesNames series names to drop null values for
+   * @return DataFrame copy without null rows
+   */
+  public DataFrame dropNull(List<String> seriesNames) {
     BooleanSeries isNull = BooleanSeries.fillValues(this.size(), false);
-    for(Series s : this.series.values()) {
+    for(Series s : assertSeriesExist(seriesNames)) {
       isNull = isNull.or(s.isNull());
     }
 

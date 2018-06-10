@@ -8,6 +8,7 @@ import com.linkedin.thirdeye.anomaly.detection.DetectionJobScheduler;
 import com.linkedin.thirdeye.anomaly.classification.ClassificationJobScheduler;
 import com.linkedin.thirdeye.anomaly.job.JobConstants.JobStatus;
 import com.linkedin.thirdeye.anomaly.monitor.MonitorConfiguration;
+import com.linkedin.thirdeye.anomaly.monitor.MonitorConstants;
 import com.linkedin.thirdeye.anomaly.monitor.MonitorJobScheduler;
 import com.linkedin.thirdeye.anomaly.task.TaskConstants.TaskStatus;
 import com.linkedin.thirdeye.anomaly.task.TaskConstants.TaskType;
@@ -22,11 +23,11 @@ import com.linkedin.thirdeye.completeness.checker.DataCompletenessTaskInfo;
 import com.linkedin.thirdeye.datalayer.DaoTestUtils;
 import com.linkedin.thirdeye.datalayer.bao.DAOTestBase;
 import com.linkedin.thirdeye.datalayer.bao.TaskManager;
+import com.linkedin.thirdeye.datalayer.dto.AnomalyFunctionDTO;
 import com.linkedin.thirdeye.datalayer.dto.DatasetConfigDTO;
 import com.linkedin.thirdeye.datalayer.dto.JobDTO;
 import com.linkedin.thirdeye.datalayer.dto.MergedAnomalyResultDTO;
 import com.linkedin.thirdeye.datalayer.dto.MetricConfigDTO;
-import com.linkedin.thirdeye.datalayer.dto.RawAnomalyResultDTO;
 import com.linkedin.thirdeye.datalayer.dto.TaskDTO;
 import com.linkedin.thirdeye.datasource.DAORegistry;
 import com.linkedin.thirdeye.datasource.ThirdEyeCacheRegistry;
@@ -164,9 +165,15 @@ public class AnomalyApplicationEndToEndTest {
     thirdeyeAnomalyConfig = new ThirdEyeAnomalyConfiguration();
     thirdeyeAnomalyConfig.setId(id);
     thirdeyeAnomalyConfig.setDashboardHost(dashboardHost);
+    // Monitor config
     MonitorConfiguration monitorConfiguration = new MonitorConfiguration();
+    monitorConfiguration.setDefaultRetentionDays(MonitorConstants.DEFAULT_RETENTION_DAYS);
+    monitorConfiguration.setCompletedJobRetentionDays(MonitorConstants.DEFAULT_COMPLETED_JOB_RETENTION_DAYS);
+    monitorConfiguration.setDetectionStatusRetentionDays(MonitorConstants.DEFAULT_DETECTION_STATUS_RETENTION_DAYS);
+    monitorConfiguration.setRawAnomalyRetentionDays(MonitorConstants.DEFAULT_RAW_ANOMALY_RETENTION_DAYS);
     monitorConfiguration.setMonitorFrequency(new TimeGranularity(3, TimeUnit.SECONDS));
     thirdeyeAnomalyConfig.setMonitorConfiguration(monitorConfiguration);
+    // Task config
     TaskDriverConfiguration taskDriverConfiguration = new TaskDriverConfiguration();
     taskDriverConfiguration.setNoTaskDelayInMillis(1000);
     taskDriverConfiguration.setRandomDelayCapInMillis(200);
@@ -193,7 +200,7 @@ public class AnomalyApplicationEndToEndTest {
     InputStream factoryStream = AnomalyApplicationEndToEndTest.class.getResourceAsStream(functionPropertiesFile);
     anomalyFunctionFactory = new AnomalyFunctionFactory(factoryStream);
 
-    // setup alertfilter factory for worker
+    // setup alert filter factory for worker
     InputStream alertFilterStream = AnomalyApplicationEndToEndTest.class.getResourceAsStream(alertFilterPropertiesFile);
     alertFilterFactory = new AlertFilterFactory(alertFilterStream);
 
@@ -331,14 +338,19 @@ public class AnomalyApplicationEndToEndTest {
     }
     Assert.assertTrue(completedCount > 0);
 
-    // Raw anomalies of the same function and dimensions should have been merged by the worker, so we
-    // check if any raw anomalies present, whose existence means the worker fails the synchronous merge.
-    List<RawAnomalyResultDTO> rawAnomalies = daoRegistry.getRawAnomalyResultDAO().findUnmergedByFunctionId(functionId);
-    Assert.assertTrue(rawAnomalies.size() == 0);
-
     // check merged anomalies
-    List<MergedAnomalyResultDTO> mergedAnomalies = daoRegistry.getMergedAnomalyResultDAO().findByFunctionId(functionId, true);
+    List<MergedAnomalyResultDTO> mergedAnomalies = daoRegistry.getMergedAnomalyResultDAO().findByFunctionId(functionId);
     Assert.assertTrue(mergedAnomalies.size() > 0);
+    AnomalyFunctionDTO functionSpec = daoRegistry.getAnomalyFunctionDAO().findById(functionId);
+    for (MergedAnomalyResultDTO mergedAnomaly : mergedAnomalies) {
+      Assert.assertEquals(mergedAnomaly.getFunction(), functionSpec);
+      Assert.assertEquals(mergedAnomaly.getCollection(), functionSpec.getCollection());
+      Assert.assertEquals(mergedAnomaly.getMetric(), functionSpec.getTopicMetric());
+      Assert.assertNotNull(mergedAnomaly.getAnomalyResultSource());
+      Assert.assertNotNull(mergedAnomaly.getDimensions());
+      Assert.assertNotNull(mergedAnomaly.getProperties());
+      Assert.assertNull(mergedAnomaly.getFeedback());
+    }
 
     // THE FOLLOWING TEST MAY FAIL OCCASIONALLY DUE TO MACHINE COMPUTATION POWER
     // check for job status COMPLETED

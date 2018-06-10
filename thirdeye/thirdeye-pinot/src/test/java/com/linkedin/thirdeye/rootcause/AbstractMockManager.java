@@ -19,17 +19,42 @@ public abstract class AbstractMockManager<T extends AbstractDTO> implements Abst
   }
 
   @Override
+  public int update(List<T> entities) {
+    throw new AssertionError("not implemented");
+  }
+
+  @Override
   public T findById(Long id) {
     throw new AssertionError("not implemented");
   }
 
   @Override
-  public void delete(T entity) {
+  public List<T> findByIds(List<Long> id) {
     throw new AssertionError("not implemented");
   }
 
   @Override
-  public void deleteById(Long id) {
+  public int delete(T entity) {
+    throw new AssertionError("not implemented");
+  }
+
+  @Override
+  public int deleteById(Long id) {
+    throw new AssertionError("not implemented");
+  }
+
+  @Override
+  public int deleteByIds(List<Long> id) {
+    throw new AssertionError("not implemented");
+  }
+
+  @Override
+  public int deleteByPredicate(com.linkedin.thirdeye.datalayer.util.Predicate predicate) {
+    throw new AssertionError("not implemented");
+  }
+
+  @Override
+  public int deleteRecordsOlderThanDays(int days) {
     throw new AssertionError("not implemented");
   }
 
@@ -45,6 +70,11 @@ public abstract class AbstractMockManager<T extends AbstractDTO> implements Abst
 
   @Override
   public List<T> findByPredicate(Predicate predicate) {
+    throw new AssertionError("not implemented");
+  }
+
+  @Override
+  public List<Long> findIdsByPredicate(com.linkedin.thirdeye.datalayer.util.Predicate predicate) {
     throw new AssertionError("not implemented");
   }
 

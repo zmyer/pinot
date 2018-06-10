@@ -16,17 +16,22 @@
 
 package com.linkedin.pinot.controller.helix.core.rebalance;
 
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Function;
 import com.google.common.collect.Lists;
 import com.linkedin.pinot.common.config.OfflineTagConfig;
-import com.linkedin.pinot.common.config.TableConfig;
 import com.linkedin.pinot.common.config.RealtimeTagConfig;
+import com.linkedin.pinot.common.config.TableConfig;
+import com.linkedin.pinot.common.exception.InvalidConfigException;
+import com.linkedin.pinot.common.partition.PartitionAssignment;
+import com.linkedin.pinot.common.partition.StreamPartitionAssignmentGenerator;
 import com.linkedin.pinot.common.utils.CommonConstants;
 import com.linkedin.pinot.common.utils.CommonConstants.Helix.StateModel.RealtimeSegmentOnlineOfflineStateModel;
 import com.linkedin.pinot.common.utils.LLCSegmentName;
 import com.linkedin.pinot.common.utils.SegmentName;
 import com.linkedin.pinot.common.utils.helix.HelixHelper;
-import com.linkedin.pinot.controller.helix.PartitionAssignment;
-import com.linkedin.pinot.controller.helix.core.realtime.partition.StreamPartitionAssignmentGenerator;
+import com.linkedin.pinot.common.utils.retry.RetryPolicies;
+import com.linkedin.pinot.core.realtime.stream.StreamMetadata;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -35,6 +40,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import javax.annotation.Nullable;
 import org.apache.commons.configuration.Configuration;
 import org.apache.helix.HelixAdmin;
 import org.apache.helix.HelixManager;
@@ -51,7 +57,7 @@ import org.slf4j.LoggerFactory;
  * Basic rebalance segments strategy, which rebalances offline segments using autorebalance strategy,
  * and consuming segments using the partition assignment strategy for the table
  */
-public class DefaultRebalanceSegmentStrategy extends BaseRebalanceSegmentStrategy {
+public class DefaultRebalanceSegmentStrategy implements RebalanceSegmentStrategy {
 
   private static final Logger LOGGER = LoggerFactory.getLogger(DefaultRebalanceSegmentStrategy.class);
 
@@ -64,7 +70,6 @@ public class DefaultRebalanceSegmentStrategy extends BaseRebalanceSegmentStrateg
   private ZkHelixPropertyStore<ZNRecord> _propertyStore;
 
   public DefaultRebalanceSegmentStrategy(HelixManager helixManager) {
-    super(helixManager);
     _helixManager = helixManager;
     _helixAdmin = helixManager.getClusterManagmentTool();
     _helixClusterName = helixManager.getClusterName();
@@ -80,46 +85,38 @@ public class DefaultRebalanceSegmentStrategy extends BaseRebalanceSegmentStrateg
    */
   @Override
   public PartitionAssignment rebalancePartitionAssignment(IdealState idealState, TableConfig tableConfig,
-      Configuration rebalanceUserConfig) {
-    PartitionAssignment newPartitionAssignment = new PartitionAssignment(tableConfig.getTableName());
+      Configuration rebalanceUserConfig) throws InvalidConfigException {
+    String tableNameWithType = tableConfig.getTableName();
+    PartitionAssignment newPartitionAssignment = new PartitionAssignment(tableNameWithType);
 
     if (tableConfig.getTableType().equals(CommonConstants.Helix.TableType.REALTIME)) {
+      StreamMetadata streamMetadata = new StreamMetadata(tableConfig.getIndexingConfig().getStreamConfigs());
+      if (!streamMetadata.hasSimpleKafkaConsumerType()) {
+        LOGGER.info("Table {} does not have LLC and will have no partition assignment", tableNameWithType);
+        return newPartitionAssignment;
+      }
+
       LOGGER.info("Rebalancing stream partition assignment for table {}", tableConfig.getTableName());
 
       boolean includeConsuming =
           rebalanceUserConfig.getBoolean(RebalanceUserConfigConstants.INCLUDE_CONSUMING, DEFAULT_INCLUDE_CONSUMING);
       if (includeConsuming) {
 
-        String tableNameWithType = tableConfig.getTableName();
+        StreamPartitionAssignmentGenerator streamPartitionAssignmentGenerator = getStreamPartitionAssignmentGenerator();
+        int numPartitions = streamPartitionAssignmentGenerator.getNumPartitionsFromIdealState(idealState);
+        newPartitionAssignment = streamPartitionAssignmentGenerator.generateStreamPartitionAssignment(tableConfig, numPartitions);
 
-        StreamPartitionAssignmentGenerator streamPartitionAssignmentGenerator =
-            new StreamPartitionAssignmentGenerator(_propertyStore);
-        PartitionAssignment streamPartitionAssignment =
-            streamPartitionAssignmentGenerator.getStreamPartitionAssignment(tableNameWithType);
-        int numPartitions = streamPartitionAssignment.getNumPartitions();
-
-        RealtimeTagConfig realtimeTagConfig = new RealtimeTagConfig(tableConfig, _helixManager);
-        List<String> consumingInstances =
-            _helixAdmin.getInstancesInClusterWithTag(_helixClusterName, realtimeTagConfig.getConsumingServerTag());
-
-        Map<String, PartitionAssignment> tableNameToStreamPartitionAssignmentMap =
-            streamPartitionAssignmentGenerator.generatePartitionAssignment(tableConfig, numPartitions,
-                consumingInstances, Lists.newArrayList(tableNameWithType));
-        newPartitionAssignment = tableNameToStreamPartitionAssignmentMap.get(tableNameWithType);
-
-        boolean dryRun = rebalanceUserConfig.getBoolean(RebalanceUserConfigConstants.DRYRUN, DEFAULT_DRY_RUN);
-        if (!dryRun) {
-          LOGGER.info("Updating stream partition assignment for table {}", tableNameWithType);
-          streamPartitionAssignmentGenerator.writeStreamPartitionAssignment(tableNameToStreamPartitionAssignmentMap);
-        } else {
-          LOGGER.info("Dry run. Skip writing stream partition assignment to property store");
-        }
       } else {
         LOGGER.info("includeConsuming = false. No need to rebalance partition assignment for {}",
             tableConfig.getTableType());
       }
     }
     return newPartitionAssignment;
+  }
+
+  @VisibleForTesting
+  protected StreamPartitionAssignmentGenerator getStreamPartitionAssignmentGenerator() {
+    return new StreamPartitionAssignmentGenerator(_helixManager);
   }
 
   /**
@@ -139,15 +136,6 @@ public class DefaultRebalanceSegmentStrategy extends BaseRebalanceSegmentStrateg
     CommonConstants.Helix.TableType tableType = tableConfig.getTableType();
     LOGGER.info("Rebalancing ideal state for table {}", tableNameWithType);
 
-    // if realtime and includeConsuming, then rebalance consuming segments
-    if (tableType.equals(CommonConstants.Helix.TableType.REALTIME)) {
-      boolean includeConsuming =
-          rebalanceUserConfig.getBoolean(RebalanceUserConfigConstants.INCLUDE_CONSUMING, DEFAULT_INCLUDE_CONSUMING);
-      if (includeConsuming) {
-        rebalanceConsumingSegments(idealState, newPartitionAssignment);
-      }
-    }
-
     // get target num replicas
     int targetNumReplicas;
     if (tableType.equals(CommonConstants.Helix.TableType.REALTIME)) {
@@ -161,17 +149,66 @@ public class DefaultRebalanceSegmentStrategy extends BaseRebalanceSegmentStrateg
       targetNumReplicas = Integer.parseInt(tableConfig.getValidationConfig().getReplication());
     }
 
-    // always rebalance serving segments
-    rebalanceServingSegments(idealState, tableConfig, targetNumReplicas);
-
     // update if not dryRun
     boolean dryRun = rebalanceUserConfig.getBoolean(RebalanceUserConfigConstants.DRYRUN, DEFAULT_DRY_RUN);
+    IdealState newIdealState;
     if (!dryRun) {
       LOGGER.info("Updating ideal state for table {}", tableNameWithType);
-      updateIdealState(tableNameWithType, targetNumReplicas, idealState.getRecord().getMapFields());
+      newIdealState = rebalanceAndUpdateIdealState(tableConfig, targetNumReplicas, rebalanceUserConfig,
+          newPartitionAssignment);
     } else {
       LOGGER.info("Dry run. Skip writing ideal state");
+      newIdealState = rebalanceIdealState(idealState, tableConfig, targetNumReplicas, rebalanceUserConfig,
+          newPartitionAssignment);
     }
+    return newIdealState;
+  }
+
+  /**
+   * Rebalances the ideal state object and also updates it
+   * @param tableConfig
+   * @param targetNumReplicas
+   * @param rebalanceUserConfig
+   * @param newPartitionAssignment
+   */
+  private IdealState rebalanceAndUpdateIdealState(final TableConfig tableConfig,
+      final int targetNumReplicas, final Configuration rebalanceUserConfig,
+      final PartitionAssignment newPartitionAssignment) {
+
+    final Function<IdealState, IdealState> updaterFunction = new Function<IdealState, IdealState>() {
+      @Nullable
+      @Override
+      public IdealState apply(@Nullable IdealState idealState) {
+        return rebalanceIdealState(idealState, tableConfig, targetNumReplicas, rebalanceUserConfig,
+            newPartitionAssignment);
+      }
+    };
+    HelixHelper.updateIdealState(_helixManager, tableConfig.getTableName(), updaterFunction,
+        RetryPolicies.exponentialBackoffRetryPolicy(5, 1000, 2.0f));
+    return  _helixAdmin.getResourceIdealState(_helixClusterName, tableConfig.getTableName());
+  }
+
+  /**
+   * Rebalances ideal state object without updating it
+   * @param idealState
+   * @param tableConfig
+   * @param targetNumReplicas
+   * @param rebalanceUserConfig
+   * @param newPartitionAssignment
+   */
+  private IdealState rebalanceIdealState(IdealState idealState, TableConfig tableConfig, int targetNumReplicas,
+      Configuration rebalanceUserConfig, PartitionAssignment newPartitionAssignment) {
+    // if realtime and includeConsuming, then rebalance consuming segments
+    if (tableConfig.getTableType().equals(CommonConstants.Helix.TableType.REALTIME)) {
+      boolean includeConsuming =
+          rebalanceUserConfig.getBoolean(RebalanceUserConfigConstants.INCLUDE_CONSUMING, DEFAULT_INCLUDE_CONSUMING);
+      if (includeConsuming) {
+        rebalanceConsumingSegments(idealState, newPartitionAssignment);
+      }
+    }
+    // always rebalance serving segments
+    rebalanceServingSegments(idealState, tableConfig, targetNumReplicas);
+    idealState.setReplicas(Integer.toString(targetNumReplicas));
     return idealState;
   }
 
@@ -186,12 +223,13 @@ public class DefaultRebalanceSegmentStrategy extends BaseRebalanceSegmentStrateg
     // for each partition, the segment with latest sequence number should be in CONSUMING
     Map<Integer, LLCSegmentName> partitionIdToLatestSegment = new HashMap<>(newPartitionAssignment.getNumPartitions());
     for (String segmentName : idealState.getPartitionSet()) {
-      LLCSegmentName llcSegmentName = new LLCSegmentName(segmentName);
-      int partitionId = llcSegmentName.getPartitionId();
-      LLCSegmentName latestSegmentForPartition = partitionIdToLatestSegment.get(partitionId);
-      if (latestSegmentForPartition == null
-          || llcSegmentName.getSequenceNumber() > latestSegmentForPartition.getSequenceNumber()) {
-        partitionIdToLatestSegment.put(partitionId, llcSegmentName);
+      if (SegmentName.isLowLevelConsumerSegmentName(segmentName)) {
+        LLCSegmentName llcSegmentName = new LLCSegmentName(segmentName);
+        int partitionId = llcSegmentName.getPartitionId();
+        LLCSegmentName latestSegmentForPartition = partitionIdToLatestSegment.get(partitionId);
+        if (latestSegmentForPartition == null || llcSegmentName.getSequenceNumber() > latestSegmentForPartition.getSequenceNumber()) {
+          partitionIdToLatestSegment.put(partitionId, llcSegmentName);
+        }
       }
     }
 
@@ -286,7 +324,6 @@ public class DefaultRebalanceSegmentStrategy extends BaseRebalanceSegmentStrateg
         idealState.setInstanceStateMap(entry.getKey(), entry.getValue());
       }
     }
-    idealState.setReplicas(Integer.toString(targetNumReplicas));
     return idealState;
   }
 
@@ -327,10 +364,10 @@ public class DefaultRebalanceSegmentStrategy extends BaseRebalanceSegmentStrateg
       List<String> enabledServingInstances) {
     String tag;
     if (tableConfig.getTableType().equals(CommonConstants.Helix.TableType.REALTIME)) {
-      RealtimeTagConfig realtimeTagConfig = new RealtimeTagConfig(tableConfig, _helixManager);
+      RealtimeTagConfig realtimeTagConfig = new RealtimeTagConfig(tableConfig);
       tag = realtimeTagConfig.getCompletedServerTag();
     } else {
-      OfflineTagConfig offlineTagConfig = new OfflineTagConfig(tableConfig, _helixManager);
+      OfflineTagConfig offlineTagConfig = new OfflineTagConfig(tableConfig);
       tag = offlineTagConfig.getOfflineServerTag();
     }
     servingInstances.addAll(_helixAdmin.getInstancesInClusterWithTag(_helixClusterName, tag));

@@ -15,10 +15,6 @@
  */
 package com.linkedin.pinot.common.config;
 
-import com.linkedin.pinot.common.utils.ControllerTenantNameBuilder;
-import org.apache.helix.HelixManager;
-
-
 /**
  * Wrapper class over TableConfig for an offline table
  * This class will help answer questions about what are server tags for a table
@@ -27,10 +23,10 @@ public class OfflineTagConfig extends TagConfig {
 
   private String _offlineServerTag;
 
-  public OfflineTagConfig(TableConfig tableConfig, HelixManager helixManager) {
-    super(tableConfig, helixManager);
+  public OfflineTagConfig(TableConfig tableConfig) {
+    super(tableConfig);
 
-    _offlineServerTag = ControllerTenantNameBuilder.getOfflineTenantNameForTenant(_serverTenant);
+    _offlineServerTag = TagNameUtils.getOfflineTagForTenant(_serverTenant);
   }
 
   public String getOfflineServerTag() {

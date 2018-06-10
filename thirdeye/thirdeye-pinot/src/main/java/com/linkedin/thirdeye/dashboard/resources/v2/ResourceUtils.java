@@ -1,16 +1,24 @@
 package com.linkedin.thirdeye.dashboard.resources.v2;
 
+import com.google.common.collect.SetMultimap;
+import com.google.common.collect.TreeMultimap;
 import com.linkedin.thirdeye.api.TimeGranularity;
 import com.linkedin.thirdeye.dataframe.util.MetricSlice;
+import com.linkedin.thirdeye.datalayer.bao.DatasetConfigManager;
 import com.linkedin.thirdeye.datalayer.bao.MetricConfigManager;
+import com.linkedin.thirdeye.datalayer.dto.AnomalyFunctionDTO;
+import com.linkedin.thirdeye.datalayer.dto.DatasetConfigDTO;
 import com.linkedin.thirdeye.datalayer.dto.MergedAnomalyResultDTO;
 import com.linkedin.thirdeye.datalayer.dto.MetricConfigDTO;
 import com.linkedin.thirdeye.datalayer.pojo.MetricConfigBean;
 import java.io.UnsupportedEncodingException;
 import java.net.URLEncoder;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.regex.Pattern;
 import org.apache.commons.collections.MapUtils;
 import org.apache.commons.lang.text.StrSubstitutor;
@@ -27,16 +35,108 @@ public class ResourceUtils {
   }
 
   /**
+   * Return a list of parameters.
+   * Support both multi-entity notations:
+   * <br/><b>(1) comma-delimited:</b> {@code "urns=thirdeye:metric:123,thirdeye:metric:124"}
+   * <br/><b>(2) multi-param</b> {@code "urns=thirdeye:metric:123&urns=thirdeye:metric:124"}
+   *
+   * @param params input of params
+   * @return list of params
+   */
+
+  public static List<String> parseListParams(List<String> params) {
+    if (params == null){
+      return Collections.emptyList();
+    }
+    if(params.size() != 1)
+      return params;
+    return Arrays.asList(params.get(0).split(","));
+  }
+
+  /**
+   * Returns a filter multimap for a given anomaly, joining anomaly dimensions and function filters
+   *
+   * @param anomaly anomaly dto
+   * @param datasetDAO dataset config dao
+   * @return filter multimap
+   */
+  public static SetMultimap<String, String> getAnomalyFilters(MergedAnomalyResultDTO anomaly, DatasetConfigManager datasetDAO) {
+    SetMultimap<String, String> filters = TreeMultimap.create();
+
+    DatasetConfigDTO dataset = datasetDAO.findByDataset(anomaly.getCollection());
+    if (dataset == null) {
+      throw new IllegalArgumentException(String.format("Could not resolve dataset '%s' for anomaly id %d", anomaly.getCollection(), anomaly.getId()));
+    }
+
+    AnomalyFunctionDTO function = anomaly.getFunction();
+    if (function == null) {
+      throw new IllegalArgumentException(String.format("Could not resolve anomaly function %d for anomaly id %d", anomaly.getFunctionId(), anomaly.getId()));
+    }
+
+    // anomaly function filters
+    // NOTE: this should not need to be here. filters should be stored in the anomaly unconditionally
+    if (function.getFilters() != null) {
+      for (String filterString : function.getFilters().split(";")) {
+        try {
+          String[] filter = filterString.split("=", 2);
+          String dimName = filter[0];
+          String dimValue = filter[1];
+
+          if (!dataset.getDimensionsHaveNoPreAggregation().contains(dimName) &&
+              Objects.equals(dimValue, dataset.getPreAggregatedKeyword())) {
+            // NOTE: workaround for anomaly detection inserting pre-aggregated keyword as dimension
+            continue;
+          }
+
+          if (anomaly.getDimensions().containsKey(dimName)) {
+            // avoid duplication of explored dimensions
+            continue;
+          }
+
+          filters.put(dimName, dimValue);
+
+        } catch(Exception ignore) {
+          // left blank
+        }
+      }
+    }
+
+    // anomaly dimensions
+    for (Map.Entry<String, String> entry : anomaly.getDimensions().entrySet()) {
+      if (!dataset.getDimensionsHaveNoPreAggregation().contains(entry.getKey()) &&
+          Objects.equals(entry.getValue(), dataset.getPreAggregatedKeyword())) {
+        // NOTE: workaround for anomaly detection inserting pre-aggregated keyword as dimension
+        continue;
+      }
+
+      filters.put(entry.getKey(), entry.getValue());
+    }
+
+    return filters;
+  }
+
+  /**
    * Generates the external links (if any) for a given anomaly.
    *
    * @param mergedAnomaly anomaly dto
-   * @param metricConfigDAO metric config dao
+   * @param metricDAO metric config dao
+   * @param datasetDAO dataset config dao
    * @return map of external urls, keyed by link label
    */
-  public static Map<String, String> getExternalURLs(MergedAnomalyResultDTO mergedAnomaly, MetricConfigManager metricConfigDAO) {
+  public static Map<String, String> getExternalURLs(MergedAnomalyResultDTO mergedAnomaly, MetricConfigManager metricDAO, DatasetConfigManager datasetDAO) {
     String metric = mergedAnomaly.getMetric();
     String dataset = mergedAnomaly.getCollection();
-    MetricConfigDTO metricConfigDTO = metricConfigDAO.findByMetricAndDataset(metric, dataset);
+
+    MetricConfigDTO metricConfigDTO = metricDAO.findByMetricAndDataset(metric, dataset);
+    if (metricConfigDTO == null) {
+      throw new IllegalArgumentException(String.format("Could not resolve metric '%s'", metric));
+    }
+
+    DatasetConfigDTO datasetConfigDTO = datasetDAO.findByDataset(metricConfigDTO.getDataset());
+    if (datasetConfigDTO == null) {
+      throw new IllegalArgumentException(String.format("Could not resolve dataset '%s'", dataset));
+    }
+
     Map<String, String> urlTemplates = metricConfigDTO.getExtSourceLinkInfo();
     if (MapUtils.isEmpty(urlTemplates)) {
       return Collections.emptyMap();
@@ -44,6 +144,8 @@ public class ResourceUtils {
 
     // Construct context for substituting the keywords in URL template
     Map<String, String> context = new HashMap<>();
+    populatePreAggregation(datasetConfigDTO, context);
+
     // context for each pair of dimension name and value
     if (MapUtils.isNotEmpty(mergedAnomaly.getDimensions())) {
       for (Map.Entry<String, String> entry : mergedAnomaly.getDimensions().entrySet()) {
@@ -82,12 +184,18 @@ public class ResourceUtils {
    *
    * @param slice metric slice
    * @param metricDAO metric config dao
+   * @param datasetDAO dataset config dao
    * @return map of external urls, keyed by link label
    */
-  public static Map<String, String> getExternalURLs(MetricSlice slice, MetricConfigManager metricDAO) {
+  public static Map<String, String> getExternalURLs(MetricSlice slice, MetricConfigManager metricDAO, DatasetConfigManager datasetDAO) {
     MetricConfigDTO metricConfigDTO = metricDAO.findById(slice.getMetricId());
     if (metricConfigDTO == null) {
       throw new IllegalArgumentException(String.format("Could not resolve metric id %d", slice.getMetricId()));
+    }
+
+    DatasetConfigDTO datasetConfigDTO = datasetDAO.findByDataset(metricConfigDTO.getDataset());
+    if (datasetConfigDTO == null) {
+      throw new IllegalArgumentException(String.format("Could not resolve dataset '%s' for metric id %d", metricConfigDTO.getDatasetConfig(), slice.getMetricId()));
     }
 
     Map<String, String> urlTemplates = metricConfigDTO.getExtSourceLinkInfo();
@@ -97,6 +205,8 @@ public class ResourceUtils {
 
     // NOTE: this cannot handle multiple values for the same key
     Map<String, String> context = new HashMap<>();
+    populatePreAggregation(datasetConfigDTO, context);
+
     for (Map.Entry<String, String> entry : slice.getFilters().entries()) {
       putEncoded(context, entry);
     }
@@ -125,6 +235,15 @@ public class ResourceUtils {
     }
 
     return output;
+  }
+
+  private static void populatePreAggregation(DatasetConfigDTO datasetConfigDTO, Map<String, String> context) {
+    // populate pre-aggregated keyword
+    if (!datasetConfigDTO.getPreAggregatedKeyword().isEmpty()) {
+      for (String dimName : datasetConfigDTO.getDimensions()) {
+        context.put(dimName, datasetConfigDTO.getPreAggregatedKeyword());
+      }
+    }
   }
 
   /**
@@ -166,4 +285,6 @@ public class ResourceUtils {
       context.put(MetricConfigBean.URL_TEMPLATE_END_TIME, String.valueOf(endTime));
     }
   }
+
+
 }

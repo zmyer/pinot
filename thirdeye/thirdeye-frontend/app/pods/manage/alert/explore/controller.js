@@ -13,7 +13,6 @@ import { task, timeout } from 'ember-concurrency';
 import {
   computed,
   set,
-  get,
   setProperties,
   getWithDefault
 } from '@ember/object';
@@ -24,9 +23,11 @@ import {
 } from 'thirdeye-frontend/utils/utils';
 import {
   buildAnomalyStats,
-  extractSeverity,
-  setDuration
+  extractSeverity
 } from 'thirdeye-frontend/utils/manage-alert-utils';
+import { inject as service } from '@ember/service';
+import floatToPercent from 'thirdeye-frontend/utils/float-to-percent';
+import * as anomalyUtil from 'thirdeye-frontend/utils/anomaly';
 
 export default Controller.extend({
   /**
@@ -49,6 +50,11 @@ export default Controller.extend({
   },
 
   /**
+   * Make duration service accessible
+   */
+  durationCache: service('services/duration'),
+
+  /**
    * Date format for date range picker
    */
   serverDateFormat: 'YYYY-MM-DD HH:mm',
@@ -64,6 +70,7 @@ export default Controller.extend({
     this.setProperties({
       filters: {},
       loadedWowData: [],
+      topDimensions: [],
       predefinedRanges: {},
       missingAnomalyProps: {},
       selectedSortMode: '',
@@ -81,13 +88,11 @@ export default Controller.extend({
       sortColumnStartUp: false,
       sortColumnScoreUp: false,
       sortColumnChangeUp: false,
-      isFetchingDimensions: false,
       isDimensionFetchDone: false,
       sortColumnResolutionUp: false,
       checkReplayInterval: 2000, // 2 seconds
       selectedDimension: 'All Dimensions',
       selectedResolution: 'All Resolutions',
-      dateRangeToRender: [30, 10, 5],
       currentPage: 1,
       pageSize: 10
     });
@@ -191,7 +196,8 @@ export default Controller.extend({
    * @type {String}
    */
   uiDateFormat: computed('alertData.windowUnit', function() {
-    const granularity = this.get('alertData.windowUnit').toLowerCase();
+    const rawGranularity = this.get('alertData.windowUnit');
+    const granularity = rawGranularity ? rawGranularity.toLowerCase() : '';
 
     switch(granularity) {
       case 'days':
@@ -305,13 +311,14 @@ export default Controller.extend({
   ),
 
   /**
-   * Placeholder for options for range field. Here we generate arbitrary date ranges from our config.
-   * @type {Array}
+   * All selected dimensions to be loaded into graph
+   * @returns {Array}
    */
-  rangeOptionsExample: computed(
-    'dateRangeToRender',
+  selectedDimensions: computed(
+    'topDimensions',
+    'topDimensions.@each.isSelected',
     function() {
-      return this.get('dateRangeToRender').map(this.renderDate);
+      return this.get('topDimensions').filterBy('isSelected');
     }
   ),
 
@@ -411,54 +418,6 @@ export default Controller.extend({
   }),
 
   /**
-   * Update feedback status on any anomaly
-   * @method updateAnomalyFeedback
-   * @param {Number} anomalyId - the id of the anomaly to update
-   * @param {String} feedbackType - key for feedback type
-   * @return {Ember.RSVP.Promise}
-   */
-  updateAnomalyFeedback(anomalyId, feedbackType) {
-    const url = `/anomalies/updateFeedback/${anomalyId}`;
-    const data = { feedbackType, comment: '' };
-    return fetch(url, postProps(data)).then((res) => checkStatus(res, 'post'));
-  },
-
-  /**
-   * Fetch a single anomaly record for verification
-   * @method verifyAnomalyFeedback
-   * @param {Number} anomalyId
-   * @return {undefined}
-   */
-  verifyAnomalyFeedback(anomalyId) {
-    const anomalyUrl = this.get('anomalyDataUrl') + anomalyId;
-    return fetch(anomalyUrl).then(checkStatus);
-  },
-
-  /**
-   * Reset all time range options and activate the selected one
-   * @method newTimeRangeOptions
-   * @param {String} activeKey - label for currently active time range
-   * @return {undefined}
-   */
-  newTimeRangeOptions(activeKey) {
-    const timeRangeOptions = this.get('timeRangeOptions');
-    const newOptions = timeRangeOptions.map((range) => {
-      return {
-        name: range.name,
-        value: range.value,
-        isActive: false
-      };
-    });
-    const foundRangeOption = newOptions.find((range) => range.value === activeKey);
-
-    if (foundRangeOption) {
-      foundRangeOption.isActive = true;
-    }
-
-    return newOptions;
-  },
-
-  /**
    * Send a POST request to the report anomaly API (2-step process)
    * http://go/te-ss-alert-flow-api
    * @method reportAnomaly
@@ -540,29 +499,30 @@ export default Controller.extend({
      * @param {String} selectedResponse - user-selected anomaly feedback option
      * @param {Object} inputObj - the selection object
      */
-    onChangeAnomalyResponse(anomalyRecord, selectedResponse, inputObj) {
-      const responseObj = this.get('anomalyResponseObj').find(res => res.name === selectedResponse);
+     onChangeAnomalyResponse: async function(anomalyRecord, selectedResponse, inputObj) {
+      const responseObj = anomalyUtil.anomalyResponseObj.find(res => res.name === selectedResponse);
       set(inputObj, 'selected', selectedResponse);
-
-      // Save anomaly feedback
-      this.updateAnomalyFeedback(anomalyRecord.anomalyId, responseObj.value)
-        .then((res) => {
-          // We make a call to ensure our new response got saved
-          this.verifyAnomalyFeedback(anomalyRecord.anomalyId, responseObj.status)
-            .then((res) => {
-              const filterMap = res.searchFilters ? res.searchFilters.statusFilterMap : null;
-              if (filterMap && filterMap.hasOwnProperty(responseObj.status)) {
-                set(anomalyRecord, 'anomalyFeedback', selectedResponse);
-                set(anomalyRecord, 'showResponseSaved', true);
-              } else {
-                return Promise.reject(new Error('Response not saved'));
-              }
-            }); // verifyAnomalyFeedback
-        }) // updateAnomalyFeedback
-        .catch((err) => {
-          set(anomalyRecord, 'showResponseFailed', true);
-          set(anomalyRecord, 'showResponseSaved', false);
+      let res;
+      try {
+        // Save anomaly feedback
+        res = await anomalyUtil.updateAnomalyFeedback(anomalyRecord.anomalyId, responseObj.value)
+        // We make a call to ensure our new response got saved
+        res = await anomalyUtil.verifyAnomalyFeedback(anomalyRecord.anomalyId, responseObj.status)
+        const filterMap = getWithDefault(res, 'searchFilters.statusFilterMap', null);
+        if (filterMap && filterMap.hasOwnProperty(responseObj.status)) {
+          setProperties(anomalyRecord, {
+            anomalyFeedback: selectedResponse,
+            showResponseSaved: true
+          });
+        } else {
+          return Promise.reject(new Error('Response not saved'));
+        }
+      } catch (err) {
+        setProperties(anomalyRecord, {
+          showResponseFailed: true,
+          showResponseSaved: false
         });
+      }
     },
 
     /**
@@ -675,63 +635,40 @@ export default Controller.extend({
           if (wowDetails) {
             curr = wow.currentVal.toFixed(2);
             base = wowDetails.baselineValue.toFixed(2);
-            change = (wowDetails.change * 100).toFixed(2);
+            change = floatToPercent(wowDetails.change);
           }
 
           // Set displayed value properties. Note: ensure no CP watching these props
           setProperties(anomaly, {
             shownCurrent: curr,
             shownBaseline: base,
-            shownChangeRate: change,
-            changeDirectionLabel: change < 0 ? 'down' : 'up'
+            shownChangeRate: change
           });
         });
       }
     },
 
     /**
-     * Handle display of selected anomaly time ranges (reload the model with new query params)
-     * @method onRangeOptionClick
-     * @param {Object} rangeOption - the selected range object
-     */
-    onRangeOptionClick(rangeOption) {
-      const rangeFormat = 'YYYY-MM-DD HH:mm';
-      const defaultEndDate = buildDateEod(1, 'day').valueOf();
-      const timeRangeOptions = this.get('timeRangeOptions');
-      const duration = rangeOption.value;
-      const startDate = moment(rangeOption.start).valueOf();
-      const endDate = moment(defaultEndDate).valueOf();
-
-      if (rangeOption.value !== 'custom') {
-        // Set date picker defaults to new start/end dates
-        this.setProperties({
-          activeRangeStart: moment(rangeOption.start).format(rangeFormat),
-          activeRangeEnd: moment(defaultEndDate).format(rangeFormat)
-        });
-        // Reset options and highlight selected one
-        timeRangeOptions.forEach(op => set(op, 'isActive', false));
-        set(rangeOption, 'isActive', true);
-        // Cache chosen time range
-        setDuration(duration, startDate, endDate);
-        // Reload model according to new timerange
-        this.transitionToRoute({ queryParams: { mode: 'explore', duration, startDate, endDate }});
-      }
-    },
-
-    /**
-     * Sets the new custom date range for anomaly coverage. Also caches it.
+     * Sets the new custom date range for anomaly coverage
      * @method onRangeSelection
-     * @param {String} start  - stringified start date
-     * @param {String} end    - stringified end date
+     * @param {Object} rangeOption - the user-selected time range to load
      */
-    onRangeSelection(start, end) {
-      const duration = 'custom';
-      const startDate = moment(start).valueOf();
-      const endDate = moment(end).valueOf();
-      this.set('timeRangeOptions', this.newTimeRangeOptions(duration));
-      setDuration(duration, startDate, endDate);
-      this.transitionToRoute({ queryParams: { mode: 'explore', duration, startDate, endDate }});
+    onRangeSelection(rangeOption) {
+      const {
+        start,
+        end,
+        value: duration
+      } = rangeOption;
+      const durationObj = {
+        duration,
+        startDate: moment(start).valueOf(),
+        endDate: moment(end).valueOf()
+      };
+      // Cache the new time range and update page with it
+      this.get('durationCache').setDuration(durationObj);
+      this.transitionToRoute({ queryParams: durationObj });
     },
+
 
     /**
      * Load tuning sub-route and properly toggle alert nav button

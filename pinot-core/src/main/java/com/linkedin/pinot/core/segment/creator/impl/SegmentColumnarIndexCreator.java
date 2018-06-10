@@ -53,6 +53,10 @@ import java.util.Set;
 import org.apache.commons.configuration.ConfigurationException;
 import org.apache.commons.configuration.PropertiesConfiguration;
 import org.apache.commons.lang.math.IntRange;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.joda.time.format.DateTimeFormat;
+import org.joda.time.format.DateTimeFormatter;
 
 import static com.linkedin.pinot.core.segment.creator.impl.V1Constants.MetadataKeys.Column.*;
 import static com.linkedin.pinot.core.segment.creator.impl.V1Constants.MetadataKeys.Segment.*;
@@ -65,6 +69,7 @@ import static com.linkedin.pinot.core.segment.creator.impl.V1Constants.MetadataK
 // TODO: check resource leaks
 public class SegmentColumnarIndexCreator implements SegmentCreator {
   // TODO Refactor class name to match interface name
+  private static final Logger LOGGER = LoggerFactory.getLogger(SegmentColumnarIndexCreator.class);
   private SegmentGeneratorConfig config;
   private Map<String, ColumnIndexCreationInfo> indexCreationInfoMap;
   private Map<String, SegmentDictionaryCreator> _dictionaryCreatorMap = new HashMap<>();
@@ -84,8 +89,7 @@ public class SegmentColumnarIndexCreator implements SegmentCreator {
 
   @Override
   public void init(SegmentGeneratorConfig segmentCreationSpec, SegmentIndexCreationInfo segmentIndexCreationInfo,
-      Map<String, ColumnIndexCreationInfo> indexCreationInfoMap, Schema schema, File outDir)
-      throws Exception {
+      Map<String, ColumnIndexCreationInfo> indexCreationInfoMap, Schema schema, File outDir) throws Exception {
     docIdCounter = 0;
     config = segmentCreationSpec;
     this.indexCreationInfoMap = indexCreationInfoMap;
@@ -131,7 +135,13 @@ public class SegmentColumnarIndexCreator implements SegmentCreator {
         _dictionaryCreatorMap.put(columnName, dictionaryCreator);
 
         // Create dictionary
-        dictionaryCreator.build();
+        try {
+          dictionaryCreator.build();
+        } catch (Exception e) {
+          LOGGER.error("Error building dictionary for field: {}, cardinality: {}, number of bytes per entry: {}",
+              fieldSpec.getName(), indexCreationInfo.getDistinctValueCount(), dictionaryCreator.getNumBytesPerEntry());
+          throw e;
+        }
 
         // Initialize forward index creator
         int cardinality = indexCreationInfo.getDistinctValueCount();
@@ -170,13 +180,41 @@ public class SegmentColumnarIndexCreator implements SegmentCreator {
         Preconditions.checkState(!invertedIndexColumns.contains(columnName),
             "Cannot create inverted index for raw index column: %s", columnName);
 
-        ChunkCompressorFactory.CompressionType compressionType = segmentCreationSpec.getColumnCompressionType(columnName);
+        ChunkCompressorFactory.CompressionType compressionType = getColumnCompressionType(segmentCreationSpec, fieldSpec);
 
         // Initialize forward index creator
         _forwardIndexCreatorMap.put(columnName,
             getRawIndexCreatorForColumn(_indexDir, compressionType, columnName, fieldSpec.getDataType(), totalDocs,
-                indexCreationInfo.getLegnthOfLongestEntry()));
+                indexCreationInfo.getLengthOfLongestEntry()));
       }
+    }
+  }
+
+  /**
+   * Helper method that returns compression type to use based on segment creation spec and field type.
+   * <ul>
+   *   <li> Returns compression type from segment creation spec, if specified there.</li>
+   *   <li> Else, returns PASS_THROUGH for metrics, and SNAPPY for dimensions. This is because metrics are likely
+   *        to be spread in different chunks after applying predicates. Same could be true for dimensions, but in that
+   *        case, clients are expected to explicitly specify the appropriate compression type in the spec. </li>
+   * </ul>
+   * @param segmentCreationSpec Segment creation spec
+   * @param fieldSpec Field spec for the column
+   * @return Compression type to use
+   */
+  private ChunkCompressorFactory.CompressionType getColumnCompressionType(SegmentGeneratorConfig segmentCreationSpec,
+      FieldSpec fieldSpec) {
+    ChunkCompressorFactory.CompressionType compressionType =
+        segmentCreationSpec.getRawIndexCompressionType().get(fieldSpec.getName());
+
+    if (compressionType == null) {
+      if (fieldSpec.getFieldType().equals(FieldType.METRIC)) {
+        return ChunkCompressorFactory.CompressionType.PASS_THROUGH;
+      } else {
+        return ChunkCompressorFactory.CompressionType.SNAPPY;
+      }
+    } else {
+      return compressionType;
     }
   }
 
@@ -199,11 +237,13 @@ public class SegmentColumnarIndexCreator implements SegmentCreator {
       FieldSpec spec) {
     String column = spec.getName();
 
-    if (config.getRawIndexCreationColumns().contains(column)) {
+    if (config.getRawIndexCreationColumns().contains(column) || config.getRawIndexCompressionType().containsKey(column)) {
       if (!spec.isSingleValueField()) {
         throw new RuntimeException(
             "Creation of indices without dictionaries is supported for single valued columns only.");
       }
+      return false;
+    } else if (spec.getDataType().equals(FieldSpec.DataType.BYTES) && !info.isFixedLength()) {
       return false;
     }
     return info.isCreateDictionary();
@@ -250,16 +290,14 @@ public class SegmentColumnarIndexCreator implements SegmentCreator {
   }
 
   @Override
-  public void seal()
-      throws ConfigurationException, IOException {
+  public void seal() throws ConfigurationException, IOException {
     for (InvertedIndexCreator invertedIndexCreator : _invertedIndexCreatorMap.values()) {
       invertedIndexCreator.seal();
     }
     writeMetadata();
   }
 
-  void writeMetadata()
-      throws ConfigurationException {
+  void writeMetadata() throws ConfigurationException {
     PropertiesConfiguration properties =
         new PropertiesConfiguration(new File(_indexDir, V1Constants.MetadataKeys.METADATA_FILE_NAME));
 
@@ -300,20 +338,29 @@ public class SegmentColumnarIndexCreator implements SegmentCreator {
       derivedHllFieldToOriginMap = hllConfig.getDerivedHllFieldToOriginMap();
     }
 
+    // Write time related metadata (start time, end time, time unit)
     String timeColumn = config.getTimeColumnName();
-    if (indexCreationInfoMap.get(timeColumn) != null) {
-      properties.setProperty(SEGMENT_START_TIME, indexCreationInfoMap.get(timeColumn).getMin());
-      properties.setProperty(SEGMENT_END_TIME, indexCreationInfoMap.get(timeColumn).getMax());
-      properties.setProperty(TIME_UNIT, config.getSegmentTimeUnit());
-    }
+    ColumnIndexCreationInfo timeColumnIndexCreationInfo = indexCreationInfoMap.get(timeColumn);
+    if (timeColumnIndexCreationInfo != null) {
+      // Use start/end time in config if defined
+      if (config.getStartTime() != null && config.getEndTime() != null) {
+        properties.setProperty(SEGMENT_START_TIME, config.getStartTime());
+        properties.setProperty(SEGMENT_END_TIME, config.getEndTime());
+      } else {
+        Object minTime = timeColumnIndexCreationInfo.getMin();
+        Object maxTime = timeColumnIndexCreationInfo.getMax();
 
-    if (config.containsCustomProperty(SEGMENT_START_TIME)) {
-      properties.setProperty(SEGMENT_START_TIME, config.getStartTime());
-    }
-    if (config.containsCustomProperty(SEGMENT_END_TIME)) {
-      properties.setProperty(SEGMENT_END_TIME, config.getEndTime());
-    }
-    if (config.containsCustomProperty(TIME_UNIT)) {
+        // Convert time value into millis since epoch for SIMPLE_DATE
+        if (config.getTimeColumnType() == SegmentGeneratorConfig.TimeColumnType.SIMPLE_DATE) {
+          DateTimeFormatter dateTimeFormatter = DateTimeFormat.forPattern(config.getSimpleDateFormat());
+          properties.setProperty(SEGMENT_START_TIME, dateTimeFormatter.parseMillis(minTime.toString()));
+          properties.setProperty(SEGMENT_END_TIME, dateTimeFormatter.parseMillis(maxTime.toString()));
+        } else {
+          properties.setProperty(SEGMENT_START_TIME, minTime);
+          properties.setProperty(SEGMENT_END_TIME, maxTime);
+        }
+      }
+
       properties.setProperty(TIME_UNIT, config.getSegmentTimeUnit());
     }
 
@@ -325,7 +372,7 @@ public class SegmentColumnarIndexCreator implements SegmentCreator {
       String column = entry.getKey();
       ColumnIndexCreationInfo columnIndexCreationInfo = entry.getValue();
       SegmentDictionaryCreator dictionaryCreator = _dictionaryCreatorMap.get(column);
-      int dictionaryElementSize = (dictionaryCreator != null) ? dictionaryCreator.getNumBytesPerString() : 0;
+      int dictionaryElementSize = (dictionaryCreator != null) ? dictionaryCreator.getNumBytesPerEntry() : 0;
 
       // TODO: after fixing the server-side dependency on HAS_INVERTED_INDEX and deployed, set HAS_INVERTED_INDEX properly
       // The hasInvertedIndex flag in segment metadata is picked up in ColumnMetadata, and will be used during the query
@@ -454,8 +501,7 @@ public class SegmentColumnarIndexCreator implements SegmentCreator {
    */
   public static SingleValueRawIndexCreator getRawIndexCreatorForColumn(File file,
       ChunkCompressorFactory.CompressionType compressionType, String column, FieldSpec.DataType dataType, int totalDocs,
-      int lengthOfLongestEntry)
-      throws IOException {
+      int lengthOfLongestEntry) throws IOException {
 
     SingleValueRawIndexCreator indexCreator;
     switch (dataType) {
@@ -480,6 +526,7 @@ public class SegmentColumnarIndexCreator implements SegmentCreator {
         break;
 
       case STRING:
+      case BYTES:
         indexCreator =
             new SingleValueVarByteRawIndexCreator(file, compressionType, column, totalDocs, lengthOfLongestEntry);
         break;
@@ -492,8 +539,7 @@ public class SegmentColumnarIndexCreator implements SegmentCreator {
   }
 
   @Override
-  public void close()
-      throws IOException {
+  public void close() throws IOException {
     for (SegmentDictionaryCreator dictionaryCreator : _dictionaryCreatorMap.values()) {
       dictionaryCreator.close();
     }

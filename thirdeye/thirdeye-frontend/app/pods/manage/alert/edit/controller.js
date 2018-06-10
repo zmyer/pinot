@@ -14,6 +14,7 @@ import { computed, set } from '@ember/object';
 import { getWithDefault } from '@ember/object';
 import { isEmpty, isPresent } from "@ember/utils";
 import { checkStatus } from 'thirdeye-frontend/utils/utils';
+import { selfServeApiCommon } from 'thirdeye-frontend/utils/api/self-serve';
 import { formatConfigGroupProps } from 'thirdeye-frontend/utils/manage-alert-utils';
 
 export default Controller.extend({
@@ -65,11 +66,11 @@ export default Controller.extend({
         selectedApplication,
         alertConfigGroups
       } = this.getProperties('selectedApplication', 'alertConfigGroups');
-      const appName = getWithDefault(this, 'selectedConfigGroup.application', null);
+      const appName = getWithDefault(this, 'selectedApplication.application', null);
       const activeGroups = alertConfigGroups ? alertConfigGroups.filterBy('active') : [];
       const groupsWithAppName = activeGroups.filter(group => isPresent(group.application));
       if (isPresent(appName)) {
-        return groupsWithAppName.filter(group => group.application.toLowerCase().includes(appName));
+        return groupsWithAppName.filter(group => group.application.toLowerCase().includes(appName.toLowerCase()));
       } else {
         return activeGroups;
       }
@@ -206,7 +207,7 @@ export default Controller.extend({
    * @return {Promise}
    */
   fetchAlertByName(functionName) {
-    const url = `/data/autocomplete/functionByName?name=${functionName}`;
+    const url = selfServeApiCommon.alertFunctionByName(functionName)
     return fetch(url).then(checkStatus);
   },
 
@@ -218,7 +219,7 @@ export default Controller.extend({
    * @return {Promise}
    */
   fetchFunctionById(functionId) {
-    const url = `/onboard/function/${functionId}`;
+    const url = selfServeApiCommon.alertById(functionId);
     return fetch(url).then(checkStatus);
   },
 
@@ -231,7 +232,7 @@ export default Controller.extend({
    * @return {RSVP.Promise} A new list of functions (alerts)
    */
   prepareFunctions(configGroup) {
-    const existingFunctionList = configGroup.emailConfig ? configGroup.emailConfig.functionIds : [];
+    const existingFunctionList = getWithDefault(this, 'configGroup.emailConfig.functionIds', []);
     const newFunctionList = [];
     let cnt = 0;
 

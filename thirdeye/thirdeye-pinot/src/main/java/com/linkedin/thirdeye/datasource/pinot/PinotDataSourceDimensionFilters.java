@@ -112,13 +112,24 @@ public class PinotDataSourceDimensionFilters {
           String dimensionValue = row.get(dimension);
           values.add(dimensionValue);
         }
-        values.remove(datasetConfig.getPreAggregatedKeyword());
+
+        // remove pre-aggregation dimension value by default
+        if (!datasetConfig.isAdditive()) {
+          if (!datasetConfig.getDimensionsHaveNoPreAggregation().contains(dimension)) {
+            values.remove(datasetConfig.getPreAggregatedKeyword());
+          }
+        }
+
         Collections.sort(values);
         result.put(dimension, values);
       } else {
         result.put(dimension, Collections.<String>emptyList());
       }
     }
+
+    // remove time column dimension by default
+    result.remove(datasetConfig.getTimeColumn());
+
     return result;
   }
 

@@ -53,17 +53,24 @@ export function humanizeFloat(f) {
 }
 
 /**
- * Formatter for the human-readable change values in percent with 1 decimal
+ * Formatter for the human-readable change values displayed in percent with 1 decimal. Truncates extreme values > 10x.
  * @param {float} f float number
  * @return {string} human-readable change string
+ *
+ * @example
+ * 0.5177  => +51.8%
+ * -0.0001 => -0.0%
+ * 10.001  => +1000%+
+ * -10.01  => -1000%+
  */
 export function humanizeChange(f) {
   if (!isValidForDisplay(f)) { return '-'; }
-  if (Math.abs(f) < 10.0) {
-    return `${f > 0 ? '+' : ''}${Math.round(f * 100).toFixed(1)}%`;
-  } else {
-    return `${f > 0 ? '+' : '-'}1000%+`;
+  if (f > 10) {
+    return '+1000%+';
+  } else if (f < -10) {
+    return '-1000%+';
   }
+  return `${f > 0 ? '+' : ''}${Math.round(f * 100).toFixed(1)}%`;
 }
 
 /**

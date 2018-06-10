@@ -15,9 +15,10 @@
  */
 package com.linkedin.pinot.core.query.aggregation.groupby;
 
-import com.linkedin.pinot.core.common.BlockMetadata;
+import com.linkedin.pinot.common.request.transform.TransformExpressionTree;
 import com.linkedin.pinot.core.common.BlockValSet;
 import com.linkedin.pinot.core.operator.blocks.TransformBlock;
+import com.linkedin.pinot.core.operator.transform.TransformOperator;
 import com.linkedin.pinot.core.segment.index.readers.Dictionary;
 import it.unimi.dsi.fastutil.ints.Int2IntMap;
 import it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap;
@@ -26,7 +27,6 @@ import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.objects.Object2IntMap;
 import it.unimi.dsi.fastutil.objects.Object2IntOpenHashMap;
 import it.unimi.dsi.fastutil.objects.ObjectIterator;
-import java.util.Arrays;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
 import javax.annotation.Nonnull;
@@ -58,20 +58,17 @@ import javax.annotation.Nonnull;
  */
 // TODO: Revisit to make trimming work. Currently trimming is disabled
 public class DictionaryBasedGroupKeyGenerator implements GroupKeyGenerator {
-  private final int _numGroupByColumns;
-  private final String[] _groupByColumns;
+  private final TransformExpressionTree[] _groupByExpressions;
+  private final int _numGroupByExpressions;
   private final int[] _cardinalities;
   private final boolean[] _isSingleValueColumn;
   private final Dictionary[] _dictionaries;
-  private final BlockValSet[] _blockValSets;
 
   // The first dimension is the index of group-by column
-  // Reusable buffer for single-value column dictionary ids per block
+  // Reusable buffer for single-value column dictionary ids
   private final int[][] _singleValueDictIds;
-  // Reusable buffer for multi-value column dictionary ids per document
-  private final int[][] _multiValueDictIds;
-  // Reusable buffer for number of values in multi-value column per document
-  private final int[] _numValues;
+  // Reusable buffer for multi-value column dictionary ids
+  private final int[][][] _multiValueDictIds;
 
   private final int _globalGroupIdUpperBound;
   private final RawKeyHolder _rawKeyHolder;
@@ -93,31 +90,22 @@ public class DictionaryBasedGroupKeyGenerator implements GroupKeyGenerator {
 //  }
 //  private TrimMode _trimMode;
 
-  /**
-   * Constructor for the class. Initializes data members (reusable arrays).
-   *
-   * @param transformBlock Transform block for which to generate group keys
-   * @param groupByColumns Group-by columns
-   * @param arrayBasedThreshold Threshold for array based result holder
-   */
-  public DictionaryBasedGroupKeyGenerator(TransformBlock transformBlock, String[] groupByColumns,
-      int arrayBasedThreshold) {
-    _numGroupByColumns = groupByColumns.length;
-    _groupByColumns = groupByColumns;
+  public DictionaryBasedGroupKeyGenerator(@Nonnull TransformOperator transformOperator,
+      @Nonnull TransformExpressionTree[] groupByExpressions, int arrayBasedThreshold) {
+    _groupByExpressions = groupByExpressions;
+    _numGroupByExpressions = groupByExpressions.length;
 
-    _cardinalities = new int[_numGroupByColumns];
-    _isSingleValueColumn = new boolean[_numGroupByColumns];
-    _dictionaries = new Dictionary[_numGroupByColumns];
-    _blockValSets = new BlockValSet[_numGroupByColumns];
-    _singleValueDictIds = new int[_numGroupByColumns][];
-    _multiValueDictIds = new int[_numGroupByColumns][];
-    _numValues = new int[_numGroupByColumns];
+    _cardinalities = new int[_numGroupByExpressions];
+    _isSingleValueColumn = new boolean[_numGroupByExpressions];
+    _dictionaries = new Dictionary[_numGroupByExpressions];
+    _singleValueDictIds = new int[_numGroupByExpressions][];
+    _multiValueDictIds = new int[_numGroupByExpressions][][];
 
     long cardinalityProduct = 1L;
     boolean longOverflow = false;
-    for (int i = 0; i < _numGroupByColumns; i++) {
-      BlockMetadata blockMetadata = transformBlock.getBlockMetadata(groupByColumns[i]);
-      _dictionaries[i] = blockMetadata.getDictionary();
+    for (int i = 0; i < _numGroupByExpressions; i++) {
+      TransformExpressionTree groupByExpression = groupByExpressions[i];
+      _dictionaries[i] = transformOperator.getDictionary(groupByExpression);
       int cardinality = _dictionaries[i].length();
       _cardinalities[i] = cardinality;
       if (!longOverflow) {
@@ -128,11 +116,7 @@ public class DictionaryBasedGroupKeyGenerator implements GroupKeyGenerator {
         }
       }
 
-      if (blockMetadata.isSingleValue()) {
-        _isSingleValueColumn[i] = true;
-      } else {
-        _multiValueDictIds[i] = new int[blockMetadata.getMaxNumberOfMultiValues()];
-      }
+      _isSingleValueColumn[i] = transformOperator.getResultMetadata(groupByExpression).isSingleValue();
     }
 
     if (longOverflow) {
@@ -153,86 +137,56 @@ public class DictionaryBasedGroupKeyGenerator implements GroupKeyGenerator {
     }
   }
 
-  /**
-   * {@inheritDoc}
-   */
   @Override
   public int getGlobalGroupKeyUpperBound() {
     return _globalGroupIdUpperBound;
   }
 
-  /**
-   * {@inheritDoc}
-   */
   @Override
-  public void generateKeysForBlock(TransformBlock transformBlock, int[] outGroupIds) {
+  public void generateKeysForBlock(@Nonnull TransformBlock transformBlock, @Nonnull int[] groupKeys) {
     // Fetch dictionary ids in the given block for all group-by columns
-    for (int i = 0; i < _numGroupByColumns; i++) {
-      BlockValSet blockValueSet = transformBlock.getBlockValueSet(_groupByColumns[i]);
-      _singleValueDictIds[i] = blockValueSet.getDictionaryIds();
+    for (int i = 0; i < _numGroupByExpressions; i++) {
+      BlockValSet blockValueSet = transformBlock.getBlockValueSet(_groupByExpressions[i]);
+      _singleValueDictIds[i] = blockValueSet.getDictionaryIdsSV();
     }
 
-    _rawKeyHolder.processSingleValue(transformBlock.getNumDocs(), outGroupIds);
+    _rawKeyHolder.processSingleValue(transformBlock.getNumDocs(), groupKeys);
   }
 
-  /**
-   * {@inheritDoc}
-   */
   @Override
-  public void generateKeysForBlock(TransformBlock transformBlock, int[][] outGroupIds) {
-    int length = transformBlock.getNumDocs();
-    int[] docIdSet = transformBlock.getDocIdSetBlock().getDocIdSet();
-
-    for (int i = 0; i < _numGroupByColumns; i++) {
-      BlockValSet blockValueSet = transformBlock.getBlockValueSet(_groupByColumns[i]);
+  public void generateKeysForBlock(@Nonnull TransformBlock transformBlock, @Nonnull int[][] groupKeys) {
+    // Fetch dictionary ids in the given block for all group-by columns
+    for (int i = 0; i < _numGroupByExpressions; i++) {
+      BlockValSet blockValueSet = transformBlock.getBlockValueSet(_groupByExpressions[i]);
       if (_isSingleValueColumn[i]) {
-        // Fetch dictionary ids in the given block for all single value group-by columns
-        _singleValueDictIds[i] = blockValueSet.getDictionaryIds();
+        _singleValueDictIds[i] = blockValueSet.getDictionaryIdsSV();
       } else {
-        // Cache block value set for all multi-value group-by columns
-        _blockValSets[i] = blockValueSet;
+        _multiValueDictIds[i] = blockValueSet.getDictionaryIdsMV();
       }
     }
 
-    for (int i = 0; i < length; i++) {
-      int docId = docIdSet[i];
-      for (int j = 0; j < _numGroupByColumns; j++) {
-        if (!_isSingleValueColumn[j]) {
-          _numValues[j] = _blockValSets[j].getDictionaryIdsForDocId(docId, _multiValueDictIds[j]);
-        }
-      }
-      outGroupIds[i] = _rawKeyHolder.processMultiValue(i);
-    }
+    _rawKeyHolder.processMultiValue(transformBlock.getNumDocs(), groupKeys);
   }
 
-  /**
-   * {@inheritDoc}
-   */
   @Override
   public int getCurrentGroupKeyUpperBound() {
     return _rawKeyHolder.getGroupIdUpperBound();
   }
 
-  /**
-   * {@inheritDoc}
-   */
   @Override
   public Iterator<GroupKey> getUniqueGroupKeys() {
     return _rawKeyHolder.iterator();
   }
 
-  /**
-   * {@inheritDoc}
-   */
   @Override
-  public void purgeKeys(int[] keyIdsToPurge) {
+  public void purgeKeys(@Nonnull int[] keyIdsToPurge) {
     // TODO: Make trimming work
   }
 
   private interface RawKeyHolder extends Iterable<GroupKey> {
 
     /**
-     * Process a block of documents for all single-value group-by columns case.
+     * Process a block of documents for all single-valued group-by columns case.
      *
      * @param numDocs Number of documents inside the block
      * @param outGroupIds Buffer for group id results
@@ -240,13 +194,12 @@ public class DictionaryBasedGroupKeyGenerator implements GroupKeyGenerator {
     void processSingleValue(int numDocs, @Nonnull int[] outGroupIds);
 
     /**
-     * Process a single document for case with multi-value group-by columns.
+     * Process a block of documents for case with multi-valued group-by columns.
      *
-     * @param index Index in block
-     * @return Array of group ids for the given document id
+     * @param numDocs Number of documents inside the block
+     * @param outGroupIds Buffer for group id results
      */
-    @Nonnull
-    int[] processMultiValue(int index);
+    void processMultiValue(int numDocs, @Nonnull int[][] outGroupIds);
 
     /**
      * Get the upper bound of group id (exclusive) inside the holder.
@@ -264,7 +217,7 @@ public class DictionaryBasedGroupKeyGenerator implements GroupKeyGenerator {
     public void processSingleValue(int numDocs, @Nonnull int[] outGroupIds) {
       for (int i = 0; i < numDocs; i++) {
         int groupId = 0;
-        for (int j = _numGroupByColumns - 1; j >= 0; j--) {
+        for (int j = _numGroupByExpressions - 1; j >= 0; j--) {
           groupId = groupId * _cardinalities[j] + _singleValueDictIds[j][i];
         }
         outGroupIds[i] = groupId;
@@ -272,14 +225,15 @@ public class DictionaryBasedGroupKeyGenerator implements GroupKeyGenerator {
       }
     }
 
-    @Nonnull
     @Override
-    public int[] processMultiValue(int index) {
-      int[] groupIds = getIntRawKeys(index);
-      for (int groupId : groupIds) {
-        _flags[groupId] = true;
+    public void processMultiValue(int numDocs, @Nonnull int[][] outGroupIds) {
+      for (int i = 0; i < numDocs; i++) {
+        int[] groupIds = getIntRawKeys(i);
+        for (int groupId : groupIds) {
+          _flags[groupId] = true;
+        }
+        outGroupIds[i] = groupIds;
       }
-      return groupIds;
     }
 
     @Override
@@ -332,25 +286,23 @@ public class DictionaryBasedGroupKeyGenerator implements GroupKeyGenerator {
     public void processSingleValue(int numDocs, @Nonnull int[] outGroupIds) {
       for (int i = 0; i < numDocs; i++) {
         int rawKey = 0;
-        for (int j = _numGroupByColumns - 1; j >= 0; j--) {
+        for (int j = _numGroupByExpressions - 1; j >= 0; j--) {
           rawKey = rawKey * _cardinalities[j] + _singleValueDictIds[j][i];
         }
         outGroupIds[i] = getGroupId(rawKey);
       }
     }
 
-    @Nonnull
     @Override
-    public int[] processMultiValue(int index) {
-      int[] groupIds = getIntRawKeys(index);
-
-      // Convert raw keys to group ids
-      int length = groupIds.length;
-      for (int i = 0; i < length; i++) {
-        groupIds[i] = getGroupId(groupIds[i]);
+    public void processMultiValue(int numDocs, @Nonnull int[][] outGroupIds) {
+      for (int i = 0; i < numDocs; i++) {
+        int[] groupIds = getIntRawKeys(i);
+        int length = groupIds.length;
+        for (int j = 0; j < length; j++) {
+          groupIds[j] = getGroupId(groupIds[j]);
+        }
+        outGroupIds[i] = groupIds;
       }
-
-      return groupIds;
     }
 
     private int getGroupId(int rawKey) {
@@ -406,26 +358,16 @@ public class DictionaryBasedGroupKeyGenerator implements GroupKeyGenerator {
     int[] rawKeys = null;
 
     // Specialize single multi-value group-by column case
-    if (_numGroupByColumns == 1) {
-      rawKeys = Arrays.copyOf(_multiValueDictIds[0], _numValues[0]);
+    if (_numGroupByExpressions == 1) {
+      rawKeys = _multiValueDictIds[0][index];
     } else {
       // Before having to transform to array, use single value raw key for better performance
       int rawKey = 0;
 
-      for (int i = _numGroupByColumns - 1; i >= 0; i--) {
+      for (int i = _numGroupByExpressions - 1; i >= 0; i--) {
         int cardinality = _cardinalities[i];
-        boolean isSingleValueColumn = _isSingleValueColumn[i];
-        int numValues = _numValues[i];
-        int[] multiValueDictIds = _multiValueDictIds[i];
-
-        // Specialize multi-value column with only one value inside
-        if (isSingleValueColumn || numValues == 1) {
-          int dictId;
-          if (isSingleValueColumn) {
-            dictId = _singleValueDictIds[i][index];
-          } else {
-            dictId = multiValueDictIds[0];
-          }
+        if (_isSingleValueColumn[i]) {
+          int dictId = _singleValueDictIds[i][index];
           if (rawKeys == null) {
             rawKey = rawKey * cardinality + dictId;
           } else {
@@ -435,26 +377,42 @@ public class DictionaryBasedGroupKeyGenerator implements GroupKeyGenerator {
             }
           }
         } else {
-          if (rawKeys == null) {
-            rawKeys = new int[numValues];
-            for (int j = 0; j < numValues; j++) {
-              int dictId = multiValueDictIds[j];
-              rawKeys[j] = rawKey * cardinality + dictId;
-            }
-          } else {
-            int currentLength = rawKeys.length;
-            int newLength = currentLength * numValues;
-            int[] newRawKeys = new int[newLength];
-            for (int j = 0; j < numValues; j++) {
-              int startOffset = j * currentLength;
-              System.arraycopy(rawKeys, 0, newRawKeys, startOffset, currentLength);
-              int dictId = multiValueDictIds[j];
-              int endOffset = startOffset + currentLength;
-              for (int k = startOffset; k < endOffset; k++) {
-                newRawKeys[k] = newRawKeys[k] * cardinality + dictId;
+          int[] multiValueDictIds = _multiValueDictIds[i][index];
+          int numValues = multiValueDictIds.length;
+
+          // Specialize multi-value column with only one value inside
+          if (numValues == 1) {
+            int dictId = multiValueDictIds[0];
+            if (rawKeys == null) {
+              rawKey = rawKey * cardinality + dictId;
+            } else {
+              int length = rawKeys.length;
+              for (int j = 0; j < length; j++) {
+                rawKeys[j] = rawKeys[j] * cardinality + dictId;
               }
             }
-            rawKeys = newRawKeys;
+          } else {
+            if (rawKeys == null) {
+              rawKeys = new int[numValues];
+              for (int j = 0; j < numValues; j++) {
+                int dictId = multiValueDictIds[j];
+                rawKeys[j] = rawKey * cardinality + dictId;
+              }
+            } else {
+              int currentLength = rawKeys.length;
+              int newLength = currentLength * numValues;
+              int[] newRawKeys = new int[newLength];
+              for (int j = 0; j < numValues; j++) {
+                int startOffset = j * currentLength;
+                System.arraycopy(rawKeys, 0, newRawKeys, startOffset, currentLength);
+                int dictId = multiValueDictIds[j];
+                int endOffset = startOffset + currentLength;
+                for (int k = startOffset; k < endOffset; k++) {
+                  newRawKeys[k] = newRawKeys[k] * cardinality + dictId;
+                }
+              }
+              rawKeys = newRawKeys;
+            }
           }
         }
       }
@@ -475,13 +433,13 @@ public class DictionaryBasedGroupKeyGenerator implements GroupKeyGenerator {
    */
   private String getGroupKey(int rawKey) {
     // Specialize single group-by column case
-    if (_numGroupByColumns == 1) {
+    if (_numGroupByExpressions == 1) {
       return _dictionaries[0].get(rawKey).toString();
     } else {
       int cardinality = _cardinalities[0];
       StringBuilder groupKeyBuilder = new StringBuilder(_dictionaries[0].get(rawKey % cardinality).toString());
       rawKey /= cardinality;
-      for (int i = 1; i < _numGroupByColumns; i++) {
+      for (int i = 1; i < _numGroupByExpressions; i++) {
         groupKeyBuilder.append(AggregationGroupByTrimmingService.GROUP_KEY_DELIMITER);
         cardinality = _cardinalities[i];
         groupKeyBuilder.append(_dictionaries[i].get(rawKey % cardinality));
@@ -502,23 +460,24 @@ public class DictionaryBasedGroupKeyGenerator implements GroupKeyGenerator {
     public void processSingleValue(int numDocs, @Nonnull int[] outGroupIds) {
       for (int i = 0; i < numDocs; i++) {
         long rawKey = 0L;
-        for (int j = _numGroupByColumns - 1; j >= 0; j--) {
+        for (int j = _numGroupByExpressions - 1; j >= 0; j--) {
           rawKey = rawKey * _cardinalities[j] + _singleValueDictIds[j][i];
         }
         outGroupIds[i] = getGroupId(rawKey);
       }
     }
 
-    @Nonnull
     @Override
-    public int[] processMultiValue(int index) {
-      long[] rawKeys = getLongRawKeys(index);
-      int length = rawKeys.length;
-      int[] groupIds = new int[length];
-      for (int i = 0; i < length; i++) {
-        groupIds[i] = getGroupId(rawKeys[i]);
+    public void processMultiValue(int numDocs, @Nonnull int[][] outGroupIds) {
+      for (int i = 0; i < numDocs; i++) {
+        long[] rawKeys = getLongRawKeys(i);
+        int length = rawKeys.length;
+        int[] groupIds = new int[length];
+        for (int j = 0; j < length; j++) {
+          groupIds[j] = getGroupId(rawKeys[j]);
+        }
+        outGroupIds[i] = groupIds;
       }
-      return groupIds;
     }
 
     private int getGroupId(long rawKey) {
@@ -577,20 +536,10 @@ public class DictionaryBasedGroupKeyGenerator implements GroupKeyGenerator {
     // Before having to transform to array, use single value raw key for better performance
     long rawKey = 0;
 
-    for (int i = _numGroupByColumns - 1; i >= 0; i--) {
+    for (int i = _numGroupByExpressions - 1; i >= 0; i--) {
       int cardinality = _cardinalities[i];
-      boolean isSingleValueColumn = _isSingleValueColumn[i];
-      int numValues = _numValues[i];
-      int[] multiValueDictIds = _multiValueDictIds[i];
-
-      // Specialize multi-value column with only one value inside
-      if (isSingleValueColumn || numValues == 1) {
-        int dictId;
-        if (isSingleValueColumn) {
-          dictId = _singleValueDictIds[i][index];
-        } else {
-          dictId = multiValueDictIds[0];
-        }
+      if (_isSingleValueColumn[i]) {
+        int dictId = _singleValueDictIds[i][index];
         if (rawKeys == null) {
           rawKey = rawKey * cardinality + dictId;
         } else {
@@ -600,26 +549,42 @@ public class DictionaryBasedGroupKeyGenerator implements GroupKeyGenerator {
           }
         }
       } else {
-        if (rawKeys == null) {
-          rawKeys = new long[numValues];
-          for (int j = 0; j < numValues; j++) {
-            int dictId = multiValueDictIds[j];
-            rawKeys[j] = rawKey * cardinality + dictId;
-          }
-        } else {
-          int currentLength = rawKeys.length;
-          int newLength = currentLength * numValues;
-          long[] newRawKeys = new long[newLength];
-          for (int j = 0; j < numValues; j++) {
-            int startOffset = j * currentLength;
-            System.arraycopy(rawKeys, 0, newRawKeys, startOffset, currentLength);
-            int dictId = multiValueDictIds[j];
-            int endOffset = startOffset + currentLength;
-            for (int k = startOffset; k < endOffset; k++) {
-              newRawKeys[k] = newRawKeys[k] * cardinality + dictId;
+        int[] multiValueDictIds = _multiValueDictIds[i][index];
+        int numValues = multiValueDictIds.length;
+
+        // Specialize multi-value column with only one value inside
+        if (numValues == 1) {
+          int dictId = multiValueDictIds[0];
+          if (rawKeys == null) {
+            rawKey = rawKey * cardinality + dictId;
+          } else {
+            int length = rawKeys.length;
+            for (int j = 0; j < length; j++) {
+              rawKeys[j] = rawKeys[j] * cardinality + dictId;
             }
           }
-          rawKeys = newRawKeys;
+        } else {
+          if (rawKeys == null) {
+            rawKeys = new long[numValues];
+            for (int j = 0; j < numValues; j++) {
+              int dictId = multiValueDictIds[j];
+              rawKeys[j] = rawKey * cardinality + dictId;
+            }
+          } else {
+            int currentLength = rawKeys.length;
+            int newLength = currentLength * numValues;
+            long[] newRawKeys = new long[newLength];
+            for (int j = 0; j < numValues; j++) {
+              int startOffset = j * currentLength;
+              System.arraycopy(rawKeys, 0, newRawKeys, startOffset, currentLength);
+              int dictId = multiValueDictIds[j];
+              int endOffset = startOffset + currentLength;
+              for (int k = startOffset; k < endOffset; k++) {
+                newRawKeys[k] = newRawKeys[k] * cardinality + dictId;
+              }
+            }
+            rawKeys = newRawKeys;
+          }
         }
       }
     }
@@ -641,7 +606,7 @@ public class DictionaryBasedGroupKeyGenerator implements GroupKeyGenerator {
     int cardinality = _cardinalities[0];
     StringBuilder groupKeyBuilder = new StringBuilder(_dictionaries[0].get((int) (rawKey % cardinality)).toString());
     rawKey /= cardinality;
-    for (int i = 1; i < _numGroupByColumns; i++) {
+    for (int i = 1; i < _numGroupByExpressions; i++) {
       groupKeyBuilder.append(AggregationGroupByTrimmingService.GROUP_KEY_DELIMITER);
       cardinality = _cardinalities[i];
       groupKeyBuilder.append(_dictionaries[i].get((int) (rawKey % cardinality)));
@@ -660,24 +625,25 @@ public class DictionaryBasedGroupKeyGenerator implements GroupKeyGenerator {
     @Override
     public void processSingleValue(int numDocs, @Nonnull int[] outGroupIds) {
       for (int i = 0; i < numDocs; i++) {
-        int[] dictIds = new int[_numGroupByColumns];
-        for (int j = 0; j < _numGroupByColumns; j++) {
+        int[] dictIds = new int[_numGroupByExpressions];
+        for (int j = 0; j < _numGroupByExpressions; j++) {
           dictIds[j] = _singleValueDictIds[j][i];
         }
         outGroupIds[i] = getGroupId(new IntArray(dictIds));
       }
     }
 
-    @Nonnull
     @Override
-    public int[] processMultiValue(int index) {
-      IntArray[] rawKeys = getIntArrayRawKeys(index);
-      int length = rawKeys.length;
-      int[] groupIds = new int[length];
-      for (int i = 0; i < length; i++) {
-        groupIds[i] = getGroupId(rawKeys[i]);
+    public void processMultiValue(int numDocs, @Nonnull int[][] outGroupIds) {
+      for (int i = 0; i < numDocs; i++) {
+        IntArray[] rawKeys = getIntArrayRawKeys(i);
+        int length = rawKeys.length;
+        int[] groupIds = new int[length];
+        for (int j = 0; j < length; j++) {
+          groupIds[j] = getGroupId(rawKeys[j]);
+        }
+        outGroupIds[i] = groupIds;
       }
-      return groupIds;
     }
 
     private int getGroupId(IntArray rawKey) {
@@ -734,21 +700,11 @@ public class DictionaryBasedGroupKeyGenerator implements GroupKeyGenerator {
     IntArray[] rawKeys = null;
 
     // Before having to transform to array, use single value raw key for better performance
-    int[] dictIds = new int[_numGroupByColumns];
+    int[] dictIds = new int[_numGroupByExpressions];
 
-    for (int i = 0; i < _numGroupByColumns; i++) {
-      boolean isSingleValueColumn = _isSingleValueColumn[i];
-      int numValues = _numValues[i];
-      int[] multiValueDictIds = _multiValueDictIds[i];
-
-      // Specialize multi-value column with only one value inside
-      if (isSingleValueColumn || numValues == 1) {
-        int dictId;
-        if (isSingleValueColumn) {
-          dictId = _singleValueDictIds[i][index];
-        } else {
-          dictId = multiValueDictIds[0];
-        }
+    for (int i = 0; i < _numGroupByExpressions; i++) {
+      if (_isSingleValueColumn[i]) {
+        int dictId = _singleValueDictIds[i][index];
         if (rawKeys == null) {
           dictIds[i] = dictId;
         } else {
@@ -757,33 +713,48 @@ public class DictionaryBasedGroupKeyGenerator implements GroupKeyGenerator {
           }
         }
       } else {
-        if (rawKeys == null) {
-          rawKeys = new IntArray[numValues];
-          for (int j = 0; j < numValues; j++) {
-            int dictId = multiValueDictIds[j];
-            rawKeys[j] = new IntArray(dictIds.clone());
-            rawKeys[j]._elements[i] = dictId;
+        int[] multiValueDictIds = _multiValueDictIds[i][index];
+        int numValues = multiValueDictIds.length;
+
+        // Specialize multi-value column with only one value inside
+        if (numValues == 1) {
+          int dictId = multiValueDictIds[0];
+          if (rawKeys == null) {
+            dictIds[i] = dictId;
+          } else {
+            for (IntArray rawKey : rawKeys) {
+              rawKey._elements[i] = dictId;
+            }
           }
         } else {
-          int currentLength = rawKeys.length;
-          int newLength = currentLength * numValues;
-          IntArray[] newRawKeys = new IntArray[newLength];
-          System.arraycopy(rawKeys, 0, newRawKeys, 0, currentLength);
-          for (int j = 1; j < numValues; j++) {
-            int offset = j * currentLength;
-            for (int k = 0; k < currentLength; k++) {
-              newRawKeys[offset + k] = new IntArray(rawKeys[k]._elements.clone());
+          if (rawKeys == null) {
+            rawKeys = new IntArray[numValues];
+            for (int j = 0; j < numValues; j++) {
+              int dictId = multiValueDictIds[j];
+              rawKeys[j] = new IntArray(dictIds.clone());
+              rawKeys[j]._elements[i] = dictId;
             }
-          }
-          for (int j = 0; j < numValues; j++) {
-            int startOffset = j * currentLength;
-            int dictId = multiValueDictIds[j];
-            int endOffset = startOffset + currentLength;
-            for (int k = startOffset; k < endOffset; k++) {
-              newRawKeys[k]._elements[i] = dictId;
+          } else {
+            int currentLength = rawKeys.length;
+            int newLength = currentLength * numValues;
+            IntArray[] newRawKeys = new IntArray[newLength];
+            System.arraycopy(rawKeys, 0, newRawKeys, 0, currentLength);
+            for (int j = 1; j < numValues; j++) {
+              int offset = j * currentLength;
+              for (int k = 0; k < currentLength; k++) {
+                newRawKeys[offset + k] = new IntArray(rawKeys[k]._elements.clone());
+              }
             }
+            for (int j = 0; j < numValues; j++) {
+              int startOffset = j * currentLength;
+              int dictId = multiValueDictIds[j];
+              int endOffset = startOffset + currentLength;
+              for (int k = startOffset; k < endOffset; k++) {
+                newRawKeys[k]._elements[i] = dictId;
+              }
+            }
+            rawKeys = newRawKeys;
           }
-          rawKeys = newRawKeys;
         }
       }
     }
@@ -803,7 +774,7 @@ public class DictionaryBasedGroupKeyGenerator implements GroupKeyGenerator {
    */
   private String getGroupKey(IntArray rawKey) {
     StringBuilder groupKeyBuilder = new StringBuilder(_dictionaries[0].get(rawKey._elements[0]).toString());
-    for (int i = 1; i < _numGroupByColumns; i++) {
+    for (int i = 1; i < _numGroupByExpressions; i++) {
       groupKeyBuilder.append(AggregationGroupByTrimmingService.GROUP_KEY_DELIMITER);
       groupKeyBuilder.append(_dictionaries[i].get(rawKey._elements[i]));
     }

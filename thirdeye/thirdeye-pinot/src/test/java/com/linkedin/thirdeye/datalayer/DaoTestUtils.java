@@ -10,6 +10,8 @@ import com.linkedin.thirdeye.alert.commons.AnomalySource;
 import com.linkedin.thirdeye.anomaly.job.JobConstants;
 import com.linkedin.thirdeye.anomaly.override.OverrideConfigHelper;
 import com.linkedin.thirdeye.anomaly.task.TaskConstants;
+import com.linkedin.thirdeye.anomalydetection.context.AnomalyResult;
+import com.linkedin.thirdeye.anomalydetection.context.RawAnomalyResult;
 import com.linkedin.thirdeye.anomalydetection.performanceEvaluation.PerformanceEvaluationMethod;
 import com.linkedin.thirdeye.api.DimensionMap;
 import com.linkedin.thirdeye.api.MetricType;
@@ -60,9 +62,10 @@ public class DaoTestUtils {
     functionSpec.setWindowDelayUnit(TimeUnit.HOURS);
     functionSpec.setWindowSize(1);
     functionSpec.setWindowUnit(TimeUnit.DAYS);
-    functionSpec.setProperties("baseline=w/w;changeThreshold=0.001");
+    functionSpec.setProperties("baseline=w/w;changeThreshold=0.001;min=100;max=900");
     functionSpec.setIsActive(true);
     functionSpec.setRequiresCompletenessCheck(false);
+    functionSpec.setSecondaryAnomalyFunctionsType(Arrays.asList("MIN_MAX_THRESHOLD"));
     return functionSpec;
   }
 
@@ -81,6 +84,7 @@ public class DaoTestUtils {
     AlertConfigDTO alertConfigDTO = new AlertConfigDTO();
     alertConfigDTO.setName(name);
     alertConfigDTO.setActive(true);
+    alertConfigDTO.setApplication("test");
     alertConfigDTO.setFromAddress("te@linkedin.com");
     alertConfigDTO.setRecipients("anomaly@linedin.com");
     alertConfigDTO.setCronExpression("0/10 * * * * ?");
@@ -103,8 +107,8 @@ public class DaoTestUtils {
     return configDTO;
   }
 
-  public static RawAnomalyResultDTO getAnomalyResult() {
-    RawAnomalyResultDTO anomalyResult = new RawAnomalyResultDTO();
+  public static AnomalyResult getAnomalyResult() {
+    AnomalyResult anomalyResult = new RawAnomalyResult();
     anomalyResult.setScore(1.1);
     anomalyResult.setStartTime(System.currentTimeMillis());
     anomalyResult.setEndTime(System.currentTimeMillis());
@@ -112,7 +116,6 @@ public class DaoTestUtils {
     DimensionMap dimensionMap = new DimensionMap();
     dimensionMap.put("dimensionName", "dimensionValue");
     anomalyResult.setDimensions(dimensionMap);
-    anomalyResult.setCreationTimeUtc(System.currentTimeMillis());
     return anomalyResult;
   }
 

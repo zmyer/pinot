@@ -22,6 +22,8 @@ import com.google.common.base.Splitter;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.util.concurrent.Uninterruptibles;
+import com.linkedin.pinot.core.realtime.stream.MessageBatch;
+import com.linkedin.pinot.core.realtime.stream.PinotStreamConsumer;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -51,7 +53,7 @@ import org.slf4j.LoggerFactory;
 /**
  * Wrapper for Kafka's SimpleConsumer which ensures that we're connected to the appropriate broker for consumption.
  */
-public class SimpleConsumerWrapper implements PinotKafkaConsumer {
+public class SimpleConsumerWrapper implements PinotStreamConsumer {
   private static final Logger LOGGER = LoggerFactory.getLogger(SimpleConsumerWrapper.class);
   private static final int SOCKET_TIMEOUT_MILLIS = 10000;
   private static final int SOCKET_BUFFER_SIZE = 512000;
@@ -175,8 +177,8 @@ public class SimpleConsumerWrapper implements PinotKafkaConsumer {
     void handleConsumerException(Exception e) {
       // By default, just log the exception and switch back to CONNECTING_TO_BOOTSTRAP_NODE (which will take care of
       // closing the connection if it exists)
-      LOGGER.warn("Caught Kafka consumer exception while in state {}, disconnecting and trying again",
-          _currentState.getStateValue(), e);
+      LOGGER.warn("Caught Kafka consumer exception while in state {}, disconnecting and trying again for topic {}",
+          _currentState.getStateValue(), _topic, e);
 
       Uninterruptibles.sleepUninterruptibly(250, TimeUnit.MILLISECONDS);
 
@@ -200,7 +202,7 @@ public class SimpleConsumerWrapper implements PinotKafkaConsumer {
         try {
           _simpleConsumer.close();
         } catch (Exception e) {
-          LOGGER.warn("Caught exception while closing consumer, ignoring", e);
+          LOGGER.warn("Caught exception while closing consumer for topic {}, ignoring", _topic, e);
         }
       }
 
@@ -209,7 +211,7 @@ public class SimpleConsumerWrapper implements PinotKafkaConsumer {
       _currentPort = _bootstrapPorts[randomHostIndex];
 
       try {
-        LOGGER.info("Connecting to bootstrap host {}:{}", _currentHost, _currentPort);
+        LOGGER.info("Connecting to bootstrap host {}:{} for topic {}", _currentHost, _currentPort, _topic);
         _simpleConsumer = _simpleConsumerFactory.buildSimpleConsumer(_currentHost, _currentPort, SOCKET_TIMEOUT_MILLIS,
             SOCKET_BUFFER_SIZE, _clientId);
         setCurrentState(new ConnectedToBootstrapNode());
@@ -268,18 +270,18 @@ public class SimpleConsumerWrapper implements PinotKafkaConsumer {
 
           // If we've located a broker
           if (_leader != null) {
-            LOGGER.info("Located leader broker {}, connecting to it.", _leader);
+            LOGGER.info("Located leader broker {} for topic {}, connecting to it.", _leader, _topic);
             setCurrentState(new ConnectingToPartitionLeader());
           } else {
             // Failed to get the leader broker. There could be a leader election at the moment, so retry after a little
             // bit.
-            LOGGER.warn("Leader broker is null, retrying leader fetch in 100ms");
+            LOGGER.warn("Leader broker is null for topic {}, retrying leader fetch in 100ms", _topic);
             Uninterruptibles.sleepUninterruptibly(100, TimeUnit.MILLISECONDS);
           }
         } catch (Exception e) {
           // Failed to get the leader broker. There could be a leader election at the moment, so retry after a little
           // bit.
-          LOGGER.warn("Failed to get the leader broker due to exception, retrying in 100ms", e);
+          LOGGER.warn("Failed to get the leader broker for topic {} due to exception, retrying in 100ms", _topic, e);
           Uninterruptibles.sleepUninterruptibly(100, TimeUnit.MILLISECONDS);
         }
       } catch (Exception e) {
@@ -301,7 +303,7 @@ public class SimpleConsumerWrapper implements PinotKafkaConsumer {
     @Override
     void process() {
       // If we're already connected to the leader broker, don't disconnect and reconnect
-      LOGGER.info("Trying to fetch leader host and port: {}:{}", _leader.host(), _leader.port());
+      LOGGER.info("Trying to fetch leader host and port: {}:{} for topic {}", _leader.host(), _leader.port(), _topic);
       if (_leader.host().equals(_currentHost) && _leader.port() == _currentPort) {
         setCurrentState(new ConnectedToPartitionLeader());
         return;
@@ -354,7 +356,8 @@ public class SimpleConsumerWrapper implements PinotKafkaConsumer {
 
   private void setCurrentState(State newState) {
     if (_currentState != null) {
-      LOGGER.info("Switching from state {} to state {}", _currentState.getStateValue(), newState.getStateValue());
+      LOGGER.info("Switching from state {} to state {} for topic {}",
+          _currentState.getStateValue(), newState.getStateValue(), _topic);
     }
 
     _currentState = newState;

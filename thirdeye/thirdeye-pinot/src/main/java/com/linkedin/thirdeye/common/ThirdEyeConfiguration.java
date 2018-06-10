@@ -1,6 +1,8 @@
 package com.linkedin.thirdeye.common;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.linkedin.thirdeye.anomaly.SmtpConfiguration;
+import io.federecio.dropwizard.swagger.SwaggerBundleConfiguration;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.util.ArrayList;
@@ -19,6 +21,9 @@ public class ThirdEyeConfiguration extends Configuration {
 
   private String dashboardHost;
   private SmtpConfiguration smtpConfiguration;
+
+  @JsonProperty("swagger")
+  public SwaggerBundleConfiguration swaggerBundleConfiguration;
 
   private String phantomJsPath = "";
   private String failureFromAddress;
@@ -105,6 +110,10 @@ public class ThirdEyeConfiguration extends Configuration {
     return getRootDir() + "/detector-config/anomaly-functions/anomalyClassifier.properties";
   }
 
+  public String getCalendarApiKeyPath(){
+    return getRootDir() + "/holiday-loader-key.json";
+  }
+
   public void setSmtpConfiguration(SmtpConfiguration smtpConfiguration) {
     this.smtpConfiguration = smtpConfiguration;
   }
@@ -148,4 +157,5 @@ public class ThirdEyeConfiguration extends Configuration {
   public void setDataSources(String dataSources) {
     this.dataSources = dataSources;
   }
+
 }

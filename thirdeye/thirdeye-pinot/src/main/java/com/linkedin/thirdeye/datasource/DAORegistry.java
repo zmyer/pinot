@@ -20,6 +20,7 @@ import com.linkedin.thirdeye.datalayer.bao.OnboardDatasetMetricManager;
 import com.linkedin.thirdeye.datalayer.bao.OverrideConfigManager;
 import com.linkedin.thirdeye.datalayer.bao.RawAnomalyResultManager;
 import com.linkedin.thirdeye.datalayer.bao.RootcauseSessionManager;
+import com.linkedin.thirdeye.datalayer.bao.SessionManager;
 import com.linkedin.thirdeye.datalayer.bao.TaskManager;
 import com.linkedin.thirdeye.datalayer.bao.jdbc.AlertConfigManagerImpl;
 import com.linkedin.thirdeye.datalayer.bao.jdbc.AlertSnapshotManagerImpl;
@@ -41,6 +42,7 @@ import com.linkedin.thirdeye.datalayer.bao.jdbc.OnboardDatasetMetricManagerImpl;
 import com.linkedin.thirdeye.datalayer.bao.jdbc.OverrideConfigManagerImpl;
 import com.linkedin.thirdeye.datalayer.bao.jdbc.RawAnomalyResultManagerImpl;
 import com.linkedin.thirdeye.datalayer.bao.jdbc.RootcauseSessionManagerImpl;
+import com.linkedin.thirdeye.datalayer.bao.jdbc.SessionManagerImpl;
 import com.linkedin.thirdeye.datalayer.bao.jdbc.TaskManagerImpl;
 import com.linkedin.thirdeye.datalayer.util.DaoProviderUtil;
 
@@ -58,18 +60,6 @@ public class DAORegistry {
   public static DAORegistry getInstance() {
     return INSTANCE;
   }
-
-  /**
-   * **USE FOR TESTING ONLY**
-   * Return a DAO registry for testing purpose, which may be performed in arbitrary order and
-   * hence need independent registry for each test.
-   *
-   * @return an independent DAO registry to the global singleton registry.
-   */
-  public static DAORegistry getTestInstance() {
-    return new DAORegistry();
-  }
-
 
 
   /**
@@ -163,5 +153,9 @@ public class DAORegistry {
 
   public RootcauseSessionManager getRootcauseSessionDAO() {
     return DaoProviderUtil.getInstance(RootcauseSessionManagerImpl.class);
+  }
+
+  public SessionManager getSessionDAO() {
+    return DaoProviderUtil.getInstance(SessionManagerImpl.class);
   }
 }

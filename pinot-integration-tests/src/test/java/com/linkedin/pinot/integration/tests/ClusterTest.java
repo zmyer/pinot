@@ -33,10 +33,11 @@ import com.linkedin.pinot.controller.helix.ControllerTest;
 import com.linkedin.pinot.core.data.GenericRow;
 import com.linkedin.pinot.core.indexsegment.generator.SegmentVersion;
 import com.linkedin.pinot.core.realtime.impl.kafka.AvroRecordToPinotRowGenerator;
-import com.linkedin.pinot.core.realtime.impl.kafka.KafkaMessageDecoder;
+import com.linkedin.pinot.core.realtime.stream.StreamMessageDecoder;
 import com.linkedin.pinot.core.util.AvroUtils;
 import com.linkedin.pinot.minion.MinionStarter;
-import com.linkedin.pinot.minion.executor.PinotTaskExecutor;
+import com.linkedin.pinot.minion.events.MinionEventObserverFactory;
+import com.linkedin.pinot.minion.executor.PinotTaskExecutorFactory;
 import com.linkedin.pinot.server.starter.helix.DefaultHelixStarterServerConfig;
 import com.linkedin.pinot.server.starter.helix.HelixServerStarter;
 import java.io.File;
@@ -150,11 +151,12 @@ public abstract class ClusterTest extends ControllerTest {
   }
 
   protected void startMinion() {
-    startMinions(1, null);
+    startMinions(1, null, null);
   }
 
   protected void startMinions(int minionCount,
-      @Nullable Map<String, Class<? extends PinotTaskExecutor>> taskExecutorsToRegister) {
+      @Nullable Map<String, PinotTaskExecutorFactory> taskExecutorFactoryRegistry,
+      @Nullable Map<String, MinionEventObserverFactory> eventObserverFactoryRegistry) {
     try {
       for (int i = 0; i < minionCount; i++) {
         Configuration config = new PropertiesConfiguration();
@@ -163,10 +165,17 @@ public abstract class ClusterTest extends ControllerTest {
         config.setProperty(Helix.Instance.DATA_DIR_KEY, Minion.DEFAULT_INSTANCE_DATA_DIR + "-" + i);
         MinionStarter minionStarter = new MinionStarter(ZkStarter.DEFAULT_ZK_STR, _clusterName, config);
 
-        // Register plug-in task executors
-        if (taskExecutorsToRegister != null) {
-          for (Map.Entry<String, Class<? extends PinotTaskExecutor>> entry : taskExecutorsToRegister.entrySet()) {
-            minionStarter.registerTaskExecutorClass(entry.getKey(), entry.getValue());
+        // Register task executor factories
+        if (taskExecutorFactoryRegistry != null) {
+          for (Map.Entry<String, PinotTaskExecutorFactory> entry : taskExecutorFactoryRegistry.entrySet()) {
+            minionStarter.registerTaskExecutorFactory(entry.getKey(), entry.getValue());
+          }
+        }
+
+        // Register event observer factories
+        if (eventObserverFactoryRegistry != null) {
+          for (Map.Entry<String, MinionEventObserverFactory> entry : eventObserverFactoryRegistry.entrySet()) {
+            minionStarter.registerEventObserverFactory(entry.getKey(), entry.getValue());
           }
         }
 
@@ -292,7 +301,7 @@ public abstract class ClusterTest extends ControllerTest {
         _controllerRequestURLBuilder.forTableDelete(TableNameBuilder.OFFLINE.tableNameWithType(tableName)));
   }
 
-  public static class AvroFileSchemaKafkaAvroMessageDecoder implements KafkaMessageDecoder<byte[]> {
+  public static class AvroFileSchemaKafkaAvroMessageDecoder implements StreamMessageDecoder<byte[]> {
     private static final Logger LOGGER = LoggerFactory.getLogger(AvroFileSchemaKafkaAvroMessageDecoder.class);
     public static File avroFile;
     private org.apache.avro.Schema _avroSchema;

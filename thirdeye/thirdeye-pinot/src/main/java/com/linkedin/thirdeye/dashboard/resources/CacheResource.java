@@ -1,5 +1,8 @@
 package com.linkedin.thirdeye.dashboard.resources;
 
+import com.linkedin.thirdeye.api.Constants;
+import com.wordnik.swagger.annotations.Api;
+import com.wordnik.swagger.annotations.ApiOperation;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -22,6 +25,7 @@ import org.slf4j.LoggerFactory;
 
 
 @Path("/cache")
+@Api(tags = { Constants.CACHE_TAG })
 @Produces(MediaType.APPLICATION_JSON)
 public class CacheResource {
   private static final Logger LOG = LoggerFactory.getLogger(CacheResource.class);
@@ -34,14 +38,12 @@ public class CacheResource {
   @Path(value = "/")
   @Produces(MediaType.TEXT_HTML)
   public String getCaches() {
-    LOG.warn("Call to a deprecated end point " + "/cache/ " + getClass().getName());
-
-
     return "usage";
   }
 
   @POST
   @Path("/refresh")
+  @ApiOperation(value = "Refresh all caches")
   public Response refreshAllCaches() {
 
     refreshDatasets();
@@ -55,10 +57,8 @@ public class CacheResource {
     return Response.ok().build();
   }
 
-
-  @POST
-  @Path("/refresh/maxDataTime")
   public Response refreshMaxDataTimeCache() {
+    // TODO: Clean deprecate endpoint called by our own code
     List<String> datasets = CACHE_INSTANCE.getDatasetsCache().getDatasets();
     final LoadingCache<String,Long> cache = CACHE_INSTANCE.getDatasetMaxDataTimeCache();
     for (final String dataset : datasets) {
@@ -111,9 +111,7 @@ public class CacheResource {
     return Response.ok().build();
   }
 
-
-  @POST
-  @Path("/refresh/filters")
+  // TODO: Clean deprecate endpoint called by our own code
   public Response refreshDimensionFiltersCache() {
     List<String> datasets = CACHE_INSTANCE.getDatasetsCache().getDatasets();
     final LoadingCache<String,String> cache = CACHE_INSTANCE.getDimensionFiltersCache();
@@ -129,9 +127,7 @@ public class CacheResource {
     return Response.ok().build();
   }
 
-
-  @POST
-  @Path("/refresh/collections")
+  // TODO: Clean deprecate endpoint called by our own code
   public Response refreshDatasets() {
     Response response = Response.ok().build();
     CACHE_INSTANCE.getDatasetsCache().loadDatasets();

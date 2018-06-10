@@ -14,7 +14,7 @@ import com.linkedin.thirdeye.datalayer.dto.MetricConfigDTO;
 import com.linkedin.thirdeye.datasource.DAORegistry;
 import com.linkedin.thirdeye.datasource.ThirdEyeCacheRegistry;
 import com.linkedin.thirdeye.rootcause.Entity;
-import com.linkedin.thirdeye.rootcause.impl.EntityUtils;
+import com.linkedin.thirdeye.rootcause.util.EntityUtils;
 import com.linkedin.thirdeye.rootcause.impl.MetricEntity;
 import com.linkedin.thirdeye.rootcause.impl.TimeRangeEntity;
 import java.util.HashMap;
@@ -99,7 +99,7 @@ public class MetricEntityFormatter extends RootCauseEntityFormatter {
 
     TimeRangeEntity range = estimateTimeRange(e);
     MetricSlice slice = MetricSlice.from(metric.getId(), range.getStart(), range.getEnd(), e.getFilters());
-    Map<String, String> externalUrls = ResourceUtils.getExternalURLs(slice, this.metricDAO);
+    Map<String, String> externalUrls = ResourceUtils.getExternalURLs(slice, this.metricDAO, this.datasetDAO);
 
     attributes.putAll(ATTR_EXTERNAL_URLS, externalUrls.keySet());
     for (Map.Entry<String, String> entry : externalUrls.entrySet()) {

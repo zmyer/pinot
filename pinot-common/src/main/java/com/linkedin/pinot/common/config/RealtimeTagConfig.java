@@ -15,10 +15,6 @@
  */
 package com.linkedin.pinot.common.config;
 
-import com.linkedin.pinot.common.utils.ControllerTenantNameBuilder;
-import org.apache.helix.HelixManager;
-
-
 /**
  * Wrapper class over TableConfig for a realtime table
  * This class will help answer questions about what are consuming/completed tags for a table
@@ -28,15 +24,25 @@ public class RealtimeTagConfig extends TagConfig {
   private String _consumingRealtimeServerTag;
   private String _completedRealtimeServerTag;
 
-  private boolean _moveCompletedSegments = false;
+  private boolean _relocateCompletedSegments = false;
 
-  public RealtimeTagConfig(TableConfig tableConfig, HelixManager helixManager) {
-    super(tableConfig, helixManager);
+  public RealtimeTagConfig(TableConfig tableConfig) {
+    super(tableConfig);
 
-    _consumingRealtimeServerTag = ControllerTenantNameBuilder.getRealtimeTenantNameForTenant(_serverTenant);
-    _completedRealtimeServerTag = ControllerTenantNameBuilder.getRealtimeTenantNameForTenant(_serverTenant);
+    TagOverrideConfig tagOverrideConfig = tableConfig.getTenantConfig().getTagOverrideConfig();
+    if (tagOverrideConfig != null && tagOverrideConfig.getRealtimeConsuming() != null) {
+      _consumingRealtimeServerTag = tagOverrideConfig.getRealtimeConsuming();
+    } else {
+      _consumingRealtimeServerTag = TagNameUtils.getRealtimeTagForTenant(_serverTenant);
+    }
+    if (tagOverrideConfig != null && tagOverrideConfig.getRealtimeCompleted() != null) {
+      _completedRealtimeServerTag = tagOverrideConfig.getRealtimeCompleted();
+    } else {
+      _completedRealtimeServerTag = TagNameUtils.getRealtimeTagForTenant(_serverTenant);
+    }
+
     if (!_consumingRealtimeServerTag.equals(_completedRealtimeServerTag)) {
-      _moveCompletedSegments = true;
+      _relocateCompletedSegments = true;
     }
   }
 
@@ -49,7 +55,7 @@ public class RealtimeTagConfig extends TagConfig {
   }
 
   public boolean isRelocateCompletedSegments() {
-    return _moveCompletedSegments;
+    return _relocateCompletedSegments;
   }
 }
 

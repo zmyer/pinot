@@ -8,8 +8,9 @@ import Controller from '@ember/controller';
 import moment from 'moment';
 import { isPresent } from "@ember/utils";
 import { computed, set } from '@ember/object';
+import { inject as service } from '@ember/service';
 import { buildDateEod } from 'thirdeye-frontend/utils/utils';
-import { buildAnomalyStats, setDuration } from 'thirdeye-frontend/utils/manage-alert-utils';
+import { buildAnomalyStats } from 'thirdeye-frontend/utils/manage-alert-utils';
 
 export default Controller.extend({
   /**
@@ -19,6 +20,11 @@ export default Controller.extend({
   duration: null,
   startDate: null,
   endDate: null,
+
+  /**
+   * Make duration service accessible
+   */
+  durationCache: service('services/duration'),
 
   /**
    * Set initial view values
@@ -276,34 +282,6 @@ export default Controller.extend({
   actions: {
 
     /**
-     * Trigger reload in model with new time range. Transition for 'custom' dates is handled by 'onRangeSelection'
-     * @method onRangeOptionClick
-     * @param {Object} rangeOption - the selected range object
-     */
-    onRangeOptionClick(rangeOption) {
-      const rangeFormat = 'YYYY-MM-DD HH:mm';
-      const defaultEndDate = buildDateEod(1, 'day').valueOf();
-      const timeRangeOptions = this.get('timeRangeOptions');
-      const duration = rangeOption.value;
-      const startDate = moment(rangeOption.start).valueOf();
-      const endDate = moment(defaultEndDate).valueOf();
-
-      if (rangeOption.value !== 'custom') {
-        // Set date picker defaults to new start/end dates
-        this.setProperties({
-          activeRangeStart: moment(rangeOption.start).format(rangeFormat),
-          activeRangeEnd: moment(defaultEndDate).format(rangeFormat)
-        });
-        // Reset options and highlight selected one
-        timeRangeOptions.forEach(op => set(op, 'isActive', false));
-        set(rangeOption, 'isActive', true);
-        setDuration(duration, startDate, endDate);
-        // Reload model according to new timerange
-        this.transitionToRoute({ queryParams: { mode: 'explore', duration, startDate, endDate }});
-      }
-    },
-
-    /**
      * This field will not accept empty input - default back to the original value
      * @method onChangeSeverityValue
      * @param {String} severity - the custom tuning severity input
@@ -328,20 +306,22 @@ export default Controller.extend({
     /**
      * Sets the new custom date range for anomaly coverage
      * @method onRangeSelection
-     * @param {String} start  - stringified start date
-     * @param {String} end    - stringified end date
+     * @param {Object} rangeOption - the user-selected time range to load
      */
-    onRangeSelection(start, end) {
-      const duration = 'custom';
-      const startDate = moment(start).valueOf();
-      const endDate = moment(end).valueOf();
-      const timeRangeOptions = this.get('timeRangeOptions');
-      const currOption = timeRangeOptions.find(option => option.value === 'custom');
-      // Toggle time reange button states to highlight the current one
-      timeRangeOptions.forEach(op => set(op, 'isActive', false));
-      set(currOption, 'isActive', true);
-      setDuration(duration, startDate, endDate);
-      this.transitionToRoute({ queryParams: { mode: 'explore', duration, startDate, endDate }});
+    onRangeSelection(rangeOption) {
+      const {
+        start,
+        end,
+        value: duration
+      } = rangeOption;
+      const durationObj = {
+        duration,
+        startDate: moment(start).valueOf(),
+        endDate: moment(end).valueOf()
+      };
+      // Cache the new time range and update page with it
+      this.get('durationCache').setDuration(durationObj);
+      this.transitionToRoute({ queryParams: durationObj });
     },
 
     /**

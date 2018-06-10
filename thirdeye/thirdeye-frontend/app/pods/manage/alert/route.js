@@ -8,8 +8,8 @@ import fetch from 'fetch';
 import moment from 'moment';
 import { isPresent } from "@ember/utils";
 import Route from '@ember/routing/route';
+import { inject as service } from '@ember/service';
 import { checkStatus, buildDateEod } from 'thirdeye-frontend/utils/utils';
-import { setDuration } from 'thirdeye-frontend/utils/manage-alert-utils';
 
 // Setup for query param behavior
 const queryParamsConfig = {
@@ -22,30 +22,33 @@ export default Route.extend({
     jobId: queryParamsConfig
   },
 
+  durationCache: service('services/duration'),
+
   beforeModel(transition) {
-    const id = transition.params['manage.alert'].alertId;
+    const id = transition.params['manage.alert'].alert_id;
     const { jobId, functionName } = transition.queryParams;
-    const durationDefault = '3m';
-    const startDateDefault = buildDateEod(3, 'month').valueOf();
-    const endDateDefault = moment().utc().valueOf();
+    const duration = '3m';
+    const startDate = buildDateEod(3, 'month').valueOf();
+    const endDate = moment().utc().valueOf();
 
     // Enter default 'explore' route with defaults loaded in URI
     // An alert Id of 0 means there is an alert creation error to display
     if (transition.targetName === 'manage.alert.index' && Number(id) !== -1) {
       this.transitionTo('manage.alert.explore', id, { queryParams: {
-        duration: durationDefault,
-        startDate: startDateDefault,
-        endDate: endDateDefault,
+        duration,
+        startDate,
+        endDate,
         functionName: null,
         jobId
       }});
-      // Save duration to sessionStorage for guaranteed availability
-      setDuration(durationDefault, startDateDefault, endDateDefault);
+
+      // Save duration to service object for session availability
+      this.get('durationCache').setDuration({ duration, startDate, endDate });
     }
   },
 
   model(params, transition) {
-    const { alertId: id, jobId, functionName } = params;
+    const { alert_id: id, jobId, functionName } = params;
     if (!id) { return; }
 
     // Fetch all the basic alert data needed in manage.alert subroutes
@@ -107,7 +110,7 @@ export default Route.extend({
     // We do not have a valid alertId. Set error state.
     if (isLoadError) {
       Object.assign(newAlertData, { functionName, isActive: false });
-      errorText = `We were not able to confirm alert creation: alert name ${functionName.toUpperCase()} not found in DB`;
+      errorText = `${functionName.toUpperCase()} has failed to create. Please try again or email ask_thirdeye@linkedin.com`;
     }
 
     controller.setProperties({

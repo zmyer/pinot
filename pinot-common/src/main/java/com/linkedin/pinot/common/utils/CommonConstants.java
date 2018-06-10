@@ -15,6 +15,7 @@
  */
 package com.linkedin.pinot.common.utils;
 
+import com.linkedin.pinot.common.response.BrokerResponseFactory;
 import java.io.File;
 import org.apache.commons.lang.StringUtils;
 
@@ -42,22 +43,18 @@ public class CommonConstants {
         public static final String ONLINE = "ONLINE";
         public static final String OFFLINE = "OFFLINE";
         public static final String ERROR = "ERROR";
-        public static final String DROPPED = "DROPPED";
       }
 
       public static class RealtimeSegmentOnlineOfflineStateModel {
         public static final String ONLINE = "ONLINE";
         public static final String OFFLINE = "OFFLINE";
         public static final String ERROR = "ERROR";
-        public static final String DROPPED = "DROPPED";
         public static final String CONSUMING = "CONSUMING";
-        public static final String CONVERTING = "CONVERTING";
       }
 
       public static class BrokerOnlineOfflineStateModel {
         public static final String ONLINE = "ONLINE";
         public static final String OFFLINE = "OFFLINE";
-        public static final String DROPPED = "DROPPED";
         public static final String ERROR = "ERROR";
       }
     }
@@ -206,9 +203,22 @@ public class CommonConstants {
   public static class Broker {
     public static final String CONFIG_OF_BROKER_QUERY_RESPONSE_LIMIT = "pinot.broker.query.response.limit";
     public static final int DEFAULT_BROKER_QUERY_RESPONSE_LIMIT = Integer.MAX_VALUE;
+    public static final String CONFIG_OF_BROKER_QUERY_LOG_LENGTH = "pinot.broker.query.log.length";
+    public static final int DEFAULT_BROKER_QUERY_LOG_LENGTH = Integer.MAX_VALUE;
     public static final String CONFIG_OF_BROKER_TIMEOUT_MS = "pinot.broker.timeoutMs";
     public static final long DEFAULT_BROKER_TIMEOUT_MS = 10_000L;
     public static final String CONFIG_OF_BROKER_ID = "pinot.broker.id";
+    public static final BrokerResponseFactory.ResponseType DEFAULT_BROKER_RESPONSE_TYPE =
+        BrokerResponseFactory.ResponseType.BROKER_RESPONSE_TYPE_NATIVE;
+    public static class Request {
+      public static final String PQL = "pql";
+      public static final String TRACE = "trace";
+      public static final String DEBUG_OPTIONS = "debugOptions";
+
+      public static class QueryOptionKey {
+        public static final String PRESERVE_TYPE = "preserveType";
+      }
+    }
   }
 
   public static class Server {
@@ -224,9 +234,6 @@ public class CommonConstants {
     public static final String CONFIG_OF_REQUEST_HANDLER_FACTORY_CLASS = "pinot.server.requestHandlerFactory.class";
     public static final String CONFIG_OF_NETTY_PORT = "pinot.server.netty.port";
     public static final String CONFIG_OF_ADMIN_API_PORT = "pinot.server.adminapi.port";
-    public static final String CONFIG_OF_SEGMENT_LOAD_MAX_RETRY_COUNT = "pinot.server.segment.loadMaxRetryCount";
-    public static final String CONFIG_OF_SEGMENT_LOAD_MIN_RETRY_DELAY_MILLIS =
-        "pinot.server.segment.minRetryDelayMillis";
     public static final String CONFIG_OF_SEGMENT_FORMAT_VERSION = "pinot.server.instance.segment.format.version";
     public static final String CONFIG_OF_ENABLE_DEFAULT_COLUMNS = "pinot.server.instance.enable.default.columns";
     public static final String CONFIG_OF_ENABLE_SHUTDOWN_DELAY = "pinot.server.instance.enable.shutdown.delay";
@@ -248,8 +255,6 @@ public class CommonConstants {
     public static final long DEFAULT_QUERY_EXECUTOR_TIMEOUT_MS = 15_000L;
     public static final String DEFAULT_REQUEST_HANDLER_FACTORY_CLASS =
         "com.linkedin.pinot.server.request.SimpleRequestHandlerFactory";
-    public static final String DEFAULT_SEGMENT_LOAD_MAX_RETRY_COUNT = "5";
-    public static final String DEFAULT_SEGMENT_LOAD_MIN_RETRY_DELAY_MILLIS = "60000";
     public static final String PREFIX_OF_CONFIG_OF_SEGMENT_FETCHER_FACTORY = "pinot.server.segment.fetcher";
     public static final String PREFIX_OF_CONFIG_OF_SEGMENT_UPLOADER = "pinot.server.segment.uploader";
     public static final String DEFAULT_STAR_TREE_FORMAT_VERSION = "OFF_HEAP";
@@ -260,6 +265,8 @@ public class CommonConstants {
     public static final String PREFIX_OF_CONFIG_OF_SEGMENT_FETCHER_FACTORY = "pinot.controller.segment.fetcher";
     public static final String HOST_HTTP_HEADER = "Pinot-Controller-Host";
     public static final String VERSION_HTTP_HEADER = "Pinot-Controller-Version";
+    public static final String SEGMENT_NAME_HTTP_HEADER = "Pinot-Segment-Name";
+    public static final String TABLE_NAME_HTTP_HEADER = "Pinot-Table-Name";
   }
 
   public static class Minion {
@@ -267,6 +274,7 @@ public class CommonConstants {
     public static final String INSTANCE_TYPE = "minion";
     public static final String UNTAGGED_INSTANCE = "minion_untagged";
     public static final String METRICS_PREFIX = "pinot.minion.";
+    public static final String METADATA_EVENT_OBSERVER_PREFIX = "metadata.event.notifier";
 
     // Config keys
     public static final String METRICS_REGISTRY_REGISTRATION_LISTENERS_KEY = "metricsRegistryRegistrationListeners";
@@ -277,6 +285,7 @@ public class CommonConstants {
         System.getProperty("java.io.tmpdir") + File.separator + "PinotMinion";
     public static final String DEFAULT_INSTANCE_DATA_DIR = DEFAULT_INSTANCE_BASE_DIR + File.separator + "data";
     public static final String PREFIX_OF_CONFIG_OF_SEGMENT_FETCHER_FACTORY = "segment.fetcher";
+    public static final String PREFIX_OF_CONFIG_OF_SEGMENT_UPLOADER = "segment.uploader";
   }
 
   public static class Metric {
@@ -313,6 +322,7 @@ public class CommonConstants {
     public static final String CRC = "segment.crc";
     public static final String CREATION_TIME = "segment.creation.time";
     public static final String FLUSH_THRESHOLD_SIZE = "segment.flush.threshold.size";
+    public static final String FLUSH_THRESHOLD_TIME = "segment.flush.threshold.time";
     public static final String PARTITION_METADATA = "segment.partition.metadata";
     /**
      * This field is used for parallel push protection to lock the segment globally.
@@ -332,9 +342,9 @@ public class CommonConstants {
     }
   }
 
-  public static class SegmentFetcher {
-    public static class HdfsSegmentFetcher {
-      public static final String PRINCIPLE = "hadoop.kerberos.principle";
+  public static class SegmentOperations {
+    public static class HadoopSegmentOperations {
+      public static final String PRINCIPAL = "hadoop.kerberos.principle";
       public static final String KEYTAB = "hadoop.kerberos.keytab";
       public static final String HADOOP_CONF_PATH = "hadoop.conf.path";
     }

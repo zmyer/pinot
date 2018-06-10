@@ -1,7 +1,11 @@
 package com.linkedin.thirdeye.datalayer.bao;
 
 import com.linkedin.thirdeye.datalayer.DaoTestUtils;
+import com.linkedin.thirdeye.datalayer.dto.AlertConfigDTO;
+import com.linkedin.thirdeye.datalayer.pojo.AlertConfigBean.EmailConfig;
 import com.linkedin.thirdeye.datasource.DAORegistry;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 
 import org.testng.Assert;
@@ -20,11 +24,14 @@ public class TestAnomalyFunctionManager {
 
   private DAOTestBase testDAOProvider;
   private AnomalyFunctionManager anomalyFunctionDAO;
+  private AlertConfigManager alertConfigDAO;
+
   @BeforeClass
   void beforeClass() {
     testDAOProvider = DAOTestBase.getInstance();
     DAORegistry daoRegistry = DAORegistry.getInstance();
     anomalyFunctionDAO = daoRegistry.getAnomalyFunctionDAO();
+    alertConfigDAO = daoRegistry.getAlertConfigDAO();
   }
 
   @AfterClass(alwaysRun = true)
@@ -57,13 +64,27 @@ public class TestAnomalyFunctionManager {
     Assert.assertEquals(functions.size(), 1);
   }
 
-  @Test(dependsOnMethods = {"testFindAllByCollection"})
+  @Test(dependsOnMethods = {"testCreate"})
   public void testDistinctMetricsByCollection() {
     List<String> metrics = anomalyFunctionDAO.findDistinctTopicMetricsByCollection(collection);
     Assert.assertEquals(metrics.get(0), metricName);
   }
 
-  @Test(dependsOnMethods = { "testDistinctMetricsByCollection" })
+  @Test(dependsOnMethods = {"testFindNameEquals", "testFindAllByCollection", "testDistinctMetricsByCollection"})
+  public void testFindAllByApplication() {
+    AlertConfigDTO alertConfigDTO = new AlertConfigDTO();
+    alertConfigDTO.setName("test");
+    alertConfigDTO.setApplication("test");
+    EmailConfig emailConfig = new EmailConfig();
+    emailConfig.setFunctionIds(Collections.singletonList(anomalyFunctionId));
+    alertConfigDTO.setEmailConfig(emailConfig);
+    alertConfigDAO.save(alertConfigDTO);
+
+    List<AnomalyFunctionDTO> applicationAnomalyFunctions = anomalyFunctionDAO.findAllByApplication("test");
+    Assert.assertEquals(applicationAnomalyFunctions.size(), 1);
+  }
+
+  @Test(dependsOnMethods = { "testFindAllByApplication" })
   public void testUpdate() {
     AnomalyFunctionDTO spec = anomalyFunctionDAO.findById(anomalyFunctionId);
     Assert.assertNotNull(spec);

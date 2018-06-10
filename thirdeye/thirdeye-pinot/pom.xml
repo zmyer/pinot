@@ -160,6 +160,10 @@
       <artifactId>modelmapper</artifactId>
       <version>0.7.6</version>
     </dependency>
+    <dependency>
+      <groupId>com.jayway.jsonpath</groupId>
+      <artifactId>json-path</artifactId>
+    </dependency>
 
     <!--UI dependencies -->
     <dependency>
@@ -230,6 +234,18 @@
       <artifactId>h2</artifactId>
       <version>1.4.192</version>
       <scope>test</scope>
+    </dependency>
+
+    <!-- Swagger -->
+    <dependency>
+      <groupId>io.federecio</groupId>
+      <artifactId>dropwizard-swagger</artifactId>
+    </dependency>
+
+    <!-- Google Calendar API -->
+    <dependency>
+      <groupId>com.google.apis</groupId>
+      <artifactId>google-api-services-calendar</artifactId>
     </dependency>
   </dependencies>
 

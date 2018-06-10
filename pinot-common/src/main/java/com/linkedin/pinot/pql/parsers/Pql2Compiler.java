@@ -18,7 +18,6 @@ package com.linkedin.pinot.pql.parsers;
 import com.linkedin.pinot.common.request.BrokerRequest;
 import com.linkedin.pinot.common.request.transform.TransformExpressionTree;
 import com.linkedin.pinot.pql.parsers.pql2.ast.AstNode;
-
 import com.linkedin.pinot.pql.parsers.pql2.ast.BaseAstNode;
 import com.linkedin.pinot.pql.parsers.pql2.ast.BetweenPredicateAstNode;
 import com.linkedin.pinot.pql.parsers.pql2.ast.ComparisonPredicateAstNode;
@@ -30,6 +29,10 @@ import com.linkedin.pinot.pql.parsers.pql2.ast.RegexpLikePredicateAstNode;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Stack;
+
+import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
+import javax.annotation.concurrent.ThreadSafe;
 import org.antlr.v4.runtime.ANTLRInputStream;
 import org.antlr.v4.runtime.BailErrorStrategy;
 import org.antlr.v4.runtime.BaseErrorListener;
@@ -40,8 +43,6 @@ import org.antlr.v4.runtime.RecognitionException;
 import org.antlr.v4.runtime.Recognizer;
 import org.antlr.v4.runtime.TokenStream;
 import org.antlr.v4.runtime.UnbufferedTokenStream;
-import org.antlr.v4.runtime.misc.NotNull;
-import org.antlr.v4.runtime.misc.Nullable;
 import org.antlr.v4.runtime.tree.ParseTree;
 import org.antlr.v4.runtime.tree.ParseTreeWalker;
 import org.apache.commons.lang.math.NumberUtils;
@@ -51,35 +52,28 @@ import org.apache.commons.lang3.exception.ExceptionUtils;
 /**
  * PQL 2 compiler.
  */
+@ThreadSafe
 public class Pql2Compiler implements AbstractCompiler {
-  private boolean _splitInClause = false;
 
   private static class ErrorListener extends BaseErrorListener {
     @Override
-    public void syntaxError(@NotNull Recognizer<?, ?> recognizer, @Nullable Object offendingSymbol, int line,
-        int charPositionInLine, @NotNull String msg, @Nullable RecognitionException e) {
+    public void syntaxError(@Nonnull Recognizer<?, ?> recognizer, @Nullable Object offendingSymbol, int line,
+        int charPositionInLine, @Nonnull String msg, @Nullable RecognitionException e) {
       throw new Pql2CompilationException(msg, offendingSymbol, line, charPositionInLine, e);
     }
   }
 
   private static final ErrorListener ERROR_LISTENER = new ErrorListener();
 
-  @Override
-  public BrokerRequest compileToBrokerRequest(String expression) throws Pql2CompilationException {
-    return compileToBrokerRequest(expression, false);
-  }
-
   /**
    * Compile the given expression into {@link BrokerRequest}.
    *
    * @param expression Expression to compile
-   * @param splitInClause Value of in clause sent as list if true, joined with delimiter otherwise. This is a temporary
-   *                      argument to keep the broker and server compatible, and will be removed.
    * @return BrokerRequest
    * @throws Pql2CompilationException
    */
-  public BrokerRequest compileToBrokerRequest(String expression, boolean splitInClause) throws Pql2CompilationException {
-    _splitInClause = splitInClause;
+  @Override
+  public BrokerRequest compileToBrokerRequest(String expression) throws Pql2CompilationException {
     try {
       //
       CharStream charStream = new ANTLRInputStream(expression);
@@ -97,7 +91,7 @@ public class Pql2Compiler implements AbstractCompiler {
       ParseTree parseTree = parser.root();
 
       ParseTreeWalker walker = new ParseTreeWalker();
-      Pql2AstListener listener = new Pql2AstListener(expression, _splitInClause);
+      Pql2AstListener listener = new Pql2AstListener(expression);
       walker.walk(listener, parseTree);
 
       AstNode rootNode = listener.getRootNode();
@@ -127,11 +121,10 @@ public class Pql2Compiler implements AbstractCompiler {
     ParseTree parseTree = parser.expression();
 
     ParseTreeWalker walker = new ParseTreeWalker();
-    Pql2AstListener listener = new Pql2AstListener(expression, _splitInClause);
+    Pql2AstListener listener = new Pql2AstListener(expression);
     walker.walk(listener, parseTree);
 
-    final AstNode rootNode = listener.getRootNode();
-    return TransformExpressionTree.buildTree(rootNode);
+    return new TransformExpressionTree(listener.getRootNode());
   }
 
   private void validateHavingClause(AstNode rootNode) {
@@ -172,7 +165,7 @@ public class Pql2Compiler implements AbstractCompiler {
           }
         }
 
-        if (functionCallIsInSelectList == false) {
+        if (!functionCallIsInSelectList) {
           OutputColumnAstNode havingFunctionAstNode = new OutputColumnAstNode();
           havingFunction.setIsInSelectList(false);
           havingFunctionAstNode.addChild(havingFunction);
@@ -185,8 +178,8 @@ public class Pql2Compiler implements AbstractCompiler {
   }
 
   private List<FunctionCallAstNode> havingTreeDFSTraversalToFindFunctionCalls(HavingAstNode havingList) {
-    List<FunctionCallAstNode> functionCalls = new ArrayList<FunctionCallAstNode>();
-    Stack<AstNode> astNodeStack = new Stack<AstNode>();
+    List<FunctionCallAstNode> functionCalls = new ArrayList<>();
+    Stack<AstNode> astNodeStack = new Stack<>();
     astNodeStack.add(havingList);
     while (!astNodeStack.isEmpty()) {
       AstNode visitingNode = astNodeStack.pop();

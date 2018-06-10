@@ -26,8 +26,17 @@ import org.slf4j.LoggerFactory;
 public class TenantConfig {
   private static final Logger LOGGER = LoggerFactory.getLogger(TenantConfig.class);
 
+  @ConfigKey("brokerTagPrefix")
+  @ConfigDoc("Broker tag prefix used by this table")
   private String broker;
+
+  @ConfigKey("serverTagPrefix")
+  @ConfigDoc("Server tag prefix used by this table")
   private String server;
+
+  @ConfigKey("tagOverrideConfig")
+  @ConfigDoc("Overrides for tags")
+  private TagOverrideConfig tagOverrideConfig;
 
   public String getBroker() {
     return broker;
@@ -43,6 +52,14 @@ public class TenantConfig {
 
   public void setServer(String server) {
     this.server = server;
+  }
+
+  public TagOverrideConfig getTagOverrideConfig() {
+    return tagOverrideConfig;
+  }
+
+  public void setTagOverrideConfig(TagOverrideConfig tagOverrideConfig) {
+    this.tagOverrideConfig = tagOverrideConfig;
   }
 
   @Override

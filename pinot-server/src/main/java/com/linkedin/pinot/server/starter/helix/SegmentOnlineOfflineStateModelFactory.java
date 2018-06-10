@@ -23,9 +23,9 @@ import com.linkedin.pinot.common.metadata.segment.RealtimeSegmentZKMetadata;
 import com.linkedin.pinot.common.utils.CommonConstants.Helix.TableType;
 import com.linkedin.pinot.common.utils.LLCSegmentName;
 import com.linkedin.pinot.common.utils.SegmentName;
-import com.linkedin.pinot.core.data.manager.offline.InstanceDataManager;
-import com.linkedin.pinot.core.data.manager.offline.SegmentDataManager;
-import com.linkedin.pinot.core.data.manager.offline.TableDataManager;
+import com.linkedin.pinot.core.data.manager.InstanceDataManager;
+import com.linkedin.pinot.core.data.manager.SegmentDataManager;
+import com.linkedin.pinot.core.data.manager.TableDataManager;
 import com.linkedin.pinot.core.data.manager.realtime.LLRealtimeSegmentDataManager;
 import java.io.File;
 import org.apache.commons.io.FileUtils;
@@ -158,7 +158,7 @@ public class SegmentOnlineOfflineStateModelFactory extends StateModelFactory<Sta
         TableType tableType = TableNameBuilder.getTableTypeFromTableName(message.getResourceName());
         Preconditions.checkNotNull(tableType);
         if (tableType == TableType.OFFLINE) {
-          _fetcherAndLoader.addOrReplaceOfflineSegment(tableNameWithType, segmentName, /*retryOnFailure=*/true);
+          _fetcherAndLoader.addOrReplaceOfflineSegment(tableNameWithType, segmentName);
         } else {
           _instanceDataManager.addRealtimeSegment(tableNameWithType, segmentName);
         }

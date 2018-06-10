@@ -19,6 +19,7 @@ package com.linkedin.pinot.controller.api.resources;
 import com.google.common.base.Preconditions;
 import com.linkedin.pinot.common.config.TableConfig;
 import com.linkedin.pinot.common.config.TableNameBuilder;
+import com.linkedin.pinot.common.exception.InvalidConfigException;
 import com.linkedin.pinot.common.metadata.ZKMetadataProvider;
 import com.linkedin.pinot.common.metadata.segment.OfflineSegmentZKMetadata;
 import com.linkedin.pinot.common.metadata.segment.SegmentZKMetadataCustomMapModifier;
@@ -48,6 +49,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.io.UnsupportedEncodingException;
 import java.net.InetAddress;
 import java.net.URISyntaxException;
@@ -279,6 +281,14 @@ public class PinotSegmentUploadRestletResource {
     File tempTarredSegmentFile = null;
     File tempSegmentDir = null;
 
+    if (headers != null) {
+      // TODO: Add these headers into open source hadoop jobs
+      LOGGER.info("HTTP Header {} is {}", CommonConstants.Controller.SEGMENT_NAME_HTTP_HEADER,
+          headers.getRequestHeader(CommonConstants.Controller.SEGMENT_NAME_HTTP_HEADER));
+      LOGGER.info("HTTP Header {} is {}", CommonConstants.Controller.TABLE_NAME_HTTP_HEADER,
+          headers.getRequestHeader(CommonConstants.Controller.TABLE_NAME_HTTP_HEADER));
+    }
+
     try {
       FileUploadPathProvider provider = new FileUploadPathProvider(_controllerConf);
       String tempSegmentName = "tmp-" + System.nanoTime();
@@ -324,15 +334,18 @@ public class PinotSegmentUploadRestletResource {
           break;
 
         case TAR:
-          Map<String, List<FormDataBodyPart>> map = multiPart.getFields();
-          if (!validateMultiPart(map, "UNKNOWN")) {
-            throw new ControllerApplicationException(LOGGER, "Invalid multi-part form", Response.Status.BAD_REQUEST);
-          }
-          String partName = map.keySet().iterator().next();
-          FormDataBodyPart bodyPart = map.get(partName).get(0);
-          try (InputStream inputStream = bodyPart.getValueAs(InputStream.class);
-              FileOutputStream outputStream = new FileOutputStream(tempTarredSegmentFile)) {
-            IOUtils.copyLarge(inputStream, outputStream);
+          try {
+            Map<String, List<FormDataBodyPart>> map = multiPart.getFields();
+            if (!validateMultiPart(map, null)) {
+              throw new ControllerApplicationException(LOGGER, "Invalid multi-part form", Response.Status.BAD_REQUEST);
+            }
+            FormDataBodyPart bodyPart = map.values().iterator().next().get(0);
+            try (InputStream inputStream = bodyPart.getValueAs(InputStream.class);
+                OutputStream outputStream = new FileOutputStream(tempTarredSegmentFile)) {
+              IOUtils.copyLarge(inputStream, outputStream);
+            }
+          } finally {
+            multiPart.cleanup();
           }
           break;
 
@@ -401,8 +414,14 @@ public class PinotSegmentUploadRestletResource {
     }
 
     // Check quota
-    StorageQuotaChecker.QuotaCheckerResponse quotaResponse =
-        checkStorageQuota(indexDir, segmentMetadata, offlineTableConfig);
+    StorageQuotaChecker.QuotaCheckerResponse quotaResponse;
+    try {
+      quotaResponse = checkStorageQuota(indexDir, segmentMetadata, offlineTableConfig);
+    } catch (InvalidConfigException e) {
+      // Admin port is missing, return response with 500 status code.
+      throw new ControllerApplicationException(LOGGER, "Quota check failed for segment: " + segmentName + " of table: " + offlineTableName + ", reason: "
+          + e.getMessage(), Response.Status.INTERNAL_SERVER_ERROR);
+    }
     if (!quotaResponse.isSegmentWithinQuota) {
       throw new ControllerApplicationException(LOGGER,
           "Quota check failed for segment: " + segmentName + " of table: " + offlineTableName + ", reason: "
@@ -608,7 +627,7 @@ public class PinotSegmentUploadRestletResource {
    * @param offlineTableConfig offline table configuration. This should not be null.
    */
   private StorageQuotaChecker.QuotaCheckerResponse checkStorageQuota(@Nonnull File segmentFile,
-      @Nonnull SegmentMetadata metadata, @Nonnull TableConfig offlineTableConfig) {
+      @Nonnull SegmentMetadata metadata, @Nonnull TableConfig offlineTableConfig) throws InvalidConfigException {
     TableSizeReader tableSizeReader = new TableSizeReader(_executor, _connectionManager, _pinotHelixResourceManager);
     StorageQuotaChecker quotaChecker = new StorageQuotaChecker(offlineTableConfig, tableSizeReader, _controllerMetrics);
     String offlineTableName = TableNameBuilder.OFFLINE.tableNameWithType(metadata.getTableName());

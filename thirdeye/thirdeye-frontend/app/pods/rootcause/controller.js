@@ -6,7 +6,9 @@ import Controller from '@ember/controller';
 import {
   filterObject,
   filterPrefix,
+  hasPrefix,
   toBaselineUrn,
+  toBaselineRange,
   toCurrentUrn,
   toOffsetUrn,
   toFilters,
@@ -22,6 +24,8 @@ import _ from 'lodash';
 
 const ROOTCAUSE_TAB_DIMENSIONS = 'dimensions';
 const ROOTCAUSE_TAB_METRICS = 'metrics';
+const ROOTCAUSE_TAB_EVENTS = 'events';
+const ROOTCAUSE_TAB_TREND = 'trend';
 
 const ROOTCAUSE_SETUP_MODE_CONTEXT = "context";
 const ROOTCAUSE_SETUP_MODE_SELECTED = "selected";
@@ -35,6 +39,8 @@ const ROOTCAUSE_SERVICE_ENTITIES = 'entities';
 const ROOTCAUSE_SERVICE_TIMESERIES = 'timeseries';
 const ROOTCAUSE_SERVICE_AGGREGATES = 'aggregates';
 const ROOTCAUSE_SERVICE_BREAKDOWNS = 'breakdowns';
+const ROOTCAUSE_SERVICE_ANOMALY_FUNCTIONS = 'anomalyFunctions';
+const ROOTCAUSE_SERVICE_ALL = 'all';
 
 const ROOTCAUSE_SESSION_TIMER_INTERVAL = 300000;
 
@@ -71,17 +77,19 @@ export default Controller.extend({
   //
   authService: service('session'),
 
-  entitiesService: service('rootcause-entities-cache'),
+  entitiesService: service('services/rootcause-entities-cache'),
 
-  timeseriesService: service('rootcause-timeseries-cache'),
+  timeseriesService: service('services/rootcause-timeseries-cache'),
 
-  aggregatesService: service('rootcause-aggregates-cache'),
+  aggregatesService: service('services/rootcause-aggregates-cache'),
 
-  breakdownsService: service('rootcause-breakdowns-cache'),
+  breakdownsService: service('services/rootcause-breakdowns-cache'),
 
-  scoresService: service('rootcause-scores-cache'),
+  scoresService: service('services/rootcause-scores-cache'),
 
-  sessionService: service('rootcause-session-datasource'),
+  sessionService: service('services/rootcause-session-datasource'),
+
+  anomalyFunctionService: service('services/rootcause-anomalyfunction-cache'),
 
   //
   // user details
@@ -135,25 +143,39 @@ export default Controller.extend({
    * displayed investigation tab ('metrics', 'dimensions', ...)
    * @type {string}
    */
-  activeTab: null,
+  activeTab: ROOTCAUSE_TAB_METRICS,
+
+  /**
+   * displayed investigation sub-tabs
+   * @type {Object}
+   */
+  activeSubTabs: {
+    dimensions: 'heatmap'
+  },
 
   /**
    * display mode for timeseries chart
    * @type {string}
    */
-  timeseriesMode: null,
+  timeseriesMode: 'split',
 
   /**
-   * urn of the currently focused entity in the legend component
+   * urns of the currently focused entities in the legend component
    * @type {string}
    */
-  focusedUrn: null,
+  focusedUrns: null,
 
   /**
    * toggle for running _setupForMetric() on selection of the first metric
    * @type {boolean}
    */
   setupMode: ROOTCAUSE_SETUP_MODE_NONE,
+
+  /**
+   * toggle for displaying verbose error messages
+   * @type {boolean}
+   */
+  verbose: false,
 
   //
   // session data
@@ -206,6 +228,12 @@ export default Controller.extend({
   filterConfig: filterBarConfig,
 
   /**
+   * flag that toogles the modal view
+   * @type {Boolean}
+   */
+  showEntityMappingModal: false,
+
+  /**
    * Default settings
    */
   init() {
@@ -213,11 +241,8 @@ export default Controller.extend({
     this.setProperties({
       invisibleUrns: new Set(),
       hoverUrns: new Set(),
-      filteredUrns: new Set(),
-      activeTab: ROOTCAUSE_TAB_METRICS,
-      timeseriesMode: 'split'
+      filteredUrns: new Set()
     });
-
     // This is a flag for the acceptance test for rootcause to prevent it from timing out because of this run loop
     if (config.environment !== 'test') {
       later(this, this._onCheckSessionTimer, ROOTCAUSE_SESSION_TIMER_INTERVAL);
@@ -231,20 +256,23 @@ export default Controller.extend({
    * services to refresh caches on-demand. Changes propagate throughout the application via the respective
    * computed properties ('entities', 'timeseries', 'aggregates', 'breakdowns')
    *
-   * entities:     rootcause search results, such as events and metrics
-   *               (typically displayed in event table, timeseries chart)
+   * entities:         rootcause search results, such as events and metrics
+   *                   (typically displayed in event table, timeseries chart)
    *
-   * timeseries:   time-ordered metric values for display in chart
-   *               (typically displayed in timeseries chart)
+   * timeseries:       time-ordered metric values for display in chart
+   *                   (typically displayed in timeseries chart)
    *
-   * aggregates:   metrics values summarized over multiple time windows (anomaly, baseline, ...)
-   *               (typically displayed in metrics table, anomaly header)
+   * aggregates:       metrics values summarized over multiple time windows (anomaly, baseline, ...)
+   *                   (typically displayed in metrics table, anomaly header)
    *
-   * breakdowns:   de-aggregated metric values over multiple time windows (anomaly, baseline, ...)
-   *               (typically displayed in dimension heatmap)
+   * breakdowns:       de-aggregated metric values over multiple time windows (anomaly, baseline, ...)
+   *                   (typically displayed in dimension heatmap)
    *
-   * scores:       entity scores as computed by backend pipelines (e.g. metric anomality score)
-   *               (typically displayed in metrics table)
+   * scores:           entity scores as computed by backend pipelines (e.g. metric anomality score)
+   *                   (typically displayed in metrics table)
+   *
+   * anomalyfunctions: anomaly function baselines for display in chart
+   *                   (typically displayed in timeseries chart)
    */
   _contextObserver: observer(
     'context',
@@ -252,8 +280,8 @@ export default Controller.extend({
     'selectedUrns',
     'activeTab',
     function () {
-      const { context, selectedUrns, entitiesService, timeseriesService, aggregatesService, breakdownsService, scoresService, activeTab, setupMode } =
-        this.getProperties('context', 'selectedUrns', 'entitiesService', 'timeseriesService', 'aggregatesService', 'breakdownsService', 'scoresService', 'activeTab', 'setupMode');
+      const { context, selectedUrns, entitiesService, timeseriesService, aggregatesService, breakdownsService, scoresService, anomalyFunctionService, activeTab, setupMode } =
+        this.getProperties('context', 'selectedUrns', 'entitiesService', 'timeseriesService', 'aggregatesService', 'breakdownsService', 'scoresService', 'anomalyFunctionService', 'activeTab', 'setupMode');
 
       if (!context || !selectedUrns) {
         return;
@@ -263,15 +291,50 @@ export default Controller.extend({
         return;
       }
 
+      //
       // entities
+      //
       const entitiesUrns = new Set([...selectedUrns, ...context.urns, ...context.anomalyUrns]);
       entitiesService.request(context, entitiesUrns);
 
+      //
+      // related metrics
+      //
+      const relatedMetricUrns = new Set();
 
+      if (activeTab === ROOTCAUSE_TAB_METRICS
+          || activeTab === ROOTCAUSE_TAB_TREND) {
+        const entities = this.get('entitiesService.entities'); // cache may be stale, fetch directly
+        filterPrefix(Object.keys(entities), 'thirdeye:metric:').forEach(urn => relatedMetricUrns.add(urn));
+      }
+
+      if (context.anomalyUrns.size > 0) {
+        filterPrefix(context.anomalyUrns, 'thirdeye:metric:').forEach(urn => relatedMetricUrns.add(urn));
+      }
+
+      //
       // timeseries
-      timeseriesService.request(context, selectedUrns);
+      //
+      const timeseriesUrns = new Set(selectedUrns);
 
+      if (activeTab === ROOTCAUSE_TAB_TREND) {
+        [...relatedMetricUrns].forEach(urn => {
+          timeseriesUrns.add(toCurrentUrn(urn));
+          timeseriesUrns.add(toBaselineUrn(urn));
+        });
+      }
+
+      timeseriesService.request(context, timeseriesUrns);
+
+      //
+      // anomaly function baselines
+      //
+      const anomalyFunctionUrns = filterPrefix(context.anomalyUrns, 'frontend:anomalyfunction:');
+      anomalyFunctionService.request(context, new Set(anomalyFunctionUrns));
+
+      //
       // breakdowns
+      //
       if (activeTab === ROOTCAUSE_TAB_DIMENSIONS) {
         const metricUrns = new Set(filterPrefix(context.urns, 'thirdeye:metric:'));
         const currentUrns = [...metricUrns].map(toCurrentUrn);
@@ -279,30 +342,23 @@ export default Controller.extend({
         breakdownsService.request(context, new Set(currentUrns.concat(baselineUrns)));
       }
 
-      // aggregates
-      const aggregatesUrns = new Set();
-
+      //
+      // scores
+      //
       if (activeTab === ROOTCAUSE_TAB_METRICS) {
-        // cache may be stale, fetch directly from service
-        const entities = this.get('entitiesService.entities');
-        filterPrefix(Object.keys(entities), 'thirdeye:metric:').forEach(urn => aggregatesUrns.add(urn));
+        const scoresUrns = new Set(relatedMetricUrns);
+        scoresService.request(context, new Set(scoresUrns));
       }
 
-      if (context.anomalyUrns.size > 0) {
-        filterPrefix(context.anomalyUrns, 'thirdeye:metric:').forEach(urn => aggregatesUrns.add(urn));
-      }
-
+      //
+      // aggregates
+      //
       const offsets = ['current', 'baseline', 'wo1w', 'wo2w', 'wo3w', 'wo4w'];
-      const offsetUrns = [...aggregatesUrns]
+      const offsetUrns = [...relatedMetricUrns]
         .map(urn => [].concat(offsets.map(offset => toOffsetUrn(urn, offset))))
         .reduce((agg, l) => agg.concat(l), []);
-
       aggregatesService.request(context, new Set(offsetUrns));
 
-      // scores
-      const scoresUrns = aggregatesUrns;
-
-      scoresService.request(context, new Set(scoresUrns));
     }
   ),
 
@@ -348,9 +404,33 @@ export default Controller.extend({
   entities: reads('entitiesService.entities'),
 
   /**
-   * Subscribed timeseries cache
+   * Subscribed timeseries cache (metrics, anomaly baselines)
    */
-  timeseries: reads('timeseriesService.timeseries'),
+  timeseries: computed(
+    'timeseriesService.timeseries',
+    'anomalyFunctionService.timeseries',
+    'context',
+    function () {
+      const { timeseriesService, anomalyFunctionService, context } =
+        this.getProperties('timeseriesService', 'anomalyFunctionService', 'context');
+
+      const timeseries = Object.assign({}, timeseriesService.timeseries);
+
+      if (context.compareMode !== 'predicted') {
+        return timeseries;
+      }
+
+      // NOTE: only supports a single anomaly function baseline
+      const anomalyFunctionUrns = filterPrefix(context.anomalyUrns, 'frontend:anomalyfunction:');
+      const anomalyFunctionUrn = anomalyFunctionUrns[0];
+
+      filterPrefix(context.anomalyUrns, 'thirdeye:metric:').forEach(urn => {
+        timeseries[toBaselineUrn(urn)] = anomalyFunctionService.timeseries[anomalyFunctionUrn];
+      });
+
+      return timeseries;
+    }
+  ),
 
   /**
    * Subscribed aggregates cache
@@ -455,6 +535,8 @@ export default Controller.extend({
 
   isLoadingScores: gt('scoresService.pending.size', 0),
 
+  isLoadingAnomalyFunctions: gt('anomalyFunctionService.pending.size', 0),
+
   loadingFrameworks: reads('entitiesService.pending'),
 
   //
@@ -472,12 +554,15 @@ export default Controller.extend({
 
   hasErrorsScores: gt('scoresService.errors.size', 0),
 
+  hasErrorsAnomalyFunctions: gt('scoresService.errors.size', 0),
+
   hasServiceErrors: or(
     'hasErrorsEntities',
     'hasErrorsTimeseries',
     'hasErrorsAggregates',
     'hasErrorsBreakdowns',
-    'hasErrorsScores'
+    'hasErrorsScores',
+    'hasErrorsAnomalyFunctions'
   ),
 
   //
@@ -526,7 +611,7 @@ export default Controller.extend({
    * @private
    */
   _updateSession(sessionId) {
-    const { username } = this.getProperties('username');
+    const { username, metricId, anomalyId } = this.getProperties('username', 'metricId', 'anomalyId');
 
     this.setProperties({
       sessionId,
@@ -534,7 +619,19 @@ export default Controller.extend({
       sessionUpdatedTime: moment().valueOf(),
       sessionModified: false
     });
-    this.transitionToRoute({ queryParams: { sessionId, anomalyId: null, metricId: null }});
+
+    const queryParams = {};
+    queryParams['sessionId'] = sessionId;
+
+    if (!_.isEmpty(metricId)) {
+      queryParams['metricId'] = null;
+    }
+
+    if (!_.isEmpty(anomalyId)) {
+      queryParams['anomalyId'] = null;
+    }
+
+    this.transitionToRoute({ queryParams });
   },
 
   /**
@@ -706,12 +803,22 @@ export default Controller.extend({
     },
 
     /**
-     * Closure action passed into the legend component
-     * to handle the hover interactivity
-     * @param {String} urn
+     * Closure action passed into the legend component to handle the hover interactivity.
+     * Rewrites urns to highlight appropriate chart elements.
+     *
+     * @param {Array} urns
      */
-    onLegendHover(urn) {
-      this.set('focusedUrn', urn);
+    onLegendHover(urns) {
+      const { context } = this.getProperties('context');
+
+      const focusUrns = new Set(urns);
+
+      filterPrefix(focusUrns, 'thirdeye:metric:').forEach(urn => {
+        focusUrns.add(toCurrentUrn(urn));
+        focusUrns.add(toBaselineUrn(urn));
+      });
+
+      this.set('focusedUrns', focusUrns);
     },
 
     /**
@@ -785,6 +892,12 @@ export default Controller.extend({
         sessionText: text,
         sessionModified: true
       });
+      const { sessionid, anomalyId } = this.getProperties('sessionid', 'anomalyId');
+
+      if(!sessionid){
+        const jsonString = JSON.stringify({ feedbackType: null, comment: text });
+        fetch(`/dashboard/anomaly-merged-result/feedback/${anomalyId}`, { method: 'POST', body: jsonString });
+      }
     },
 
     /**
@@ -838,7 +951,7 @@ export default Controller.extend({
     },
 
     /**
-     * Saves the anomaly feedback o the backend. Overrides existing feedback, if any.
+     * Saves the anomaly feedback to the backend. Overrides existing feedback, if any.
      *
      * @param {String} anomalyUrn anomaly entity urn
      * @param {String} feedback anomaly feedback type string
@@ -847,7 +960,6 @@ export default Controller.extend({
     onFeedback(anomalyUrn, feedback, comment) {
       const id = anomalyUrn.split(':')[3];
       const jsonString = JSON.stringify({ feedbackType: feedback, comment });
-
       return fetch(`/dashboard/anomaly-merged-result/feedback/${id}`, { method: 'POST', body: jsonString });
     },
 
@@ -903,7 +1015,7 @@ export default Controller.extend({
       if (analysisRange[0] >= start) {
         analysisRange[0] = moment(start).startOf('day').valueOf();
       }
-      if (analysisRange[1] <= end) {
+      if (analysisRange[1] <= end) {//not sure we need this now? -lohuynh
         analysisRange[1] = moment(end).startOf('day').add(1, 'days').valueOf();
       }
 
@@ -941,8 +1053,8 @@ export default Controller.extend({
      * Clears error logs of data services and/or route
      */
     clearErrors(type) {
-      const { entitiesService, timeseriesService, aggregatesService, breakdownsService } =
-        this.getProperties('entitiesService', 'timeseriesService', 'aggregatesService', 'breakdownsService');
+      const { entitiesService, timeseriesService, aggregatesService, breakdownsService, anomalyFunctionService } =
+        this.getProperties('entitiesService', 'timeseriesService', 'aggregatesService', 'breakdownsService', 'anomalyFunctionService');
 
       switch(type) {
         case ROOTCAUSE_SERVICE_ENTITIES:
@@ -961,29 +1073,47 @@ export default Controller.extend({
           breakdownsService.clearErrors();
           break;
 
+        case ROOTCAUSE_SERVICE_ANOMALY_FUNCTIONS:
+          anomalyFunctionService.clearErrors();
+          break;
+
         case ROOTCAUSE_SERVICE_ROUTE:
           this.setProperties({ routeErrors: new Set() });
+          break;
+
+        case ROOTCAUSE_SERVICE_ALL:
+          entitiesService.clearErrors();
+          timeseriesService.clearErrors();
+          aggregatesService.clearErrors();
+          breakdownsService.clearErrors();
+          anomalyFunctionService.clearErrors();
           break;
 
       }
     },
 
     /**
-     * Toggle that links to the legacy rca
-     * @param {String} urn current metricUrn
+     * Toggles the modal view
     */
-    onLegacyToggle(urn = '') {
-      // later is used here so that the transition occurs after
-      // the component's toggle animation
-      later(() => {
-        if (urn.startsWith('thirdeye:metric')) {
-          const id = urn.split(':')[2];
-          this.send('transitionToRcaDetails', id);
-        } else {
-          this.send('transitionToRca');
-        }
-      }, 1000);
+    onEntityMappingClick() {
+      this.set('showEntityMappingModal', true);
+    },
+
+    /**
+     * Handles the modal submit action
+     * Flushes the cache to reload the related entities
+    */
+    onModalSubmit() {
+      this.get('entitiesService').flushCache();
+      this.notifyPropertyChange('context');
+      this.set('showEntityMappingModal', false);
+    },
+
+    /**
+     * Toggles the create event modal view
+     */
+    onCreateEventClick() {
+      this.set('showCreateEventModal', true);
     }
   }
 });
-

@@ -63,7 +63,7 @@
     list-style: none;
     margin-left: -39px;
     margin-bottom: 0;
-    max-width: 250px;
+    max-width: 280px;
   }
 
   &__list-item {
@@ -91,6 +91,12 @@
     }
   }
 
+  &__list-value {
+    font-size: 12px;
+    font-weight: 600;
+    margin-left: 5px;
+  }
+
   &__value-label {
     font-size: 13px;
 
@@ -105,8 +111,15 @@
 
   &__select {
     display: inline-block;
-    margin-right: 30px;
     width: 180px;
+
+    &--margin-right {
+      margin-right: 30px;
+    }
+
+    &--margin-left {
+      margin-left: 5px;
+    }
   }
 
   &__link-wrapper {
@@ -136,6 +149,17 @@
       margin: 14px 0 0 -26px;
     }
 
+    &--status-no-margin {
+      -webkit-animation: fadeinout 4s linear forwards;
+      animation: fadeinout 4s linear forwards;
+      font-size: 20px;
+    }
+
+    &--hidden {
+      visibility: hidden;
+      font-size: 20px;
+    }
+
     &--small {
       font-size: 11px;
       margin-left: 0px;
@@ -144,5 +168,21 @@
 
   &--performance {
     margin-top: 30px;
+  }
+
+  &__redirect-link {
+    display: flex;
+    justify-content: center;
+    border: solid 1px $te-light-grey;
+    border-top: none;
+    padding-top: 10px;
+    padding-bottom: 10px;
+    margin-bottom: 30px;
+  }
+
+  &--no-margin {
+    width: 100%;
+    max-width: 100%;
+    margin: 0;
   }
 }

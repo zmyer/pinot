@@ -19,11 +19,15 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 
 import javax.validation.Validation;
+import org.apache.commons.collections.CollectionUtils;
+import org.apache.commons.collections.MapUtils;
 import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang.exception.ExceptionUtils;
 import org.joda.time.Period;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -417,6 +421,48 @@ public abstract class ThirdEyeUtils {
       }
     }
     return dataSource;
+  }
+
+  /**
+   * Converts a Properties, which is a Map<Object, Object>, to a Map<String, String>.
+   *
+   * @param properties the properties to be converted
+   * @return the map of the properties.
+   */
+  public static Map<String, String> propertiesToStringMap(Properties properties) {
+    Map<String, String> map = new HashMap<>();
+    if (MapUtils.isNotEmpty(properties)) {
+      for (String propertyKey : properties.stringPropertyNames()) {
+        map.put(propertyKey, properties.getProperty(propertyKey));
+      }
+    }
+    return map;
+  }
+
+  /**
+   * Prints messages and stack traces of the given list of exceptions in a string.
+   *
+   * @param exceptions the list of exceptions to be printed.
+   * @param maxWordCount the length limitation of the string; set to 0 to remove the limitation.
+   *
+   * @return the string that contains the messages and stack traces of the given exceptions.
+   */
+  public static String exceptionsToString(List<Exception> exceptions, int maxWordCount) {
+    String message = "";
+    if (CollectionUtils.isNotEmpty(exceptions)) {
+      StringBuilder sb = new StringBuilder();
+      for (Exception exception : exceptions) {
+        sb.append(ExceptionUtils.getStackTrace(exception));
+        if (maxWordCount > 0 && sb.length() > maxWordCount) {
+          message = sb.toString().substring(0, maxWordCount) + "\n...";
+          break;
+        }
+      }
+      if (message.equals("")) {
+        message = sb.toString();
+      }
+    }
+    return message;
   }
 
   /**

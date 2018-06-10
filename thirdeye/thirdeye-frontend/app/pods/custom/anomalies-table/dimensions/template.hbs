@@ -1,0 +1,19 @@
+<ul class="te-anomaly-table__list">
+  <li class="te-anomaly-table__list-item" title="{{record.anomaly.functionName}}">
+    {{#link-to "manage.alert.explore" record.anomaly.functionId (query-params duration=record.queryDuration startDate=record.queryStart endDate=record.queryEnd) class="te-anomaly-table__link"}}
+      {{record.anomaly.functionName}}
+    {{/link-to}}
+  </li>
+  {{#if record.anomaly.comment}}
+    <li class="te-anomaly-table__list-item" title="{{record.anomaly.comment}}">
+      comment: {{record.anomaly.comment}}
+    </li>
+  {{/if}}
+  {{#each-in record.anomaly.dimensions as |dimName dimList|}}
+     <li class="te-anomaly-table__list-item" title="{{dimension.dimensionVal}}">
+       {{dimName}}:<span class="te-anomaly-table__list-value">{{dimList}}</span>
+     </li>
+    {{else}}
+      -
+  {{/each-in}}
+</ul>
