@@ -14,6 +14,7 @@ import {
   computed,
   set,
   setProperties,
+  getProperties,
   getWithDefault
 } from '@ember/object';
 import {
@@ -26,6 +27,7 @@ import {
   extractSeverity
 } from 'thirdeye-frontend/utils/manage-alert-utils';
 import { inject as service } from '@ember/service';
+import config from 'thirdeye-frontend/config/environment';
 import floatToPercent from 'thirdeye-frontend/utils/float-to-percent';
 import * as anomalyUtil from 'thirdeye-frontend/utils/anomaly';
 
@@ -70,6 +72,7 @@ export default Controller.extend({
     this.setProperties({
       filters: {},
       loadedWowData: [],
+      topDimensions: [],
       predefinedRanges: {},
       missingAnomalyProps: {},
       selectedSortMode: '',
@@ -87,7 +90,6 @@ export default Controller.extend({
       sortColumnStartUp: false,
       sortColumnScoreUp: false,
       sortColumnChangeUp: false,
-      isFetchingDimensions: false,
       isDimensionFetchDone: false,
       sortColumnResolutionUp: false,
       checkReplayInterval: 2000, // 2 seconds
@@ -210,6 +212,38 @@ export default Controller.extend({
   }),
 
   /**
+   * Preps a mailto link containing the currently selected metric name
+   * @method graphMailtoLink
+   * @return {String} the URI-encoded mailto link
+   */
+  graphMailtoLink: computed(
+    'alertData',
+    function() {
+      const alertData = this.get('alertData');
+      const fullMetricName = `${alertData.collection}::${alertData.metric}`;
+      const recipient = config.email;
+      const subject = 'TE Self-Serve Alert Page: error loading metric and/or alert records';
+      const body = `TE Team, please look into a possible inconsistency issue with [ ${fullMetricName} ] in alert page for alert id ${alertData.id}
+                    Alert page: ${location.href}`;
+      const mailtoString = `mailto:${recipient}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+      return mailtoString;
+    }
+  ),
+
+  /**
+   * Determines whether there is a discrepancy between anomaly ids detected and anomaly records loaded
+   * @type {Boolean}
+   */
+  isAnomalyLoadError: computed(
+    'totalAnomalies',
+    'filteredAnomalies.length',
+    function() {
+      const { totalAnomalies, filteredAnomalies } = getProperties(this, 'totalAnomalies', 'filteredAnomalies');
+      return totalAnomalies !== filteredAnomalies.length;
+    }
+  ),
+
+  /**
    * Data needed to render the stats 'cards' above the anomaly graph for this alert
    * @type {Object}
    */
@@ -307,6 +341,18 @@ export default Controller.extend({
         });
       }
       return anomalies;
+    }
+  ),
+
+  /**
+   * All selected dimensions to be loaded into graph
+   * @returns {Array}
+   */
+  selectedDimensions: computed(
+    'topDimensions',
+    'topDimensions.@each.isSelected',
+    function() {
+      return this.get('topDimensions').filterBy('isSelected');
     }
   ),
 

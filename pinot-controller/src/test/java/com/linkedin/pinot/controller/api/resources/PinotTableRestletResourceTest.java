@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2014-2016 LinkedIn Corp. (pinot-core@linkedin.com)
+ * Copyright (C) 2014-2018 LinkedIn Corp. (pinot-core@linkedin.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,6 +28,7 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
+import org.json.JSONException;
 import org.json.JSONObject;
 import org.testng.Assert;
 import org.testng.annotations.AfterClass;
@@ -117,6 +118,17 @@ public class PinotTableRestletResourceTest extends ControllerTest {
       Assert.assertTrue(e.getMessage().startsWith("Server returned HTTP response code: 409"));
     }
 
+    // Create an OFFLINE table with invalid replication config
+    offlineTableConfig.getValidationConfig().setReplication("abc");
+    offlineTableConfig.setTableName("invalid_replication_table");
+    try {
+      sendPostRequest(_createTableUrl, offlineTableConfig.toJSONConfigString());
+      Assert.fail("Creation of an invalid OFFLINE table does not fail");
+    } catch (IOException e) {
+      // Expected 400 Bad Request
+      Assert.assertTrue(e.getMessage().startsWith("Server returned HTTP response code: 400"));
+    }
+
     // Create a REALTIME table with an invalid name which should fail
     // NOTE: Set bad table name inside table config builder is not allowed, so have to explicitly set in table config
     TableConfig realtimeTableConfig = _realtimeBuilder.build();
@@ -140,9 +152,20 @@ public class PinotTableRestletResourceTest extends ControllerTest {
       Assert.assertTrue(e.getMessage().startsWith("Server returned HTTP response code: 400"));
     }
 
+    // Creating a REALTIME table with a different schema name in the config should succeed (backwards compatibility mode)
+    String schemaName = "differentRTSchema";
+    _realtimeBuilder.setSchemaName(schemaName);
+    // use a different table name so it doesn't associate a previously uploaded schema with the table
+    _realtimeBuilder.setTableName("RT_TABLE");
+    addDummySchema(schemaName);
+    TableConfig diffConfig = _realtimeBuilder.build();
+    sendPostRequest(_createTableUrl, diffConfig.toJSONConfigString());
+
     // Create a REALTIME table with a valid name and schema which should succeed
-    realtimeTableConfig.setTableName(REALTIME_TABLE_NAME);
-    String realtimeTableJSONConfigString = realtimeTableConfig.toJSONConfigString();
+    _realtimeBuilder.setTableName(REALTIME_TABLE_NAME);
+    _realtimeBuilder.setSchemaName(REALTIME_TABLE_NAME);
+    TableConfig config = _realtimeBuilder.build();
+    String realtimeTableJSONConfigString = config.toJSONConfigString();
     sendPostRequest(_createTableUrl, realtimeTableJSONConfigString);
 
     // TODO: check whether we should allow POST request to create REALTIME table that already exists
@@ -222,6 +245,15 @@ public class PinotTableRestletResourceTest extends ControllerTest {
     modifiedConfig = getTableConfig(tableName, "REALTIME");
     Assert.assertNotNull(modifiedConfig.getQuotaConfig());
     Assert.assertEquals(modifiedConfig.getQuotaConfig().getStorage(), "10G");
+    Assert.assertNull(modifiedConfig.getQuotaConfig().getMaxQueriesPerSecond());
+
+    quota.setMaxQueriesPerSecond("100.00");
+    tableConfig.setQuotaConfig(quota);
+    sendPutRequest(_controllerRequestURLBuilder.forUpdateTableConfig(tableName), tableConfig.toJSONConfigString());
+    modifiedConfig = getTableConfig(tableName, "REALTIME");
+    Assert.assertNotNull(modifiedConfig.getQuotaConfig().getMaxQueriesPerSecond());
+    Assert.assertEquals(modifiedConfig.getQuotaConfig().getMaxQueriesPerSecond(), "100.00");
+
     boolean notFoundException = false;
     try {
       // table does not exist
@@ -233,6 +265,52 @@ public class PinotTableRestletResourceTest extends ControllerTest {
       notFoundException = true;
     }
     Assert.assertTrue(notFoundException);
+  }
+
+  @Test(expectedExceptions = FileNotFoundException.class)
+  public void rebalanceNonExistentOfflineTable() throws IOException, JSONException {
+    String tableName = "nonExistentTable";
+    // should result in file not found exception
+    sendPostRequest(_controllerRequestURLBuilder.forTableRebalance(tableName, "offline"), null);
+  }
+
+  @Test(expectedExceptions = FileNotFoundException.class)
+  public void rebalanceNonExistentRealtimeTable() throws IOException, JSONException {
+    String tableName = "nonExistentTable";
+    // should result in file not found exception
+    sendPostRequest(_controllerRequestURLBuilder.forTableRebalance(tableName, "realtime"), null);
+  }
+
+  @Test
+  public void rebalanceOfflineTable() {
+    String tableName = "testOfflineTable";
+    _offlineBuilder.setTableName(tableName);
+    // create the table
+    try {
+      TableConfig offlineTableConfig = _offlineBuilder.build();
+      sendPostRequest(_createTableUrl, offlineTableConfig.toJSONConfigString());
+    } catch (Exception e) {
+      Assert.fail("Failed to create offline table " + tableName + "Error: " + e.getMessage());
+    }
+
+    // rebalance should not throw exception
+    try {
+      sendPostRequest(_controllerRequestURLBuilder.forTableRebalance(tableName, "offline"), null);
+    } catch (Exception e) {
+      Assert.fail("Failed to rebalance existing offline table " + tableName);
+    }
+
+    // rebalance should throw exception because realtime table does not exist
+    try {
+      sendPostRequest(_controllerRequestURLBuilder.forTableRebalance(tableName, "realtime"), null);
+    } catch (Exception e) {
+      if (!(e instanceof FileNotFoundException)) {
+        Assert.fail("Did not fail to create non existent realtime table " + tableName);
+      } else {
+        return;
+      }
+    }
+    Assert.fail("Did not fail to create non existent realtime table " + tableName);
   }
 
   @AfterClass

@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2014-2016 LinkedIn Corp. (pinot-core@linkedin.com)
+ * Copyright (C) 2014-2018 LinkedIn Corp. (pinot-core@linkedin.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -121,12 +121,12 @@ public class MultiplePinotSegmentRecordReader implements RecordReader {
   }
 
   @Override
-  public GenericRow next() throws IOException {
+  public GenericRow next() {
     return next(new GenericRow());
   }
 
   @Override
-  public GenericRow next(GenericRow reuse) throws IOException {
+  public GenericRow next(GenericRow reuse) {
     if (isSortedSegment()) {
       GenericRowWithReader genericRowComparable = _priorityQueue.poll();
       GenericRow currentRow = genericRowComparable.getRow();
@@ -160,7 +160,7 @@ public class MultiplePinotSegmentRecordReader implements RecordReader {
   }
 
   @Override
-  public void rewind() throws IOException {
+  public void rewind() {
     for (PinotSegmentRecordReader recordReader : _pinotSegmentRecordReaders) {
       recordReader.rewind();
     }
@@ -183,7 +183,7 @@ public class MultiplePinotSegmentRecordReader implements RecordReader {
   }
 
   @Override
-  public void close() throws IOException {
+  public void close() {
     for (PinotSegmentRecordReader recordReader : _pinotSegmentRecordReaders) {
       recordReader.close();
     }

@@ -8,9 +8,11 @@ export default DS.Model.extend({
   current: DS.attr(),
   baseline: DS.attr(),
   feedback: DS.attr(),
+  comment: DS.attr(),
   metricName: DS.attr(),
   metricId: DS.attr(),
   functionName: DS.attr(),
   functionId: DS.attr(),
   dataset: DS.attr()
 });
+//DEMO: avoidTheSharedObject: attr('object', { defaultValue: () => {} })

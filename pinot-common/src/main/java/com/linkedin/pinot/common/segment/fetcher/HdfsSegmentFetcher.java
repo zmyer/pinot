@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2014-2016 LinkedIn Corp. (pinot-core@linkedin.com)
+ * Copyright (C) 2014-2018 LinkedIn Corp. (pinot-core@linkedin.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,8 +29,8 @@ import org.apache.hadoop.security.UserGroupInformation;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import static com.linkedin.pinot.common.utils.CommonConstants.SegmentFetcher.HdfsSegmentFetcher.*;
-import static com.linkedin.pinot.common.utils.CommonConstants.SegmentFetcher.*;
+import static com.linkedin.pinot.common.utils.CommonConstants.SegmentOperations.HadoopSegmentOperations.*;
+import static com.linkedin.pinot.common.utils.CommonConstants.SegmentOperations.*;
 
 
 public class HdfsSegmentFetcher implements SegmentFetcher {
@@ -66,7 +66,7 @@ public class HdfsSegmentFetcher implements SegmentFetcher {
   }
 
   private void authenticate(Configuration hadoopConf, org.apache.commons.configuration.Configuration configs) {
-    String principal = configs.getString(PRINCIPLE);
+    String principal = configs.getString(PRINCIPAL);
     String keytab = configs.getString(KEYTAB);
     if (!Strings.isNullOrEmpty(principal) && !Strings.isNullOrEmpty(keytab)) {
       UserGroupInformation.setConfiguration(hadoopConf);

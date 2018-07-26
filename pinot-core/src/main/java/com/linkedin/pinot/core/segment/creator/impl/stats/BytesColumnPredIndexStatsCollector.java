@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2014-2016 LinkedIn Corp. (pinot-core@linkedin.com)
+ * Copyright (C) 2014-2018 LinkedIn Corp. (pinot-core@linkedin.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -58,18 +58,7 @@ public class BytesColumnPredIndexStatsCollector extends AbstractColumnStatistics
    */
   private void collectEntry(Object entry, ObjectSet<ByteArray> set) {
     if (entry instanceof Object[]) {
-      for (final Object e : (Object[]) entry) {
-        byte[] value = (byte[]) e;
-        set.add(new ByteArray(value));
-
-        _lengthOfShortestEntry = Math.min(_lengthOfShortestEntry, value.length);
-        _lengthOfLongestEntry = Math.max(_lengthOfLongestEntry, value.length);
-      }
-
-      if (maxNumberOfMultiValues < ((Object[]) entry).length) {
-        maxNumberOfMultiValues = ((Object[]) entry).length;
-      }
-      updateTotalNumberOfEntries((Object[]) entry);
+      throw new UnsupportedOperationException("Multi-valued column not supported for byte array data type.");
     } else {
       ByteArray value;
       if (entry != null) {

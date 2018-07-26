@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2014-2016 LinkedIn Corp. (pinot-core@linkedin.com)
+ * Copyright (C) 2014-2018 LinkedIn Corp. (pinot-core@linkedin.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -201,6 +201,11 @@ public class Deserializer {
       LOGGER.debug("Using subset config {} and config path {}", config, configPath);
     }
 
+    // Pre-inject hook?
+    if (ConfigNodeLifecycleAware.class.isAssignableFrom(clazz)) {
+      ((ConfigNodeLifecycleAware) rootObject).preInject();
+    }
+
     // Iterate over the root class fields
     List<Field> declaredFields = getClassFields(clazz);
 
@@ -270,6 +275,11 @@ public class Deserializer {
 
     // Return null if we did not write any fields in the destination object
     if (valueInjected) {
+      // Post-inject hook?
+      if (ConfigNodeLifecycleAware.class.isAssignableFrom(clazz)) {
+        ((ConfigNodeLifecycleAware) rootObject).postInject();
+      }
+
       if (LOGGER.isDebugEnabled()) {
         LOGGER.debug("Returning deserialized value of {}", rootObject);
       }

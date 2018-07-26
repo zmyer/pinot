@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2014-2016 LinkedIn Corp. (pinot-core@linkedin.com)
+ * Copyright (C) 2014-2018 LinkedIn Corp. (pinot-core@linkedin.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package com.linkedin.pinot.core.realtime.converter.stats;
 
 import com.linkedin.pinot.core.common.Block;
@@ -21,7 +20,6 @@ import com.linkedin.pinot.core.common.BlockValSet;
 import com.linkedin.pinot.core.common.Constants;
 import com.linkedin.pinot.core.data.partition.PartitionFunction;
 import com.linkedin.pinot.core.segment.creator.ColumnStatistics;
-import com.linkedin.pinot.core.segment.creator.impl.V1Constants;
 import com.linkedin.pinot.core.segment.index.data.source.ColumnDataSource;
 import java.util.List;
 import org.apache.commons.lang.math.IntRange;
@@ -210,13 +208,13 @@ public class RealtimeNoDictionaryColStatistics implements ColumnStatistics {
   private int lengthOfDataType() {
     switch (_blockValSet.getValueType()) {
       case INT:
-        return V1Constants.Numbers.INTEGER_SIZE;
+        return Integer.BYTES;
       case LONG:
-        return V1Constants.Numbers.LONG_SIZE;
+        return Long.BYTES;
       case FLOAT:
-        return V1Constants.Numbers.FLOAT_SIZE;
+        return Float.BYTES;
       case DOUBLE:
-        return V1Constants.Numbers.DOUBLE_SIZE;
+        return Double.BYTES;
       default:
         throw new UnsupportedOperationException();
     }

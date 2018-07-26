@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2014-2016 LinkedIn Corp. (pinot-core@linkedin.com)
+ * Copyright (C) 2014-2018 LinkedIn Corp. (pinot-core@linkedin.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,13 +15,13 @@
  */
 package com.linkedin.pinot.controller.helix.core;
 
+import com.linkedin.pinot.common.config.RealtimeTagConfig;
 import com.linkedin.pinot.common.config.TableConfig;
 import com.linkedin.pinot.common.exception.InvalidConfigException;
 import com.linkedin.pinot.common.metadata.ZKMetadataProvider;
 import com.linkedin.pinot.common.metadata.instance.InstanceZKMetadata;
 import com.linkedin.pinot.common.utils.CommonConstants;
 import com.linkedin.pinot.common.utils.CommonConstants.Helix;
-import com.linkedin.pinot.common.utils.ControllerTenantNameBuilder;
 import com.linkedin.pinot.common.utils.StringUtil;
 import com.linkedin.pinot.common.utils.retry.RetryPolicies;
 import com.linkedin.pinot.controller.helix.core.realtime.PinotLLCRealtimeSegmentManager;
@@ -31,7 +31,6 @@ import com.linkedin.pinot.core.realtime.stream.PinotStreamConsumerFactory;
 import com.linkedin.pinot.core.realtime.stream.StreamMetadata;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.Callable;
 import org.apache.commons.compress.utils.IOUtils;
 import org.apache.helix.HelixAdmin;
@@ -100,79 +99,12 @@ public class PinotTableIdealStateBuilder {
     return state;
   }
 
-  /**
-   * Remove a segment is also required to recompute the ideal state.
-   *
-   * @param tableName
-   * @param segmentId
-   * @param helixAdmin
-   * @param helixClusterName
-   * @return
-   */
-  public synchronized static IdealState dropSegmentFromIdealStateFor(String tableName, String segmentId,
-      HelixAdmin helixAdmin, String helixClusterName) {
-
-    final IdealState currentIdealState = helixAdmin.getResourceIdealState(helixClusterName, tableName);
-    final Set<String> currentInstanceSet = currentIdealState.getInstanceSet(segmentId);
-    if (!currentInstanceSet.isEmpty() && currentIdealState.getPartitionSet().contains(segmentId)) {
-      for (String instanceName : currentIdealState.getInstanceSet(segmentId)) {
-        currentIdealState.setPartitionState(segmentId, instanceName, "DROPPED");
-      }
-    } else {
-      throw new RuntimeException("Cannot found segmentId - " + segmentId + " in table - " + tableName);
-    }
-    return currentIdealState;
-  }
-
-  /**
-   * Remove a segment is also required to recompute the ideal state.
-   *
-   * @param tableName
-   * @param segmentId
-   * @param helixAdmin
-   * @param helixClusterName
-   * @return
-   */
-  public synchronized static IdealState removeSegmentFromIdealStateFor(String tableName, String segmentId,
-      HelixAdmin helixAdmin, String helixClusterName) {
-
-    final IdealState currentIdealState = helixAdmin.getResourceIdealState(helixClusterName, tableName);
-    if (currentIdealState != null && currentIdealState.getPartitionSet() != null
-        && currentIdealState.getPartitionSet().contains(segmentId)) {
-      currentIdealState.getPartitionSet().remove(segmentId);
-    } else {
-      throw new RuntimeException("Cannot found segmentId - " + segmentId + " in table - " + tableName);
-    }
-    return currentIdealState;
-  }
-
-  /**
-   *
-   * @param brokerResourceName
-   * @param helixAdmin
-   * @param helixClusterName
-   * @return
-   */
-  public static IdealState removeBrokerResourceFromIdealStateFor(String brokerResourceName, HelixAdmin helixAdmin,
-      String helixClusterName) {
-    final IdealState currentIdealState =
-        helixAdmin.getResourceIdealState(helixClusterName, CommonConstants.Helix.BROKER_RESOURCE_INSTANCE);
-    final Set<String> currentInstanceSet = currentIdealState.getInstanceSet(brokerResourceName);
-    if (!currentInstanceSet.isEmpty() && currentIdealState.getPartitionSet().contains(brokerResourceName)) {
-      currentIdealState.getPartitionSet().remove(brokerResourceName);
-    } else {
-      throw new RuntimeException("Cannot found broker resource - " + brokerResourceName + " in broker resource ");
-    }
-    return currentIdealState;
-  }
-
   public static IdealState buildInitialHighLevelRealtimeIdealStateFor(String realtimeTableName,
       TableConfig realtimeTableConfig, HelixAdmin helixAdmin, String helixClusterName,
       ZkHelixPropertyStore<ZNRecord> zkHelixPropertyStore) {
-    String realtimeServerTenant =
-        ControllerTenantNameBuilder.getRealtimeTenantNameForTenant(realtimeTableConfig.getTenantConfig().getServer());
+    RealtimeTagConfig realtimeTagConfig = new RealtimeTagConfig(realtimeTableConfig);
     final List<String> realtimeInstances = helixAdmin.getInstancesInClusterWithTag(helixClusterName,
-        realtimeServerTenant);
+        realtimeTagConfig.getConsumingServerTag());
     IdealState idealState = buildEmptyKafkaConsumerRealtimeIdealStateFor(realtimeTableName, 1);
     if (realtimeInstances.size() % Integer.parseInt(realtimeTableConfig.getValidationConfig().getReplication()) != 0) {
       throw new RuntimeException(

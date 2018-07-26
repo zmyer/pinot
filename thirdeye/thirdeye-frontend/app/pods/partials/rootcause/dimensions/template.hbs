@@ -1,25 +1,9 @@
 {{#shared/common-tabs selection=activeSubTabs.dimensions activeTab=activeSubTabs.dimensions as |subtab|}}
   {{#subtab.tablist as |subtablist|}}
-    {{#if model.isDevEnv}} {{!--  Remove conditional when table view is ready  --}}
-      {{#subtablist.tab name="table"}}Table{{/subtablist.tab}}
-    {{/if}}
     {{#subtablist.tab name="heatmap"}}Heatmap{{/subtablist.tab}}
+    {{#subtablist.tab name="table"}}Table{{/subtablist.tab}}
+    {{#subtablist.tab name="algorithm"}}Algorithm{{/subtablist.tab}}
   {{/subtab.tablist}}
-
-  {{#if model.isDevEnv}} {{!--  Remove conditional when table view is ready  --}}
-    {{#subtab.tabpanel name="table"}}
-      {{models-table
-        data=model.advancedDimensionList
-        columns=model.advancedDimensionColumns
-        showColumnsDropdown=false
-        showGlobalFilter=false
-        filteringIgnoreCase=true
-        multipleExpand=true
-        pageSize=15
-        showComponentFooter=true
-      }}
-    {{/subtab.tabpanel}}
-  {{/if}}
 
   {{#subtab.tabpanel name="heatmap"}}
     {{#if isLoadingBreakdowns}}
@@ -27,7 +11,6 @@
         {{ember-spinner}}
       </div>
     {{/if}}
-
     {{rootcause-heatmap
       entities=entities
       breakdowns=breakdowns
@@ -36,4 +19,31 @@
       onSelection=(action "heatmapOnSelection")
     }}
   {{/subtab.tabpanel}}
+
+  {{#subtab.tabpanel name="table"}}
+    {{#if isLoadingBreakdowns}}
+      <div class="spinner-wrapper spinner-wrapper--card">
+        {{ember-spinner}}
+      </div>
+    {{/if}}
+    {{rootcause-dimensions-table
+      entities=entities
+      breakdowns=breakdowns
+      metricUrn=metricUrn
+      selectedUrns=selectedUrns
+      onSelection=(action "onSelection")
+    }}
+  {{/subtab.tabpanel}}
+
+  {{#subtab.tabpanel name="algorithm"}}
+    {{rootcause-dimensions-algorithm
+      entities=entities
+      metricUrn=metricUrn
+      range=context.anomalyRange
+      mode=context.compareMode
+      selectedUrns=selectedUrns
+      onSelection=(action "onSelection")
+    }}
+  {{/subtab.tabpanel}}
+
 {{/shared/common-tabs}}

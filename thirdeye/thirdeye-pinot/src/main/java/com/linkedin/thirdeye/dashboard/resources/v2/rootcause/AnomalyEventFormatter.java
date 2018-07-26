@@ -1,5 +1,6 @@
 package com.linkedin.thirdeye.dashboard.resources.v2.rootcause;
 
+import com.google.common.base.Preconditions;
 import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.Multimap;
 import com.google.common.collect.SetMultimap;
@@ -8,10 +9,12 @@ import com.linkedin.thirdeye.dashboard.resources.v2.ResourceUtils;
 import com.linkedin.thirdeye.dashboard.resources.v2.RootCauseEventEntityFormatter;
 import com.linkedin.thirdeye.dashboard.resources.v2.pojo.RootCauseEventEntity;
 import com.linkedin.thirdeye.datalayer.bao.DatasetConfigManager;
+import com.linkedin.thirdeye.datalayer.bao.DetectionConfigManager;
 import com.linkedin.thirdeye.datalayer.bao.MergedAnomalyResultManager;
 import com.linkedin.thirdeye.datalayer.bao.MetricConfigManager;
 import com.linkedin.thirdeye.datalayer.dto.AnomalyFunctionDTO;
 import com.linkedin.thirdeye.datalayer.dto.DatasetConfigDTO;
+import com.linkedin.thirdeye.datalayer.dto.DetectionConfigDTO;
 import com.linkedin.thirdeye.datalayer.dto.MergedAnomalyResultDTO;
 import com.linkedin.thirdeye.datalayer.dto.MetricConfigDTO;
 import com.linkedin.thirdeye.datasource.DAORegistry;
@@ -20,7 +23,6 @@ import com.linkedin.thirdeye.rootcause.impl.EventEntity;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import org.apache.commons.lang.StringUtils;
 
 
@@ -40,21 +42,26 @@ public class AnomalyEventFormatter extends RootCauseEventEntityFormatter {
   public static final String ATTR_WEIGHT = "weight";
   public static final String ATTR_SCORE = "score";
   public static final String ATTR_METRIC_GRANULARITY = "metricGranularity";
+  public static final String ATTR_STATUS_CLASSIFICATION = "statusClassification";
 
   private final MergedAnomalyResultManager anomalyDAO;
   private final MetricConfigManager metricDAO;
   private final DatasetConfigManager datasetDAO;
+  private final DetectionConfigManager detectionDAO;
 
   public AnomalyEventFormatter() {
     this.anomalyDAO = DAORegistry.getInstance().getMergedAnomalyResultDAO();
     this.metricDAO = DAORegistry.getInstance().getMetricConfigDAO();
     this.datasetDAO = DAORegistry.getInstance().getDatasetConfigDAO();
+    this.detectionDAO = DAORegistry.getInstance().getDetectionConfigManager();
   }
 
-  public AnomalyEventFormatter(MergedAnomalyResultManager anomalyDAO, MetricConfigManager metricDAO, DatasetConfigManager datasetDAO) {
+  public AnomalyEventFormatter(MergedAnomalyResultManager anomalyDAO, MetricConfigManager metricDAO, DatasetConfigManager datasetDAO,
+      DetectionConfigManager detectionDAO) {
     this.anomalyDAO = anomalyDAO;
     this.metricDAO = metricDAO;
     this.datasetDAO = datasetDAO;
+    this.detectionDAO = detectionDAO;
   }
 
   @Override
@@ -67,9 +74,30 @@ public class AnomalyEventFormatter extends RootCauseEventEntityFormatter {
     AnomalyEventEntity e = (AnomalyEventEntity) entity;
 
     MergedAnomalyResultDTO anomaly = this.anomalyDAO.findById(e.getId());
-    AnomalyFunctionDTO function = anomaly.getFunction();
-    MetricConfigDTO metric = this.getMetricFromFunction(function);
+    Multimap<String, String> attributes = ArrayListMultimap.create();
+
+    MetricConfigDTO metric = null;
+    String functionName = "unknown";
+    if (anomaly.getDetectionConfigId() != null){
+      metric = getMetricByName(anomaly.getMetric(), anomaly.getCollection());
+      DetectionConfigDTO detectionConfigDTO = detectionDAO.findById(anomaly.getDetectionConfigId());
+      if (detectionConfigDTO == null){
+        throw new IllegalArgumentException(String.format("could not resolve detection config id %d", anomaly.getDetectionConfigId()));
+      }
+      functionName = detectionConfigDTO.getName();
+    }
+
+    if (anomaly.getFunctionId() != null){
+      AnomalyFunctionDTO function = anomaly.getFunction();
+      functionName = function.getFunctionName();
+      attributes.put(ATTR_FUNCTION_ID, String.valueOf(function.getId()));
+      metric = this.getMetricFromFunction(function);
+    }
+
+    attributes.put(ATTR_FUNCTION, functionName);
+    Preconditions.checkNotNull(metric);
     DatasetConfigDTO dataset = this.datasetDAO.findByDataset(metric.getDataset());
+
 
     String comment = "";
     AnomalyFeedbackType status = AnomalyFeedbackType.NO_FEEDBACK;
@@ -80,12 +108,9 @@ public class AnomalyEventFormatter extends RootCauseEventEntityFormatter {
 
     Map<String, String> externalUrls = ResourceUtils.getExternalURLs(anomaly, this.metricDAO, this.datasetDAO);
 
-    Multimap<String, String> attributes = ArrayListMultimap.create();
     attributes.put(ATTR_DATASET, anomaly.getCollection());
     attributes.put(ATTR_METRIC, anomaly.getMetric());
     attributes.put(ATTR_METRIC_ID, String.valueOf(metric.getId()));
-    attributes.put(ATTR_FUNCTION, function.getFunctionName());
-    attributes.put(ATTR_FUNCTION_ID, String.valueOf(function.getId()));
     attributes.put(ATTR_CURRENT, String.valueOf(anomaly.getAvgCurrentVal()));
     attributes.put(ATTR_BASELINE, String.valueOf(anomaly.getAvgBaselineVal()));
     attributes.put(ATTR_STATUS, status.toString());
@@ -95,6 +120,7 @@ public class AnomalyEventFormatter extends RootCauseEventEntityFormatter {
     attributes.put(ATTR_SCORE, String.valueOf(anomaly.getScore()));
     attributes.put(ATTR_WEIGHT, String.valueOf(anomaly.getWeight()));
     attributes.put(ATTR_METRIC_GRANULARITY, dataset.bucketTimeGranularity().toAggregationGranularityString());
+    attributes.put(ATTR_STATUS_CLASSIFICATION, ResourceUtils.getStatusClassification(anomaly).toString());
 
     // external urls as attributes
     for (Map.Entry<String, String> entry : externalUrls.entrySet()) {
@@ -107,8 +133,11 @@ public class AnomalyEventFormatter extends RootCauseEventEntityFormatter {
     List<String> dimensionStrings = new ArrayList<>();
     for (Map.Entry<String, String> entry : filters.entries()) {
       dimensionStrings.add(entry.getValue());
-      attributes.put(ATTR_DIMENSIONS, entry.getKey());
       attributes.put(entry.getKey(), entry.getValue());
+
+      if (!attributes.containsEntry(ATTR_DIMENSIONS, entry.getKey())) {
+        attributes.put(ATTR_DIMENSIONS, entry.getKey());
+      }
     }
 
     String dimensionString = "";
@@ -116,7 +145,7 @@ public class AnomalyEventFormatter extends RootCauseEventEntityFormatter {
       dimensionString = String.format(" (%s)", StringUtils.join(dimensionStrings, ", "));
     }
 
-    String label = String.format("%s%s", function.getFunctionName(), dimensionString);
+    String label = String.format("%s%s", functionName, dimensionString);
     String link = String.format("#/rootcause?anomalyId=%d", anomaly.getId());
 
     RootCauseEventEntity out = makeRootCauseEventEntity(entity, label, link, anomaly.getStartTime(), anomaly.getEndTime(), null);
@@ -135,12 +164,16 @@ public class AnomalyEventFormatter extends RootCauseEventEntityFormatter {
       return metric;
 
     } else {
-      MetricConfigDTO metric = this.metricDAO.findByMetricAndDataset(function.getMetric(), function.getCollection());
-      if (metric == null) {
-        throw new IllegalArgumentException(String.format("Could not resolve metric '%s' in dataset '%s'", function.getMetric(), function.getCollection()));
-      }
-      return metric;
+      return getMetricByName(function.getMetric(), function.getCollection());
 
     }
+  }
+
+  private MetricConfigDTO getMetricByName(String metric, String dataset) {
+    MetricConfigDTO metricDTO = this.metricDAO.findByMetricAndDataset(metric, dataset);
+    if (metricDTO == null) {
+      throw new IllegalArgumentException(String.format("Could not resolve metric '%s' in dataset '%s'", metric, dataset));
+    }
+    return metricDTO;
   }
 }

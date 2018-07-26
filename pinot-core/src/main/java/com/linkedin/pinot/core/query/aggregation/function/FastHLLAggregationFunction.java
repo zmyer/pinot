@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2014-2016 LinkedIn Corp. (pinot-core@linkedin.com)
+ * Copyright (C) 2014-2018 LinkedIn Corp. (pinot-core@linkedin.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,20 +29,18 @@ import javax.annotation.Nonnull;
 
 
 public class FastHLLAggregationFunction implements AggregationFunction<HyperLogLog, Long> {
-  private static final String NAME = AggregationFunctionFactory.AggregationFunctionType.FASTHLL.getName();
-
-  protected int _log2m = HllConstants.DEFAULT_LOG2M;
+  private int _log2m = HllConstants.DEFAULT_LOG2M;
 
   @Nonnull
   @Override
-  public String getName() {
-    return NAME;
+  public AggregationFunctionType getType() {
+    return AggregationFunctionType.FASTHLL;
   }
 
   @Nonnull
   @Override
   public String getColumnName(@Nonnull String[] columns) {
-    return NAME + "_" + columns[0];
+    return AggregationFunctionType.FASTHLL.getName() + "_" + columns[0];
   }
 
   public void setLog2m(int log2m) {

@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2014-2016 LinkedIn Corp. (pinot-core@linkedin.com)
+ * Copyright (C) 2014-2018 LinkedIn Corp. (pinot-core@linkedin.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -35,12 +35,14 @@ import com.linkedin.pinot.core.segment.creator.impl.V1Constants;
 import com.linkedin.pinot.core.segment.index.SegmentMetadataImpl;
 import com.linkedin.pinot.core.segment.index.data.source.ColumnDataSource;
 import com.linkedin.pinot.core.startree.StarTree;
+import com.linkedin.pinot.core.startree.v2.StarTreeV2;
 import com.linkedin.pinot.core.util.FixedIntArray;
 import com.linkedin.pinot.core.util.FixedIntArrayOffHeapIdMap;
 import com.linkedin.pinot.core.util.IdMap;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import org.roaringbitmap.IntIterator;
@@ -142,7 +144,7 @@ public class MutableSegmentImpl implements MutableSegment {
         String allocationContext = buildAllocationContext(_segmentName, column, V1Constants.Dict.FILE_EXTENSION);
         MutableDictionary dictionary =
             MutableDictionaryFactory.getMutableDictionary(dataType, _offHeap, _memoryManager, dictionaryColumnSize,
-                _statsHistory.getEstimatedCardinality(column), allocationContext);
+                Math.min(_statsHistory.getEstimatedCardinality(column), _capacity), allocationContext);
         _dictionaryMap.put(column, dictionary);
       }
 
@@ -372,6 +374,11 @@ public class MutableSegmentImpl implements MutableSegment {
   }
 
   @Override
+  public List<StarTreeV2> getStarTrees() {
+    return null;
+  }
+
+  @Override
   public GenericRow getRecord(int docId, GenericRow reuse) {
     for (FieldSpec fieldSpec : _schema.getAllFieldSpecs()) {
       String column = fieldSpec.getName();
@@ -406,7 +413,6 @@ public class MutableSegmentImpl implements MutableSegment {
         segmentStats.setMemUsedBytes(totalMemBytes);
         segmentStats.setNumSeconds(numSeconds);
         _statsHistory.addSegmentStats(segmentStats);
-        _statsHistory.save();
       }
     }
 

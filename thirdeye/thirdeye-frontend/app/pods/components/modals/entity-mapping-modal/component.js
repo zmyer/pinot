@@ -1,9 +1,9 @@
 /**
  * Component displaying the entity mapping inside a modal
  * @module components/modals/entity-mapping-modal
- * @property {Boolean} showEntityMapping  - Flag toggling the modal view
- * @property {Object} metric              - primary metric Object
- * @property {Function} onSubmit          - closure action that handles the submit events
+ * @property {Boolean} showEntityMappingModal  - Flag toggling the modal view
+ * @property {Object} metric                   - primary metric Object
+ * @property {Function} onSubmit               - closure action that handles the submit events
  * @example
     {{modals/entity-mapping-modal
       showEntityMappingModal=showEntityMappingModal
@@ -37,7 +37,6 @@ import _ from 'lodash';
 const MAPPING_TYPES = [
   'METRIC',
   'DIMENSION',
-  'SERVICE',
   'DATASET',
   'LIXTAG'
 ];
@@ -104,6 +103,12 @@ export default Component.extend({
    * @type {Array}
    */
   _relatedEntities: Object.assign([]),
+
+  /**
+   * Flag for displaying the modal
+   * @type {boolean}
+   */
+  showEntityMappingModal: true,
 
   /**
    * current logged in user
@@ -270,7 +275,7 @@ export default Component.extend({
   }),
 
   /**
-   * Calculates the params object 
+   * Calculates the params object
    * to be send with the create call
    * @type {Object}
    */
@@ -337,18 +342,13 @@ export default Component.extend({
 
   async init() {
     this._super(...arguments);
-
     const datasets = await fetch(entityMappingApi.getDatasetsUrl).then(checkStatus);
-    const services = await fetch(entityMappingApi.getServicesUrl).then(checkStatus);
 
     if (this.isDestroyed || this.isDestroying) {
       return;
     }
 
-    this.setProperties({
-      datasets,
-      services
-    });
+    set(this, 'datasets', datasets);
   },
 
   /**
@@ -442,6 +442,7 @@ export default Component.extend({
      * @return {undefined}
      */
     onExit() {
+      set(this, 'showEntityMappingModal', false);
       this.onSubmit();
     },
 

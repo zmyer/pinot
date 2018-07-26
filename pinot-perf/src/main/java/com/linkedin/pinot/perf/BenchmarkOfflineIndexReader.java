@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2014-2016 LinkedIn Corp. (pinot-core@linkedin.com)
+ * Copyright (C) 2014-2018 LinkedIn Corp. (pinot-core@linkedin.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -37,6 +37,7 @@ import com.linkedin.pinot.integration.tests.ClusterTest;
 import com.linkedin.pinot.segments.v1.creator.SegmentTestUtils;
 import com.linkedin.pinot.util.TestUtils;
 import java.io.File;
+import java.io.IOException;
 import java.net.URL;
 import java.util.Random;
 import java.util.concurrent.TimeUnit;
@@ -273,7 +274,7 @@ public class BenchmarkOfflineIndexReader {
   }
 
   @TearDown
-  public void tearDown() {
+  public void tearDown() throws IOException {
     _fixedBitSingleValueReader.close();
     _sortedForwardIndexReader.close();
     _fixedBitMultiValueReader.close();

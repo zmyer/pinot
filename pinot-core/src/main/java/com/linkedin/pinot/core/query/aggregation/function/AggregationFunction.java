@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2014-2016 LinkedIn Corp. (pinot-core@linkedin.com)
+ * Copyright (C) 2014-2018 LinkedIn Corp. (pinot-core@linkedin.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,10 +31,10 @@ import javax.annotation.Nonnull;
 public interface AggregationFunction<IntermediateResult, FinalResult extends Comparable> {
 
   /**
-   * Get the name of the aggregation function.
+   * Get the type of the aggregation function.
    */
   @Nonnull
-  String getName();
+  AggregationFunctionType getType();
 
   /**
    * Given the aggregation columns, get the column name for the results.

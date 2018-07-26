@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2014-2016 LinkedIn Corp. (pinot-core@linkedin.com)
+ * Copyright (C) 2014-2018 LinkedIn Corp. (pinot-core@linkedin.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package com.linkedin.pinot.queries;
 import com.clearspring.analytics.stream.quantile.TDigest;
 import com.linkedin.pinot.common.data.DimensionFieldSpec;
 import com.linkedin.pinot.common.data.FieldSpec;
+import com.linkedin.pinot.common.data.MetricFieldSpec;
 import com.linkedin.pinot.common.data.Schema;
 import com.linkedin.pinot.common.response.broker.AggregationResult;
 import com.linkedin.pinot.common.response.broker.BrokerResponseNative;
@@ -35,6 +36,7 @@ import com.linkedin.pinot.core.indexsegment.IndexSegment;
 import com.linkedin.pinot.core.indexsegment.generator.SegmentGeneratorConfig;
 import com.linkedin.pinot.core.indexsegment.immutable.ImmutableSegment;
 import com.linkedin.pinot.core.indexsegment.immutable.ImmutableSegmentLoader;
+import com.linkedin.pinot.core.io.compression.ChunkCompressorFactory;
 import com.linkedin.pinot.core.operator.DocIdSetOperator;
 import com.linkedin.pinot.core.operator.ProjectionOperator;
 import com.linkedin.pinot.core.operator.blocks.IntermediateResultsBlock;
@@ -92,8 +94,8 @@ public class PercentileTDigestQueriesTest extends BaseQueriesTest {
   private static final String TABLE_NAME = "TDIGEST_TABLE";
 
   private static final String[] groups = new String[]{"abc", "def", "ghij", "klmno", "pqrst"};
-  public static final String GROUP_BY_CLAUSE = " group by " + GROUPBY_COLUMN + " TOP " + groups.length;
-  private static final int[] PERCENTILES_TO_COMPUTE = new int[]{10, 20, 25, 30, 40, 50, 60, 70, 75, 80, 90, 95, 99};
+  private static final String GROUP_BY_CLAUSE = " group by " + GROUPBY_COLUMN + " TOP " + groups.length;
+  private static final int[] PERCENTILES_TO_COMPUTE = new int[]{5, 10, 20, 25, 30, 40, 50, 60, 70, 75, 80, 90, 95, 99};
   private static final long RANDOM_SEED = System.nanoTime();
 
   private Random _random;
@@ -129,7 +131,7 @@ public class PercentileTDigestQueriesTest extends BaseQueriesTest {
       throws Exception {
 
     Schema schema = new Schema();
-    schema.addField(new DimensionFieldSpec(TDIGEST_COLUMN, FieldSpec.DataType.BYTES, true));
+    schema.addField(new MetricFieldSpec(TDIGEST_COLUMN, FieldSpec.DataType.BYTES));
     schema.addField(new DimensionFieldSpec(GROUPBY_COLUMN, FieldSpec.DataType.STRING, true));
 
     _random = new Random(RANDOM_SEED);
@@ -280,6 +282,7 @@ public class PercentileTDigestQueriesTest extends BaseQueriesTest {
     config.setOutDir(SEGMENT_DIR_NAME);
     config.setSegmentName(SEGMENT_NAME);
     config.setTableName(TABLE_NAME);
+    config.setRawIndexCreationColumns(Arrays.asList(TDIGEST_COLUMN));
 
     List<GenericRow> rows = new ArrayList<>(NUM_ROWS);
     _expectedTDigest = new TDigest(PercentileTDigestAggregationFunction.DEFAULT_TDIGEST_COMPRESSION);

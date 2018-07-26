@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2014-2016 LinkedIn Corp. (pinot-core@linkedin.com)
+ * Copyright (C) 2014-2018 LinkedIn Corp. (pinot-core@linkedin.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -45,7 +45,7 @@ public class DataTableImplV2 implements DataTable {
   // DATA_SCHEMA (START|SIZE)
   // FIXED_SIZE_DATA (START|SIZE)
   // VARIABLE_SIZE_DATA (START|SIZE)
-  private static final int HEADER_SIZE = (Integer.SIZE / Byte.SIZE) * 13;
+  private static final int HEADER_SIZE = Integer.BYTES * 13;
 
   private final int _numRows;
   private final int _numColumns;

@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2014-2016 LinkedIn Corp. (pinot-core@linkedin.com)
+ * Copyright (C) 2014-2018 LinkedIn Corp. (pinot-core@linkedin.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -61,14 +61,14 @@ public class UtilsTest {
     Assert.assertEquals(millis.longValue(), 10*1000L);
     millis = TimeUtils.convertPeriodToMillis(null);
     Assert.assertEquals(millis.longValue(), 0);
-    boolean exception = false;
+    millis = TimeUtils.convertPeriodToMillis("-1d");
+    Assert.assertEquals(millis.longValue(),  -86400000L);
     try {
       millis = TimeUtils.convertPeriodToMillis("hhh");
-    } catch (Exception e){
-      exception = true;
-      // Exception
+      Assert.fail("Expected exception to be thrown while converting an invalid input string");
+    } catch (IllegalArgumentException e){
+      // expected
     }
-    Assert.assertTrue(exception);
 
     String periodStr = TimeUtils.convertMillisToPeriod(10 * 1000L);
     Assert.assertEquals(periodStr, "10s");
@@ -82,6 +82,8 @@ public class UtilsTest {
     Assert.assertEquals(periodStr, "6h20m10s");
     periodStr = TimeUtils.convertMillisToPeriod(0L);
     Assert.assertEquals(periodStr, "0s");
+    periodStr = TimeUtils.convertMillisToPeriod(-1L);
+    Assert.assertEquals(periodStr, "");
     periodStr = TimeUtils.convertMillisToPeriod(null);
     Assert.assertEquals(periodStr, null);
   }

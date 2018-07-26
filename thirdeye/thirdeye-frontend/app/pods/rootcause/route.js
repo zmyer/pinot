@@ -11,8 +11,6 @@ import {
   dateFormatFull,
   appendFilters
 } from 'thirdeye-frontend/utils/rca-utils';
-import advancedDimensionRawData from 'thirdeye-frontend/mocks/rcaDimensions';
-import advancedDimensionColumns from 'thirdeye-frontend/shared/dimensionAnalysisTableColumns';
 import { checkStatus } from 'thirdeye-frontend/utils/utils';
 import _ from 'lodash';
 
@@ -27,18 +25,6 @@ const UNIT_MAPPING = {
   MINUTES: 'minute',
   HOURS: 'hour',
   DAYS: 'day'
-};
-
-/**
- * Placeholder for dynamic dimension analysis table data (to clarify once we have reliable mock data - SM)
- */
-const processedAdvancedDimensions = (dimensionList) => {
-  dimensionList.forEach((record) => {
-    record.cob = `${record.current || 0} / ${record.baseline || 0}`;
-    record.country = record.names[0];
-    record.platform = record.names[1];
-  });
-  return dimensionList;
 };
 
 /**
@@ -128,9 +114,6 @@ export default Route.extend(AuthenticatedRouteMixin, {
     const { metricId, sessionId, anomalyId } = params;
     const isDevEnv = config.environment === 'development';
 
-    // Add simulated dynamic dimension analysis records to mocked table data
-    const advancedDimensionList = processedAdvancedDimensions(advancedDimensionRawData);
-
     let metricUrn, metricEntity, session, anomalyUrn, anomalyEntity, anomalySessions;
 
     if (metricId) {
@@ -158,10 +141,22 @@ export default Route.extend(AuthenticatedRouteMixin, {
       anomalyId,
       anomalyUrn,
       anomalyEntity,
-      anomalySessions,
-      advancedDimensionList,
-      advancedDimensionColumns
+      anomalySessions
     });
+  },
+
+  /**
+   * @description Resets any query params to allow not to have leak state or sticky query-param
+   * @method resetController
+   * @param {Object} controller - active controller
+   * @param {Boolean} isExiting - exit status
+   * @return {undefined}
+   */
+  resetController(controller, isExiting) {
+    this._super(...arguments);
+    if (isExiting) {
+      controller.set('sessionId', null);
+    }
   },
 
   afterModel(model, transition) {
@@ -288,13 +283,22 @@ export default Route.extend(AuthenticatedRouteMixin, {
         const analysisRange = [analysisRangeStart, analysisRangeEnd];
 
         const anomalyDimNames = anomalyEntity.attributes['dimensions'] || [];
-        const anomalyFilters = anomalyDimNames.map(dimName => [dimName, anomalyEntity.attributes[dimName]]);
+        const anomalyFilters = [];
+        anomalyDimNames.forEach(dimName => {
+          anomalyEntity.attributes[dimName].forEach(dimValue => {
+            anomalyFilters.pushObject([dimName, dimValue]);
+          });
+        });
 
         const anomalyMetricUrnRaw = `thirdeye:metric:${anomalyEntity.attributes['metricId'][0]}`;
         const anomalyMetricUrn = appendFilters(anomalyMetricUrnRaw, anomalyFilters);
 
-        const anomalyFunctionUrnRaw = `frontend:anomalyfunction:${anomalyEntity.attributes['functionId'][0]}`;
-        const anomalyFunctionUrn = appendFilters(anomalyFunctionUrnRaw, anomalyFilters);
+        const anomalyFunctionUrns = [];
+        if (!_.isEmpty(anomalyEntity.attributes['functionId'])) {
+          const anomalyFunctionUrnRaw = `frontend:anomalyfunction:${anomalyEntity.attributes['functionId'][0]}`;
+          anomalyFunctionUrns.pushObject(appendFilters(anomalyFunctionUrnRaw, anomalyFilters));
+        }
+
 
         context = {
           urns: new Set([anomalyMetricUrn]),
@@ -302,7 +306,7 @@ export default Route.extend(AuthenticatedRouteMixin, {
           analysisRange,
           granularity,
           compareMode: 'WoW',
-          anomalyUrns: new Set([anomalyUrn, anomalyMetricUrn, anomalyFunctionUrn])
+          anomalyUrns: new Set([anomalyUrn, anomalyMetricUrn].concat(anomalyFunctionUrns))
         };
 
         selectedUrns = new Set([anomalyUrn, anomalyMetricUrn]);

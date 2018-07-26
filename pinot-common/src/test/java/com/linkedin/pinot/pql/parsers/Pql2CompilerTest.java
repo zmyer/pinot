@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2014-2016 LinkedIn Corp. (pinot-core@linkedin.com)
+ * Copyright (C) 2014-2018 LinkedIn Corp. (pinot-core@linkedin.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -183,6 +183,14 @@ public class Pql2CompilerTest {
 
     brokerRequest = compiler.compileToBrokerRequest(
         "select * from vegetables where name != 'Brussels sprouts' OPTION (delicious=yes, foo=1234, bar='potato')");
+    Assert.assertEquals(brokerRequest.getQueryOptionsSize(), 3);
+    Assert.assertTrue(brokerRequest.getQueryOptions().containsKey("delicious"));
+    Assert.assertEquals(brokerRequest.getQueryOptions().get("delicious"), "yes");
+    Assert.assertEquals(brokerRequest.getQueryOptions().get("foo"), "1234");
+    Assert.assertEquals(brokerRequest.getQueryOptions().get("bar"), "potato");
+
+    brokerRequest = compiler.compileToBrokerRequest(
+        "select * from vegetables where name != 'Brussels sprouts' OPTION (delicious=yes) option(foo=1234) option(bar='potato')");
     Assert.assertEquals(brokerRequest.getQueryOptionsSize(), 3);
     Assert.assertTrue(brokerRequest.getQueryOptions().containsKey("delicious"));
     Assert.assertEquals(brokerRequest.getQueryOptions().get("delicious"), "yes");

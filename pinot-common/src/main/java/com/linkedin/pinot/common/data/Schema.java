@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2014-2016 LinkedIn Corp. (pinot-core@linkedin.com)
+ * Copyright (C) 2014-2018 LinkedIn Corp. (pinot-core@linkedin.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -404,6 +404,7 @@ public final class Schema {
             case FLOAT:
             case DOUBLE:
             case STRING:
+            case BYTES:
               break;
             default:
               ctxLogger.info("Unsupported data type: {} in DIMENSION/TIME field: {}", dataType, fieldName);
@@ -416,6 +417,7 @@ public final class Schema {
             case LONG:
             case FLOAT:
             case DOUBLE:
+            case BYTES:
               break;
             case STRING:
               MetricFieldSpec metricFieldSpec = (MetricFieldSpec) fieldSpec;
@@ -611,10 +613,12 @@ public final class Schema {
     }
 
     Schema that = (Schema) o;
-    return EqualityUtils.isEqual(_schemaName, that._schemaName) && EqualityUtils.isEqual(_dimensionFieldSpecs,
-        that._dimensionFieldSpecs) && EqualityUtils.isEqual(_metricFieldSpecs, that._metricFieldSpecs)
-        && EqualityUtils.isEqual(_timeFieldSpec, that._timeFieldSpec) && EqualityUtils.isEqual(_dateTimeFieldSpecs,
-        that._dateTimeFieldSpecs);
+
+    return EqualityUtils.isEqual(_schemaName, that._schemaName) &&
+        EqualityUtils.isEqualIgnoreOrder(_dimensionFieldSpecs, that._dimensionFieldSpecs) &&
+        EqualityUtils.isEqualIgnoreOrder(_metricFieldSpecs, that._metricFieldSpecs) &&
+        EqualityUtils.isEqual(_timeFieldSpec, that._timeFieldSpec) &&
+        EqualityUtils.isEqualIgnoreOrder(_dateTimeFieldSpecs, that._dateTimeFieldSpecs);
   }
 
   @Override

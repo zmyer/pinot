@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2014-2016 LinkedIn Corp. (pinot-core@linkedin.com)
+ * Copyright (C) 2014-2018 LinkedIn Corp. (pinot-core@linkedin.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,19 +25,18 @@ import javax.annotation.Nonnull;
 
 
 public class MinAggregationFunction implements AggregationFunction<Double, Double> {
-  private static final String NAME = AggregationFunctionFactory.AggregationFunctionType.MIN.getName();
   private static final double DEFAULT_VALUE = Double.POSITIVE_INFINITY;
 
   @Nonnull
   @Override
-  public String getName() {
-    return NAME;
+  public AggregationFunctionType getType() {
+    return AggregationFunctionType.MIN;
   }
 
   @Nonnull
   @Override
   public String getColumnName(@Nonnull String[] columns) {
-    return NAME + "_" + columns[0];
+    return AggregationFunctionType.MIN.getName() + "_" + columns[0];
   }
 
   @Override

@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2014-2016 LinkedIn Corp. (pinot-core@linkedin.com)
+ * Copyright (C) 2014-2018 LinkedIn Corp. (pinot-core@linkedin.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,8 +25,6 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
-import java.util.TreeSet;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import org.apache.helix.ZNRecord;
@@ -380,6 +378,7 @@ public class TableConfig {
     // Tenant config related
     private String _brokerTenant;
     private String _serverTenant;
+    private TagOverrideConfig _tagOverrideConfig;
 
     // Indexing config related
     private String _loadMode = DEFAULT_LOAD_MODE;
@@ -473,6 +472,11 @@ public class TableConfig {
       return this;
     }
 
+    public Builder setTagOverrideConfig(TagOverrideConfig tagOverrideConfig) {
+      _tagOverrideConfig = tagOverrideConfig;
+      return this;
+    }
+
     public Builder setLoadMode(String loadMode) {
       if (MMAP_LOAD_MODE.equalsIgnoreCase(loadMode)) {
         _loadMode = MMAP_LOAD_MODE;
@@ -559,6 +563,7 @@ public class TableConfig {
       TenantConfig tenantConfig = new TenantConfig();
       tenantConfig.setBroker(_brokerTenant);
       tenantConfig.setServer(_serverTenant);
+      tenantConfig.setTagOverrideConfig(_tagOverrideConfig);
 
       // Indexing config
       IndexingConfig indexingConfig = new IndexingConfig();

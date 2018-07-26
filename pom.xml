@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
 
-    Copyright (C) 2014-2016 LinkedIn Corp. (pinot-core@linkedin.com)
+    Copyright (C) 2014-2018 LinkedIn Corp. (pinot-core@linkedin.com)
 
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
@@ -37,6 +37,8 @@
     <module>pinot-integration-tests</module>
     <module>pinot-distribution</module>
     <module>pinot-minion</module>
+    <module>pinot-filesystem</module>
+    <module>pinot-hadoop-filesystem</module>
   </modules>
   <licenses>
     <license>
@@ -91,7 +93,7 @@
   <scm>
     <developerConnection>scm:git:git://git@github.com/linkedin/pinot.git</developerConnection>
   </scm>
-  <inceptionYear>2014-2016</inceptionYear>
+  <inceptionYear>2014-2018</inceptionYear>
   <properties>
     <build.profile.id>dev</build.profile.id>
     <jdk.version>1.8</jdk.version>
@@ -245,6 +247,16 @@
       </dependency>
       <dependency>
         <groupId>com.linkedin.pinot</groupId>
+        <artifactId>pinot-filesystem</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.linkedin.pinot</groupId>
+        <artifactId>pinot-hadoop-filesystem</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.linkedin.pinot</groupId>
         <artifactId>pinot-transport</artifactId>
         <version>${project.version}</version>
       </dependency>
@@ -343,7 +355,7 @@
       <dependency>
         <groupId>io.netty</groupId>
         <artifactId>netty</artifactId>
-        <version>3.10.5.Final</version>
+        <version>3.9.6.Final</version>
       </dependency>
       <dependency>
         <groupId>it.unimi.dsi</groupId>
@@ -493,6 +505,29 @@
       </dependency>
       <dependency>
         <groupId>org.apache.hadoop</groupId>
+        <artifactId>hadoop-minicluster</artifactId>
+        <version>${hadoop.version}</version>
+        <exclusions>
+          <exclusion>
+            <groupId>org.codehaus.jackson</groupId>
+            <artifactId>jackson-mapper-asl</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>org.codehaus.jackson</groupId>
+            <artifactId>jackson-core-asl</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>org.codehaus.jackson</groupId>
+            <artifactId>jackson-jaxrs</artifactId>
+          </exclusion>
+          <exclusion>
+            <groupId>org.codehaus.jackson</groupId>
+            <artifactId>jackson-xc</artifactId>
+          </exclusion>
+        </exclusions>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.hadoop</groupId>
         <artifactId>hadoop-client</artifactId>
         <version>${hadoop.version}</version>
         <exclusions>
@@ -530,7 +565,6 @@
           </exclusion>
       </exclusions>
       </dependency>
-
       <dependency>
         <groupId>org.codehaus.jackson</groupId>
         <artifactId>jackson-mapper-asl</artifactId>
@@ -1000,7 +1034,7 @@
             <exclude>**/com/linkedin/pinot/common/request/*.*</exclude>
             <exclude>**/com/linkedin/pinot/common/response/*.*</exclude>
             <exclude>pinot-dashboard/**/*.*</exclude>
-            <exclude>thirdeye/**/*.*</exclude>
+            <exclude>thirdeye/**/*</exclude>
             <!-- Files that already had a different license header -->
             <exclude>**/NamedThreadFactory.java</exclude>
             <exclude>**/FileUploadUtils.java</exclude>

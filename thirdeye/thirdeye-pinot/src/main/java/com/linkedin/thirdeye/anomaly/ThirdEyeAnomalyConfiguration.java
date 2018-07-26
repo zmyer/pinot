@@ -4,6 +4,8 @@ import com.linkedin.thirdeye.anomaly.monitor.MonitorConfiguration;
 import com.linkedin.thirdeye.anomaly.task.TaskDriverConfiguration;
 import com.linkedin.thirdeye.auto.onboard.AutoOnboardConfiguration;
 import com.linkedin.thirdeye.common.ThirdEyeConfiguration;
+import java.util.Collection;
+import java.util.HashSet;
 
 
 public class ThirdEyeAnomalyConfiguration extends ThirdEyeConfiguration {
@@ -17,6 +19,8 @@ public class ThirdEyeAnomalyConfiguration extends ThirdEyeConfiguration {
   private boolean pinotProxy = false;
   private boolean scheduler = false;
   private boolean worker = false;
+  private boolean detectionPipeline = false;
+  private boolean detectionAlert = false;
 
   private long id;
   private String dashboardHost;
@@ -27,7 +31,7 @@ public class ThirdEyeAnomalyConfiguration extends ThirdEyeConfiguration {
   private TaskDriverConfiguration taskDriverConfiguration = new TaskDriverConfiguration();
   private String failureFromAddress;
   private String failureToAddress;
-
+  private Collection<String> emailWhitelist = new HashSet<>();
 
   public HolidayEventsLoaderConfiguration getHolidayEventsLoaderConfiguration() {
     return holidayEventsLoaderConfiguration;
@@ -35,6 +39,22 @@ public class ThirdEyeAnomalyConfiguration extends ThirdEyeConfiguration {
 
   public void setHolidayEventsLoaderConfiguration(HolidayEventsLoaderConfiguration holidayEventsLoaderConfiguration) {
     this.holidayEventsLoaderConfiguration = holidayEventsLoaderConfiguration;
+  }
+
+  public boolean isDetectionAlert() {
+    return detectionAlert;
+  }
+
+  public void setDetectionAlert(boolean detectionAlert) {
+    this.detectionAlert = detectionAlert;
+  }
+
+  public boolean isDetectionPipeline() {
+    return detectionPipeline;
+  }
+
+  public void setDetectionPipeline(boolean detectionPipeline) {
+    this.detectionPipeline = detectionPipeline;
   }
 
   public boolean isHolidayEventsLoader() {
@@ -171,5 +191,13 @@ public class ThirdEyeAnomalyConfiguration extends ThirdEyeConfiguration {
 
   public void setFailureToAddress(String failureToAddress) {
     this.failureToAddress = failureToAddress;
+  }
+
+  public Collection<String> getEmailWhitelist() {
+    return emailWhitelist;
+  }
+
+  public void setEmailWhitelist(Collection<String> emailWhitelist) {
+    this.emailWhitelist = emailWhitelist;
   }
 }

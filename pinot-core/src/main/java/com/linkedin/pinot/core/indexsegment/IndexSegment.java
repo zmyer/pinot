@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2014-2016 LinkedIn Corp. (pinot-core@linkedin.com)
+ * Copyright (C) 2014-2018 LinkedIn Corp. (pinot-core@linkedin.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,8 @@ import com.linkedin.pinot.common.segment.SegmentMetadata;
 import com.linkedin.pinot.core.common.DataSource;
 import com.linkedin.pinot.core.data.GenericRow;
 import com.linkedin.pinot.core.startree.StarTree;
+import com.linkedin.pinot.core.startree.v2.StarTreeV2;
+import java.util.List;
 import java.util.Set;
 
 
@@ -59,6 +61,11 @@ public interface IndexSegment {
    * @return Star-tree index
    */
   StarTree getStarTree();
+
+  /**
+   * Returns a list of star-trees (V2), or null if there is no star-tree (V2) in the segment.
+   */
+  List<StarTreeV2> getStarTrees();
 
   /**
    * Returns the record for the given document Id.

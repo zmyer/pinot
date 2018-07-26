@@ -4,10 +4,31 @@
     margin-bottom: $te-default-element-spacing;
     padding: 0 15px 15px 15px;
     border: 1px solid app-shade(black, 0.1);
+
+    // Hide the empty filtering from the table
+    .table-header-no-filtering {
+      display: none;
+    }
+
+    .table-bordered {
+      thead {
+        tr {
+          th {
+            border-bottom-width: 0;
+          }
+        }
+      }
+    }
+
+    //Show/hide accordian
+    .panel-group {
+      .panel {
+        margin-bottom: 20px;
+      }
+    }
   }
 
   &__title {
-    margin: 30px 0 15px 0;
 
     span {
       margin-left: 5px;
@@ -21,6 +42,14 @@
 
     &-dropdown {
       width: 200px;
+    }
+  }
+
+  &__application-filter-by {
+    margin: 20px 0;
+
+    .te-anomaly-table__select {
+      display: inline-flex;
     }
   }
 
@@ -43,8 +72,18 @@
           width: 120px;
         }
         &--large-width {
-          width: 250px;;
+          width: 280px;
         }
+    }
+  }
+
+  .te-anomaly-table {
+    &__list {
+      &-item {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
     }
   }
 }

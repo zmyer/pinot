@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2014-2016 LinkedIn Corp. (pinot-core@linkedin.com)
+ * Copyright (C) 2014-2018 LinkedIn Corp. (pinot-core@linkedin.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,10 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package com.linkedin.pinot.common.config;
 
 import com.linkedin.pinot.common.data.Schema;
+import com.linkedin.pinot.common.utils.EqualityUtils;
+
+import static com.linkedin.pinot.common.utils.EqualityUtils.hashCodeOf;
+import static com.linkedin.pinot.common.utils.EqualityUtils.isEqual;
+import static com.linkedin.pinot.common.utils.EqualityUtils.isNullOrNotSameClass;
 
 
 /**
@@ -55,6 +59,18 @@ public class CombinedConfig {
     return _schema;
   }
 
+  public void setOffline(TableConfig offline) {
+    _offline = offline;
+  }
+
+  public void setRealtime(TableConfig realtime) {
+    _realtime = realtime;
+  }
+
+  public void setSchema(Schema schema) {
+    _schema = schema;
+  }
+
   public CombinedConfig(TableConfig offline, TableConfig realtime, Schema schema) {
     _offline = offline;
     _realtime = realtime;
@@ -62,4 +78,30 @@ public class CombinedConfig {
   }
 
   public CombinedConfig() {}
+
+  @Override
+  public boolean equals(Object o) {
+    if (EqualityUtils.isSameReference(this, o)) {
+      return true;
+    }
+
+    if (isNullOrNotSameClass(this, o)) {
+      return false;
+    }
+
+    CombinedConfig that = (CombinedConfig) o;
+
+    return
+        isEqual(_offline, that._offline) &&
+        isEqual(_realtime, that._realtime) &&
+        isEqual(_schema, that._schema);
+  }
+
+  @Override
+  public int hashCode() {
+    int result = hashCodeOf(_offline);
+    result = hashCodeOf(result, _realtime);
+    result = hashCodeOf(result, _schema);
+    return result;
+  }
 }

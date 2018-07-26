@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2014-2016 LinkedIn Corp. (pinot-core@linkedin.com)
+ * Copyright (C) 2014-2018 LinkedIn Corp. (pinot-core@linkedin.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,8 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
 import com.linkedin.pinot.common.Utils;
 import com.linkedin.pinot.common.config.ConfigKey;
+import com.linkedin.pinot.common.config.ConfigNodeLifecycleAware;
+import com.linkedin.pinot.common.utils.DataSchema;
 import com.linkedin.pinot.common.utils.EqualityUtils;
 import com.linkedin.pinot.common.utils.primitive.ByteArray;
 import java.nio.charset.Charset;
@@ -40,7 +42,7 @@ import org.apache.commons.codec.binary.Hex;
  * <p>- <code>DefaultNullValue</code>: when no value found for this field, use this value. Stored in string format.
  */
 @SuppressWarnings("unused")
-public abstract class FieldSpec {
+public abstract class FieldSpec implements Comparable<FieldSpec>, ConfigNodeLifecycleAware {
   private static final Charset UTF_8 = Charset.forName("UTF-8");
 
   private static final Integer DEFAULT_DIMENSION_NULL_VALUE_OF_INT = Integer.MIN_VALUE;
@@ -312,6 +314,17 @@ public abstract class FieldSpec {
     return result;
   }
 
+  @Override
+  public void preInject() {
+    // Nothing to do
+  }
+
+  @Override
+  public void postInject() {
+    // Compute the actual default null value from its string representation
+    _defaultNullValue = getDefaultNullValue(getFieldType(), _dataType, _stringDefaultNullValue);
+  }
+
   /**
    * The <code>FieldType</code> enum is used to demonstrate the real world business logic for a column.
    * <p><code>DIMENSION</code>: columns used to filter records.
@@ -383,9 +396,18 @@ public abstract class FieldSpec {
           return Float.BYTES;
         case DOUBLE:
           return Double.BYTES;
+        case BYTES:
+          // TODO: Metric size is only used for Star-tree generation, which is not supported yet.
+          return MetricFieldSpec.UNDEFINED_METRIC_SIZE;
         default:
           throw new IllegalStateException("Cannot get number of bytes for: " + this);
       }
     }
+  }
+
+  @Override
+  public int compareTo(FieldSpec otherSpec) {
+    // Sort fieldspecs based on their name
+    return _name.compareTo(otherSpec._name);
   }
 }

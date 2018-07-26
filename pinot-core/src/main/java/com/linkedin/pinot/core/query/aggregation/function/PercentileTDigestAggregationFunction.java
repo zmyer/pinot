@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2014-2016 LinkedIn Corp. (pinot-core@linkedin.com)
+ * Copyright (C) 2014-2018 LinkedIn Corp. (pinot-core@linkedin.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,72 +32,22 @@ import javax.annotation.Nonnull;
 public class PercentileTDigestAggregationFunction implements AggregationFunction<TDigest, Double> {
   public static final int DEFAULT_TDIGEST_COMPRESSION = 100;
 
-  private final String _name;
-  private final double _percentile;
+  private final int _percentile;
 
-  /**
-   * Constructor for the class.
-   *
-   * @param percentile Percentile to compute.
-   */
   public PercentileTDigestAggregationFunction(int percentile) {
-    switch (percentile) {
-      case 10:
-        _name = AggregationFunctionFactory.AggregationFunctionType.PERCENTILETDIGEST10.getName();
-        break;
-      case 20:
-        _name = AggregationFunctionFactory.AggregationFunctionType.PERCENTILETDIGEST20.getName();
-        break;
-      case 25:
-        _name = AggregationFunctionFactory.AggregationFunctionType.PERCENTILETDIGEST25.getName();
-        break;
-      case 30:
-        _name = AggregationFunctionFactory.AggregationFunctionType.PERCENTILETDIGEST30.getName();
-        break;
-      case 40:
-        _name = AggregationFunctionFactory.AggregationFunctionType.PERCENTILETDIGEST40.getName();
-        break;
-      case 50:
-        _name = AggregationFunctionFactory.AggregationFunctionType.PERCENTILETDIGEST50.getName();
-        break;
-      case 60:
-        _name = AggregationFunctionFactory.AggregationFunctionType.PERCENTILETDIGEST60.getName();
-        break;
-      case 70:
-        _name = AggregationFunctionFactory.AggregationFunctionType.PERCENTILETDIGEST70.getName();
-        break;
-      case 75:
-        _name = AggregationFunctionFactory.AggregationFunctionType.PERCENTILETDIGEST75.getName();
-        break;
-      case 80:
-        _name = AggregationFunctionFactory.AggregationFunctionType.PERCENTILETDIGEST80.getName();
-        break;
-      case 90:
-        _name = AggregationFunctionFactory.AggregationFunctionType.PERCENTILETDIGEST90.getName();
-        break;
-      case 95:
-        _name = AggregationFunctionFactory.AggregationFunctionType.PERCENTILETDIGEST95.getName();
-        break;
-      case 99:
-        _name = AggregationFunctionFactory.AggregationFunctionType.PERCENTILETDIGEST99.getName();
-        break;
-      default:
-        throw new UnsupportedOperationException(
-            "Unsupported percentile for PercentileTDigestAggregationFunction: " + percentile);
-    }
-    _percentile = percentile / 100.0;
+    _percentile = percentile;
   }
 
   @Nonnull
   @Override
-  public String getName() {
-    return _name;
+  public AggregationFunctionType getType() {
+    return AggregationFunctionType.PERCENTILETDIGEST;
   }
 
   @Nonnull
   @Override
   public String getColumnName(@Nonnull String[] columns) {
-    return _name + "_" + columns[0];
+    return AggregationFunctionType.PERCENTILETDIGEST.getName() + _percentile + "_" + columns[0];
   }
 
   @Override
@@ -213,6 +163,6 @@ public class PercentileTDigestAggregationFunction implements AggregationFunction
   @Nonnull
   @Override
   public Double extractFinalResult(@Nonnull TDigest intermediateResult) {
-    return intermediateResult.quantile(_percentile);
+    return intermediateResult.quantile(_percentile / 100.0);
   }
 }

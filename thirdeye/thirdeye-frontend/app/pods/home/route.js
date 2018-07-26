@@ -9,13 +9,14 @@ import RSVP from "rsvp";
 import moment from 'moment';
 import { inject as service } from '@ember/service';
 import _ from 'lodash';
+import AuthenticatedRouteMixin from 'ember-simple-auth/mixins/authenticated-route-mixin';
 
 const queryParamsConfig = {
   refreshModel: true,
   replace: false
 };
 
-export default Route.extend({
+export default Route.extend(AuthenticatedRouteMixin, {
   store: service('store'),
   anomaliesApiService: service('services/api/anomalies'),
 
@@ -26,9 +27,9 @@ export default Route.extend({
   },
   applicationAnomalies: null,
   appName: null,
-  startDate: moment().startOf('day').utc().valueOf(),
-  endDate: moment().utc().valueOf(),
-  duration: null,
+  startDate: moment().subtract(1, 'day').utc().valueOf(), //taylored for Last 24 hours vs Today -> moment().startOf('day').utc().valueOf(),
+  endDate: moment().utc().valueOf(),//taylored for Last 24 hours
+  duration: '1d',//taylored for Last 24 hours
 
   /**
    * Returns a mapping of anomalies by metric and functionName (aka alert), performance stats for anomalies by
@@ -48,7 +49,7 @@ export default Route.extend({
    */
   async model(params) {
     const { appName, startDate, endDate, duration } = params;//check params
-    const applications = await this.get('anomaliesApiService').queryApplications(appName, startDate, endDate);// Get all applicatons available
+    const applications = await this.get('anomaliesApiService').queryApplications(appName, startDate);// Get all applicatons available
 
     return hash({
       appName,
@@ -76,7 +77,7 @@ export default Route.extend({
 
     return new RSVP.Promise(async (resolve, reject) => {
       try {
-        const anomalyMapping = appName ? await this.get('_getAnomalyMapping').perform(model) : [];
+        const anomalyMapping = appName ? await this.get('_getAnomalyMapping').perform(model) : [];//DEMO:
         const anomalyPerformance = appName ? await this.get('anomaliesApiService').queryPerformanceByAppNameUrl(appName, moment(this.get('startDate')).startOf('day').utc().format(), moment(this.get('endDate')).startOf('day').utc().format()) : [];
         const defaultParams = {
           anomalyMapping,
@@ -97,7 +98,12 @@ export default Route.extend({
   _getAnomalyMapping: task (function * (model) {//TODO: need to add to anomaly util - LH
     let anomalyMapping = {};
     //fetch the anomalies from the onion wrapper cache.
-    const applicationAnomalies = yield this.get('anomaliesApiService').queryAnomaliesByAppName(this.get('appName'), this.get('startDate'));
+    const applicationAnomalies = yield this.get('anomaliesApiService').queryAnomaliesByAppName(this.get('appName'), this.get('startDate'), this.get('endDate'));
+    const humanizedObject = {
+      queryDuration: this.get('duration'),
+      queryStart: this.get('startDate'),
+      queryEnd: this.get('endDate')
+    };
     this.set('applicationAnomalies', applicationAnomalies);
 
     applicationAnomalies.forEach(anomaly => {
@@ -107,8 +113,8 @@ export default Route.extend({
         anomalyMapping[metricName] = [];
       }
 
-      // Group anomalies by metricName and function name (alertName)
-      anomalyMapping[metricName].push(this.get('anomaliesApiService').getHumanizedEntity(anomaly));
+      // Group anomalies by metricName and function name (alertName) and wrap it into the Humanized cache. Each `anomaly` is the raw data from ember data cache.
+      anomalyMapping[metricName].push(this.get('anomaliesApiService').getHumanizedEntity(anomaly, humanizedObject));
     });
 
     return anomalyMapping;
@@ -154,7 +160,7 @@ export default Route.extend({
       //metricList: this.getMetrics(),//TODO: clean up - lohuynh
       // alertList: this.getAlerts(),
       appName: this.get('appName'),
-      anomaliesCount:  Object.keys(model.anomalyMapping).length
+      anomaliesCount: this.get('applicationAnomalies.content') ? this.get('applicationAnomalies.content').length : 0
     });
   }
 });
